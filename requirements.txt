@@ -1,0 +1,2 @@
+aiohttp>=3.9.0
+esphome>=2024.1.0
