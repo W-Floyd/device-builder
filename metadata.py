@@ -59,3 +59,22 @@ def remove_device_metadata(config_dir: Path, filename: str) -> None:
     data = _load(config_dir)
     data.pop(filename, None)
     _save(config_dir, data)
+
+
+# ---------------------------------------------------------------------------
+# Global user preferences (stored under "_preferences" key)
+# ---------------------------------------------------------------------------
+
+_PREFS_KEY = "_preferences"
+
+
+def get_preferences(config_dir: Path) -> dict[str, Any]:
+    return _load(config_dir).get(_PREFS_KEY, {})
+
+
+def set_preferences(config_dir: Path, prefs: dict[str, Any]) -> dict[str, Any]:
+    data = _load(config_dir)
+    current = data.setdefault(_PREFS_KEY, {})
+    current.update(prefs)
+    _save(config_dir, data)
+    return current

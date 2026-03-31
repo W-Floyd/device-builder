@@ -18,6 +18,7 @@ from .handlers import (
     events,
     misc,
     operations,
+    section_config,
 )
 from .handlers.util import cors_middleware
 from .settings import DashboardSettings
@@ -57,6 +58,7 @@ def create_app(settings: DashboardSettings) -> web.Application:
         components,
         automations,
         config_sections,
+        section_config,
         operations,
         events,
         misc,

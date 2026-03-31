@@ -16,6 +16,7 @@ from esphome import const, platformio_api, yaml_util
 from esphome.storage_json import StorageJSON, ext_storage_path
 from esphome.util import get_serial_ports
 
+from ..metadata import get_preferences, set_preferences
 from ..models import DownloadItem, SerialPort, VersionResponse
 from .util import error_response, get_settings, json_response
 
@@ -72,6 +73,36 @@ async def secret_keys(request: web.Request) -> web.Response:
 
     keys = await loop.run_in_executor(None, _read)
     return json_response(keys)
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /preferences
+# ---------------------------------------------------------------------------
+
+
+@routes.get("/preferences")
+async def preferences_get(request: web.Request) -> web.Response:
+    settings = get_settings(request)
+    loop = asyncio.get_running_loop()
+    prefs = await loop.run_in_executor(
+        None, get_preferences, settings.absolute_config_dir
+    )
+    return json_response(prefs)
+
+
+@routes.put("/preferences")
+async def preferences_put(request: web.Request) -> web.Response:
+    settings = get_settings(request)
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, ValueError):
+        return error_response("Invalid JSON body")
+
+    loop = asyncio.get_running_loop()
+    updated = await loop.run_in_executor(
+        None, set_preferences, settings.absolute_config_dir, body
+    )
+    return json_response(updated)
 
 
 # ---------------------------------------------------------------------------

@@ -142,6 +142,43 @@ class ComponentField:
 
 
 @dataclass
+class ConfigValueOption:
+    label: str
+    value: str
+
+
+@dataclass
+class ConfigEntry:
+    """A rich configuration entry for visual editing of YAML sections."""
+
+    key: str
+    type: str  # "boolean" | "string" | "secure_string" | "integer" | "float" | "label" | "divider" | "select" | "icon" | "alert"
+    label: str
+    default_value: str | int | float | bool | None = None
+    required: bool = False
+    options: list[ConfigValueOption] | None = None
+    range: list[int | float] | None = None
+    description: str | None = None
+    help_link: str | None = None
+    multi_value: bool = False
+    hidden: bool = False
+    value: str | int | float | bool | list[str] | None = None
+
+
+@dataclass
+class SectionConfigResponse:
+    """Response from GET /devices/{config}/section-config."""
+
+    section_key: str
+    section_type: str  # "core" | "component" | "automation"
+    title: str
+    description: str
+    docs_url: str
+    icon: str
+    entries: list[ConfigEntry]
+
+
+@dataclass
 class ComponentPlatform:
     id: str
     name: str
@@ -275,3 +312,8 @@ class SerialPort:
 class DownloadItem:
     title: str
     file: str
+
+
+@dataclass
+class UserPreferences:
+    editor_layout: str = "both"  # "both" | "left" | "right"
