@@ -1,26 +1,28 @@
-"""Entry point: python -m device_builder_backend [options]"""
+"""Entry point: python -m esphome_device_builder [options]."""
 
 from __future__ import annotations
 
 import argparse
 
+from .const import DEFAULT_HOST, DEFAULT_PORT
 from .server import run
 from .settings import DashboardSettings
 
 
 def main() -> None:
+    """Run the ESPHome Device Builder."""
     parser = argparse.ArgumentParser(
-        description="Device Builder Dashboard Backend",
+        description="ESPHome Device Builder",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
         "configuration",
         nargs="?",
         default="./configs",
-        help="Path to the ESPHome configuration directory (default: ./configs)",
+        help="Path to the ESPHome configuration directory",
     )
-    parser.add_argument("--port", type=int, default=6052, help="HTTP port to listen on")
-    parser.add_argument("--host", default="0.0.0.0", help="Host/IP to bind to")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="HTTP port to listen on")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="Host/IP to bind to")
     parser.add_argument("--username", default="", help="Dashboard username")
     parser.add_argument("--password", default="", help="Dashboard password")
     parser.add_argument("--ha-addon", action="store_true", help="Running as HA add-on")

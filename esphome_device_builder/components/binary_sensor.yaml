@@ -1,0 +1,23 @@
+id: binary_sensor
+name: "Binary Sensor"
+description: "Detects on/off states such as buttons, door contacts, and PIR sensors."
+docs_url: "https://esphome.io/components/binary_sensor/index.html"
+icon: electric-switch
+platforms:
+  - id: gpio
+    name: "GPIO"
+    description: "Read a binary state from a GPIO pin."
+    yaml_template: |
+      binary_sensor:
+        - platform: gpio
+          pin: {pin}
+          name: {name}
+    fields:
+      - key: pin
+        label: "GPIO Pin"
+        type: pin
+        required: true
+      - key: name
+        label: "Name"
+        type: string
+        required: true

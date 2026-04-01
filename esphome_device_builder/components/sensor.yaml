@@ -1,0 +1,62 @@
+id: sensor
+name: "Sensor"
+description: "Measure numeric values like temperature, humidity, voltage."
+docs_url: "https://esphome.io/components/sensor/index.html"
+icon: thermometer
+platforms:
+  - id: dht
+    name: "DHT (Temperature & Humidity)"
+    description: "Read temperature and humidity from a DHT11/DHT22 sensor."
+    yaml_template: |
+      sensor:
+        - platform: dht
+          pin: {pin}
+          model: {model}
+          temperature:
+            name: {name} Temperature
+          humidity:
+            name: {name} Humidity
+          update_interval: {update_interval}
+    fields:
+      - key: pin
+        label: "GPIO Pin"
+        type: pin
+        required: true
+      - key: name
+        label: "Name"
+        type: string
+        required: true
+      - key: model
+        label: "Sensor Model"
+        type: select
+        required: true
+        default: "DHT22"
+        options: ["DHT11", "DHT22", "AM2302"]
+      - key: update_interval
+        label: "Update Interval"
+        type: string
+        required: false
+        default: "60s"
+  - id: adc
+    name: "ADC (Analog)"
+    description: "Read an analog voltage from a GPIO pin."
+    yaml_template: |
+      sensor:
+        - platform: adc
+          pin: {pin}
+          name: {name}
+          update_interval: {update_interval}
+    fields:
+      - key: pin
+        label: "GPIO Pin"
+        type: pin
+        required: true
+      - key: name
+        label: "Name"
+        type: string
+        required: true
+      - key: update_interval
+        label: "Update Interval"
+        type: string
+        required: false
+        default: "60s"

@@ -1,0 +1,23 @@
+id: switch
+name: "Switch"
+description: "Control an output device such as a relay or LED."
+docs_url: "https://esphome.io/components/switch/index.html"
+icon: toggle-switch
+platforms:
+  - id: gpio
+    name: "GPIO"
+    description: "Control a GPIO pin as a switch."
+    yaml_template: |
+      switch:
+        - platform: gpio
+          pin: {pin}
+          name: {name}
+    fields:
+      - key: pin
+        label: "GPIO Pin"
+        type: pin
+        required: true
+      - key: name
+        label: "Name"
+        type: string
+        required: true

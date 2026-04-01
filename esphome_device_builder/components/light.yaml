@@ -1,0 +1,50 @@
+id: light
+name: "Light"
+description: "Control lights including simple on/off, dimmable, and RGB."
+docs_url: "https://esphome.io/components/light/index.html"
+icon: lightbulb
+platforms:
+  - id: binary
+    name: "Binary (On/Off)"
+    description: "Simple on/off light controlled by a GPIO pin."
+    yaml_template: |
+      light:
+        - platform: binary
+          name: {name}
+          output: {output_id}
+    fields:
+      - key: name
+        label: "Name"
+        type: string
+        required: true
+      - key: output_id
+        label: "Output ID"
+        type: string
+        required: true
+  - id: rgb
+    name: "RGB"
+    description: "RGB light with red, green, and blue channels."
+    yaml_template: |
+      light:
+        - platform: rgb
+          name: {name}
+          red: {red_id}
+          green: {green_id}
+          blue: {blue_id}
+    fields:
+      - key: name
+        label: "Name"
+        type: string
+        required: true
+      - key: red_id
+        label: "Red Output ID"
+        type: string
+        required: true
+      - key: green_id
+        label: "Green Output ID"
+        type: string
+        required: true
+      - key: blue_id
+        label: "Blue Output ID"
+        type: string
+        required: true

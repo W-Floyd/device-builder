@@ -1,0 +1,23 @@
+id: button
+name: "Button"
+description: "Expose a momentary action as a button entity."
+docs_url: "https://esphome.io/components/button/index.html"
+icon: gesture-tap-button
+platforms:
+  - id: gpio
+    name: "GPIO"
+    description: "Trigger a momentary GPIO pulse."
+    yaml_template: |
+      button:
+        - platform: gpio
+          pin: {pin}
+          name: {name}
+    fields:
+      - key: pin
+        label: "GPIO Pin"
+        type: pin
+        required: true
+      - key: name
+        label: "Name"
+        type: string
+        required: true

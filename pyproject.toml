@@ -1,0 +1,116 @@
+[project]
+name = "esphome-device-builder"
+version = "0.0.0" # Set by GH action on release
+description = "ESPHome Device Builder"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+authors = [
+  {name = "The ESPHome Authors", email = "esphome@nabucasa.com"},
+]
+maintainers = [
+  {name = "Open Home Foundation", email = "esphome@nabucasa.com"},
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Home Automation",
+]
+dependencies = [
+  "aiohttp>=3.9.0",
+  "orjson>=3.9.0",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+esphome = [
+  "esphome>=2024.1.0",
+]
+test = [
+  "codespell==2.4.1",
+  "mypy==1.19.1",
+  "pre-commit==4.5.1",
+  "pre-commit-hooks==6.0.0",
+  "pytest==9.0.2",
+  "pytest-aiohttp==1.1.0",
+  "pytest-cov==7.0.0",
+  "ruff==0.15.6",
+]
+
+[project.urls]
+Homepage = "https://esphome.io"
+Repository = "https://github.com/esphome/device-builder-dashboard-backend"
+Issues = "https://github.com/esphome/device-builder-dashboard-backend/issues"
+Documentation = "https://esphome.io"
+
+[project.scripts]
+esphome-device-builder = "esphome_device_builder.__main__:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = {find = {include = ["esphome_device_builder*"]}}
+platforms = ["any"]
+zip-safe = false
+
+[tool.setuptools.package-data]
+esphome_device_builder = ["py.typed", "boards/*.yaml", "components/*.yaml"]
+
+[tool.ruff]
+fix = true
+show-fixes = true
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.format]
+line-ending = "lf"
+
+[tool.ruff.lint]
+select = [
+  "A",      # flake8-builtins
+  "B",      # flake8-bugbear
+  "C4",     # flake8-comprehensions
+  "D",      # pydocstyle
+  "E",      # pycodestyle errors
+  "F",      # pyflakes
+  "I",      # isort
+  "N",      # pep8-naming
+  "RUF",    # ruff-specific
+  "S",      # flake8-bandit
+  "T20",    # flake8-print
+  "UP",     # pyupgrade
+  "W",      # pycodestyle warnings
+]
+ignore = [
+  "D203",   # conflicts with D211
+  "D213",   # conflicts with D212
+  "D417",   # false positives
+  "S101",   # assert used for type checking
+  "S104",   # binding to all interfaces
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.isort]
+known-first-party = ["esphome_device_builder"]
+
+[tool.mypy]
+python_version = "3.12"
+follow_imports = "silent"
+ignore_missing_imports = true
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[build-system]
+requires = ["setuptools>=75.0"]
+build-backend = "setuptools.build_meta"

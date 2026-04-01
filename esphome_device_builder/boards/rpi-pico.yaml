@@ -1,0 +1,8 @@
+id: rpi-pico
+name: "Raspberry Pi Pico W"
+description: "RP2040-based board with Wi-Fi."
+platform: rp2040
+board: rpipicow
+tags: [rp2040, dev-kit, wifi]
+docs_url: "https://esphome.io/components/rp2040.html"
+image_url: null

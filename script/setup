@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Set up development environment for ESPHome Device Builder.
+
+set -euo pipefail
+
+VENV_DIR="${1:-.venv}"
+
+# Require uv
+if ! command -v uv &> /dev/null; then
+    echo "Error: uv is required but not installed."
+    echo "Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    exit 1
+fi
+
+# Create venv if it doesn't exist
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating virtual environment in $VENV_DIR..."
+    uv venv "$VENV_DIR"
+fi
+
+# Activate venv
+source "$VENV_DIR/bin/activate"
+
+echo "Installing package in editable mode with all dependencies..."
+uv pip install -e ".[esphome]"
+uv pip install -e ".[test]"
+
+# Install pre-commit hooks
+if [ -f .pre-commit-config.yaml ]; then
+    echo "Installing pre-commit hooks..."
+    uv run pre-commit install
+fi
+
+echo ""
+echo "Development environment ready!"
+echo "Activate with: source $VENV_DIR/bin/activate"
+echo "Run with:      esphome-device-builder ./configs --verbose"

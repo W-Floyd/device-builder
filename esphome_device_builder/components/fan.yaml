@@ -1,0 +1,23 @@
+id: fan
+name: "Fan"
+description: "Control fan speed and direction."
+docs_url: "https://esphome.io/components/fan/index.html"
+icon: fan
+platforms:
+  - id: binary
+    name: "Binary (On/Off)"
+    description: "Simple on/off fan."
+    yaml_template: |
+      fan:
+        - platform: binary
+          name: {name}
+          output: {output_id}
+    fields:
+      - key: name
+        label: "Name"
+        type: string
+        required: true
+      - key: output_id
+        label: "Output ID"
+        type: string
+        required: true
