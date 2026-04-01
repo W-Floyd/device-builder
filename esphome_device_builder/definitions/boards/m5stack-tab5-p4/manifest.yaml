@@ -1,0 +1,21 @@
+id: m5stack-tab5-p4
+name: "M5STACK Tab5 esp32-p4 Board (ES pre rev.300)"
+description: "The reference docs for M5Stack products. Quick start, get the detailed information or instructions such as IDE,UIFLOW,Arduino. The tutorials for M5Burner, Firmware, Burning, programming. ESP32,M5StickC,StickV, StickT,M5ATOM."
+manufacturer: "M5STACK"
+
+esphome:
+  platform: esp32
+  board: m5stack-tab5-p4
+  variant: esp32p4
+
+hardware:
+  flash_size: "16MB"
+  ram_size: 512000
+  cpu_frequency: "360MHz"
+  connectivity: [bluetooth, openthread]
+
+tags: []
+docs_url: "https://esphome.io/components/esp32.html"
+product_url: "https://docs.m5stack.com/en/core/Tab5"
+
+pins: []

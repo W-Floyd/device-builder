@@ -1,0 +1,167 @@
+id: esp32-devkit-v1
+name: "ESP32 DevKit V1"
+description: |
+  Popular ESP32 development board with 30 exposed GPIO pins, USB-to-serial
+  via CP2102, and a micro-USB connector. Features the ESP32-WROOM-32 module
+  with 4 MB flash, Wi-Fi and Bluetooth Classic + BLE.
+manufacturer: "Espressif"
+
+esphome:
+  platform: esp32
+  board: esp32dev
+  variant: esp32
+
+tags: [dev-kit]
+docs_url: "https://esphome.io/components/esp32.html"
+
+pins:
+  - gpio: 0
+    label: "GPIO0"
+    features: [adc, touch, pwm, boot_button, strapping]
+    available: true
+    occupied_by: "BOOT button"
+    notes: "Directly connected to BOOT button, directly usable otherwise"
+  - gpio: 1
+    label: "TX0"
+    features: [uart_tx]
+    available: true
+    occupied_by: "USB-UART TX"
+    notes: "UART0 TX — directly connected to USB-serial chip"
+  - gpio: 2
+    label: "GPIO2"
+    features: [adc, touch, pwm, strapping]
+    available: true
+    occupied_by: "Built-in LED"
+    notes: "Connected to on-board LED"
+  - gpio: 3
+    label: "RX0"
+    features: [uart_rx]
+    available: true
+    occupied_by: "USB-UART RX"
+    notes: "UART0 RX — directly connected to USB-serial chip"
+  - gpio: 4
+    label: "GPIO4"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 5
+    label: "GPIO5"
+    features: [pwm, spi_cs, strapping]
+    available: true
+    notes: "Strapping pin — outputs PWM at boot"
+  - gpio: 12
+    label: "GPIO12"
+    features: [adc, touch, pwm, strapping]
+    available: true
+    notes: "Strapping pin — must be LOW during boot"
+  - gpio: 13
+    label: "GPIO13"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 14
+    label: "GPIO14"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 15
+    label: "GPIO15"
+    features: [adc, touch, pwm, strapping]
+    available: true
+    notes: "Strapping pin — outputs PWM at boot"
+  - gpio: 16
+    label: "GPIO16"
+    features: [pwm]
+    available: true
+  - gpio: 17
+    label: "GPIO17"
+    features: [pwm]
+    available: true
+  - gpio: 18
+    label: "GPIO18"
+    features: [pwm, spi_clk]
+    available: true
+  - gpio: 19
+    label: "GPIO19"
+    features: [pwm, spi_miso]
+    available: true
+  - gpio: 21
+    label: "GPIO21"
+    features: [pwm, i2c_sda]
+    available: true
+  - gpio: 22
+    label: "GPIO22"
+    features: [pwm, i2c_scl]
+    available: true
+  - gpio: 23
+    label: "GPIO23"
+    features: [pwm, spi_mosi]
+    available: true
+  - gpio: 25
+    label: "GPIO25"
+    features: [adc, dac, pwm]
+    available: true
+  - gpio: 26
+    label: "GPIO26"
+    features: [adc, dac, pwm]
+    available: true
+  - gpio: 27
+    label: "GPIO27"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 32
+    label: "GPIO32"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 33
+    label: "GPIO33"
+    features: [adc, touch, pwm]
+    available: true
+  - gpio: 34
+    label: "GPIO34"
+    features: [adc, input_only]
+    available: true
+    notes: "Input only — no internal pull-up/pull-down"
+  - gpio: 35
+    label: "GPIO35"
+    features: [adc, input_only]
+    available: true
+    notes: "Input only — no internal pull-up/pull-down"
+  - gpio: 36
+    label: "VP"
+    features: [adc, input_only]
+    available: true
+    notes: "Input only — no internal pull-up/pull-down"
+  - gpio: 39
+    label: "VN"
+    features: [adc, input_only]
+    available: true
+    notes: "Input only — no internal pull-up/pull-down"
+  # Internal pins — not on headers
+  - gpio: 6
+    label: "CLK"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"
+  - gpio: 7
+    label: "SD0"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"
+  - gpio: 8
+    label: "SD1"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"
+  - gpio: 9
+    label: "SD2"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"
+  - gpio: 10
+    label: "SD3"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"
+  - gpio: 11
+    label: "CMD"
+    features: []
+    available: false
+    occupied_by: "SPI Flash"

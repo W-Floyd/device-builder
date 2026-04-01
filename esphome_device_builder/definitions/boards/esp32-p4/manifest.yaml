@@ -1,0 +1,21 @@
+id: esp32-p4
+name: "Espressif ESP32-P4 ES (pre rev.300) generic"
+description: "var locationObj = window.location var pathname = locationObj.pathname var href = '/support/documents/technical-documents' if (pathname.indexOf('/zh-hans/') !== -1) { href = '/zh-hans/support/documents/technical-documents' } else if (pathname.indexOf('/en/') !== -1) { href =..."
+manufacturer: "Espressif"
+
+esphome:
+  platform: esp32
+  board: esp32-p4
+  variant: esp32p4
+
+hardware:
+  flash_size: "4MB"
+  ram_size: 327680
+  cpu_frequency: "360MHz"
+  connectivity: [bluetooth, openthread]
+
+tags: []
+docs_url: "https://esphome.io/components/esp32.html"
+product_url: "https://docs.espressif.com"
+
+pins: []

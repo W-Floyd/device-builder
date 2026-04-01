@@ -15,6 +15,7 @@ _DASHBOARD_SENTINEL_FILE = "___DASHBOARD_SENTINEL___.yaml"
 
 def _hash_password(password: str) -> bytes:
     import hashlib
+
     return hashlib.sha256(password.encode("utf-8")).digest()
 
 
@@ -71,8 +72,6 @@ class DashboardSettings:
     def check_password(self, username: str, password: str) -> bool:
         if not self.using_auth:
             return True
-        username_ok = hmac.compare_digest(
-            username.encode("utf-8"), self.username.encode("utf-8")
-        )
+        username_ok = hmac.compare_digest(username.encode("utf-8"), self.username.encode("utf-8"))
         password_ok = hmac.compare_digest(self.password_hash, _hash_password(password))
         return username_ok and password_ok

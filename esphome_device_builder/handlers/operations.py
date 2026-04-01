@@ -18,7 +18,7 @@ import aiohttp
 from aiohttp import web
 
 from ..dashboard import DASHBOARD
-from ..entries import DashboardEntries, entry_state_to_bool
+from ..entries import entry_state_to_bool
 from .util import get_settings
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,7 +65,7 @@ async def _stream_process(
 
 
 async def _handle_ws_command(request: web.Request, build_command_fn: Any) -> web.WebSocketResponse:
-    """Common WebSocket handler: wait for spawn message, run command, stream output."""
+    """Handle a WebSocket command: wait for spawn message, run command, stream output."""
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -226,7 +226,7 @@ async def update_all(request: web.Request) -> web.Response:
         except Exception:
             _LOGGER.exception("update-all failed for %s", filename)
 
-    for entry in online:
-        asyncio.create_task(_run_upload(entry.filename))
+    tasks = [asyncio.create_task(_run_upload(entry.filename)) for entry in online]
+    _ = tasks  # fire-and-forget, but keep references to avoid GC
 
     return web.json_response({"queued": len(online)})

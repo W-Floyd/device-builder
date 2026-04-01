@@ -1,0 +1,108 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esphome.io/schemas/device-builder/component.schema.json",
+  "title": "ESPHome Device Builder Component Definition",
+  "description": "Schema for component manifest.yaml files in the ESPHome Device Builder.",
+  "type": "object",
+  "required": ["id", "name", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique component identifier. Must match the folder name."
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable component name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Component description."
+    },
+    "docs_url": {
+      "type": "string",
+      "description": "Link to ESPHome documentation for this component.",
+      "format": "uri"
+    },
+    "icon": {
+      "type": "string",
+      "description": "Icon name for the UI."
+    },
+    "platforms": {
+      "type": "array",
+      "description": "Available platforms for this component.",
+      "items": {
+        "$ref": "#/$defs/platform"
+      }
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "object",
+      "description": "A component platform with its YAML template and configurable fields.",
+      "required": ["id", "name", "description", "yaml_template"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Platform identifier."
+        },
+        "name": {
+          "type": "string",
+          "description": "Human-readable platform name."
+        },
+        "description": {
+          "type": "string",
+          "description": "Platform description."
+        },
+        "yaml_template": {
+          "type": "string",
+          "description": "YAML template with {field} placeholders."
+        },
+        "fields": {
+          "type": "array",
+          "description": "Configurable fields for this platform.",
+          "items": {
+            "$ref": "#/$defs/field"
+          }
+        }
+      }
+    },
+    "field": {
+      "type": "object",
+      "description": "A configurable field.",
+      "required": ["key", "label", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": "string",
+          "description": "Field key matching the {placeholder} in the YAML template."
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable field label for the UI."
+        },
+        "type": {
+          "type": "string",
+          "description": "Field type.",
+          "enum": ["string", "number", "boolean", "select", "pin"]
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether this field is required.",
+          "default": false
+        },
+        "default": {
+          "description": "Default value for this field."
+        },
+        "options": {
+          "type": "array",
+          "description": "Available options for select fields.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
 
 from aiohttp import web
 
@@ -18,7 +17,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/automations/catalog")
 async def automation_catalog(request: web.Request) -> web.Response:
-    return json_response(asdict(AUTOMATION_CATALOG))
+    return json_response(AUTOMATION_CATALOG).to_dict()
 
 
 @routes.post("/devices/{configuration}/automations")
@@ -47,14 +46,11 @@ async def add_automation(request: web.Request) -> web.Response:
         return error_response("target_component_name and trigger are required")
 
     # Normalise actions to list of dicts
-    actions = [
-        {"action": a.get("action", ""), "fields": a.get("fields", {})}
-        for a in raw_actions
-    ]
+    actions = [{"action": a.get("action", ""), "fields": a.get("fields", {})} for a in raw_actions]
 
     loop = asyncio.get_running_loop()
     new_yaml = await loop.run_in_executor(
         None, build_automation_yaml, path, target, trigger, actions
     )
 
-    return json_response(asdict(AddAutomationResponse(yaml=new_yaml)))
+    return json_response(AddAutomationResponse(yaml=new_yaml).to_dict())

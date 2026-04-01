@@ -1,8 +1,0 @@
-id: d1_mini
-name: "Wemos D1 Mini (ESP8266)"
-description: "Compact ESP8266 board with USB-C."
-platform: esp8266
-board: d1_mini
-tags: [esp8266, dev-kit, wifi]
-docs_url: "https://esphome.io/components/esp8266.html"
-image_url: null

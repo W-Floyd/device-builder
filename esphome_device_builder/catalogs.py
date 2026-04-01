@@ -7,59 +7,16 @@ simpler and less likely to receive community contributions.
 
 from __future__ import annotations
 
-from .boards import load_board_catalog
-from .components import load_component_catalog
+from .definitions import load_component_catalog
 from .models import (
     AutomationAction,
     AutomationCatalogResponse,
     AutomationTrigger,
-    Board,
-    BoardCatalogResponse,
     ComponentCatalogResponse,
     ComponentField,
     ConfigCatalogResponse,
     ConfigSection,
 )
-
-# ---------------------------------------------------------------------------
-# Board catalog (loaded from YAML files)
-# ---------------------------------------------------------------------------
-
-BOARD_CATALOG: BoardCatalogResponse = load_board_catalog()
-
-
-def get_boards_for_platform(platform: str) -> list[Board]:
-    """Return flat board list for a given platform, using ESPHome's BOARDS dicts."""
-    from esphome import const
-
-    try:
-        if platform.startswith("esp32"):
-            from esphome.components.esp32.boards import BOARDS
-
-            boards = {
-                k: v
-                for k, v in BOARDS.items()
-                if v.get(const.KEY_VARIANT, "").lower() == platform.lower()
-                or (platform == "esp32" and v.get(const.KEY_VARIANT) == "ESP32")
-            }
-        elif platform == const.PLATFORM_ESP8266:
-            from esphome.components.esp8266.boards import BOARDS as boards
-        elif platform == const.PLATFORM_RP2040:
-            from esphome.components.rp2040.boards import BOARDS as boards
-        elif platform == const.PLATFORM_BK72XX:
-            from esphome.components.bk72xx.boards import BOARDS as boards
-        elif platform == const.PLATFORM_RTL87XX:
-            from esphome.components.rtl87xx.boards import BOARDS as boards
-        else:
-            return []
-    except (ImportError, AttributeError):
-        return []
-
-    return sorted(
-        [Board(name=v[const.KEY_NAME], board=k) for k, v in boards.items()],
-        key=lambda b: b.name,
-    )
-
 
 # ---------------------------------------------------------------------------
 # Component catalog (loaded from YAML files)
@@ -108,12 +65,8 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             description="Fires when a sensor value enters or leaves a range.",
             applicable_to=["sensor"],
             fields=[
-                ComponentField(
-                    key="above", label="Above", type="number", required=False
-                ),
-                ComponentField(
-                    key="below", label="Below", type="number", required=False
-                ),
+                ComponentField(key="above", label="Above", type="number", required=False),
+                ComponentField(key="below", label="Below", type="number", required=False),
             ],
         ),
         AutomationTrigger(
@@ -137,9 +90,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Toggle Switch",
             description="Toggle a switch between on and off.",
             fields=[
-                ComponentField(
-                    key="id", label="Switch ID", type="string", required=True
-                ),
+                ComponentField(key="id", label="Switch ID", type="string", required=True),
             ],
         ),
         AutomationAction(
@@ -147,9 +98,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Turn Switch On",
             description="Turn a switch on.",
             fields=[
-                ComponentField(
-                    key="id", label="Switch ID", type="string", required=True
-                ),
+                ComponentField(key="id", label="Switch ID", type="string", required=True),
             ],
         ),
         AutomationAction(
@@ -157,9 +106,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Turn Switch Off",
             description="Turn a switch off.",
             fields=[
-                ComponentField(
-                    key="id", label="Switch ID", type="string", required=True
-                ),
+                ComponentField(key="id", label="Switch ID", type="string", required=True),
             ],
         ),
         AutomationAction(
@@ -167,9 +114,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Turn Light On",
             description="Turn a light on, optionally with brightness/colour.",
             fields=[
-                ComponentField(
-                    key="id", label="Light ID", type="string", required=True
-                ),
+                ComponentField(key="id", label="Light ID", type="string", required=True),
                 ComponentField(
                     key="brightness",
                     label="Brightness (0-1)",
@@ -183,9 +128,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Turn Light Off",
             description="Turn a light off.",
             fields=[
-                ComponentField(
-                    key="id", label="Light ID", type="string", required=True
-                ),
+                ComponentField(key="id", label="Light ID", type="string", required=True),
             ],
         ),
         AutomationAction(
@@ -206,9 +149,7 @@ AUTOMATION_CATALOG = AutomationCatalogResponse(
             name="Log Message",
             description="Print a message to the ESPHome log.",
             fields=[
-                ComponentField(
-                    key="message", label="Message", type="string", required=True
-                ),
+                ComponentField(key="message", label="Message", type="string", required=True),
                 ComponentField(
                     key="level",
                     label="Log Level",
@@ -235,9 +176,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             description="Connect the device to a Wi-Fi network.",
             docs_url="https://esphome.io/components/wifi.html",
             icon="wifi",
-            yaml_template=(
-                "wifi:\n" "  ssid: {ssid}\n" "  password: {password}\n"
-            ),
+            yaml_template=("wifi:\n  ssid: {ssid}\n  password: {password}\n"),
             fields=[
                 ComponentField(
                     key="ssid",
@@ -261,9 +200,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             description="Enable the native ESPHome API for Home Assistant integration.",
             docs_url="https://esphome.io/components/api.html",
             icon="home-assistant",
-            yaml_template=(
-                "api:\n" "  encryption:\n" "    key: {encryption_key}\n"
-            ),
+            yaml_template=("api:\n  encryption:\n    key: {encryption_key}\n"),
             fields=[
                 ComponentField(
                     key="encryption_key",
@@ -280,9 +217,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             description="Allow over-the-air firmware updates.",
             docs_url="https://esphome.io/components/ota/esphome.html",
             icon="update",
-            yaml_template=(
-                "ota:\n" "  - platform: esphome\n" "    password: {password}\n"
-            ),
+            yaml_template=("ota:\n  - platform: esphome\n    password: {password}\n"),
             fields=[
                 ComponentField(
                     key="password",
@@ -299,7 +234,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             description="Configure serial logging level and output.",
             docs_url="https://esphome.io/components/logger.html",
             icon="text-box",
-            yaml_template=("logger:\n" "  level: {level}\n"),
+            yaml_template=("logger:\n  level: {level}\n"),
             fields=[
                 ComponentField(
                     key="level",
@@ -326,10 +261,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             docs_url="https://esphome.io/components/mqtt.html",
             icon="mqtt",
             yaml_template=(
-                "mqtt:\n"
-                "  broker: {broker}\n"
-                "  username: {username}\n"
-                "  password: {password}\n"
+                "mqtt:\n  broker: {broker}\n  username: {username}\n  password: {password}\n"
             ),
             fields=[
                 ComponentField(
@@ -360,7 +292,7 @@ CONFIG_CATALOG = ConfigCatalogResponse(
             description="Enable the built-in HTTP web server on the device.",
             docs_url="https://esphome.io/components/web_server.html",
             icon="web",
-            yaml_template=("web_server:\n" "  port: {port}\n"),
+            yaml_template=("web_server:\n  port: {port}\n"),
             fields=[
                 ComponentField(
                     key="port",

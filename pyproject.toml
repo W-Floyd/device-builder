@@ -15,13 +15,13 @@ classifiers = [
   "Development Status :: 3 - Alpha",
   "Environment :: Console",
   "Intended Audience :: Developers",
-  "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Home Automation",
 ]
 dependencies = [
   "aiohttp>=3.9.0",
+  "mashumaro>=3.13",
   "orjson>=3.9.0",
   "pyyaml>=6.0",
 ]
@@ -32,6 +32,7 @@ esphome = [
 ]
 test = [
   "codespell==2.4.1",
+  "jsonschema>=4.20.0",
   "mypy==1.19.1",
   "pre-commit==4.5.1",
   "pre-commit-hooks==6.0.0",
@@ -57,7 +58,12 @@ platforms = ["any"]
 zip-safe = false
 
 [tool.setuptools.package-data]
-esphome_device_builder = ["py.typed", "boards/*.yaml", "components/*.yaml"]
+esphome_device_builder = [
+  "py.typed",
+  "definitions/boards/*/manifest.yaml",
+  "definitions/boards/*/images/*",
+  "definitions/components/*/manifest.yaml",
+]
 
 [tool.ruff]
 fix = true
@@ -85,12 +91,22 @@ select = [
   "W",      # pycodestyle warnings
 ]
 ignore = [
+  "D101",   # missing docstring in public class (too noisy for now)
+  "D102",   # missing docstring in public method (too noisy for now)
+  "D103",   # missing docstring in public function (too noisy for now)
+  "D107",   # missing docstring in __init__ (too noisy for now)
   "D203",   # conflicts with D211
   "D213",   # conflicts with D212
   "D417",   # false positives
   "S101",   # assert used for type checking
   "S104",   # binding to all interfaces
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"script/*" = ["T20", "S310", "S110"]  # print(), URL open, bare except are fine in CLI scripts
+
+[tool.codespell]
+skip = "*.json,*/definitions/*"
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"

@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
-from dataclasses import dataclass, field
-from enum import StrEnum
-from functools import partial
 import json
 import logging
 import threading
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import StrEnum
+from functools import partial
 from typing import Any
 
 from esphome.storage_json import ignored_devices_storage_path

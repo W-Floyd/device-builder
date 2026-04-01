@@ -4,12 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
 
 from aiohttp import web
 
 from ..catalogs import COMPONENT_CATALOG
-from ..models import AddComponentRequest, AddComponentResponse
+from ..models import AddComponentResponse
 from ..yaml_editor import append_yaml_block, build_component_yaml
 from .util import error_response, get_settings, json_response
 
@@ -18,7 +17,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/components/catalog")
 async def component_catalog(request: web.Request) -> web.Response:
-    return json_response(asdict(COMPONENT_CATALOG))
+    return json_response(COMPONENT_CATALOG).to_dict()
 
 
 @routes.post("/devices/{configuration}/components")
@@ -54,4 +53,4 @@ async def add_component(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     new_yaml = await loop.run_in_executor(None, append_yaml_block, path, block)
 
-    return json_response(asdict(AddComponentResponse(yaml=new_yaml)))
+    return json_response(AddComponentResponse(yaml=new_yaml).to_dict())

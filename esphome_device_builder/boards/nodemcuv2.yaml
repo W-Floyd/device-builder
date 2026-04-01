@@ -1,8 +1,0 @@
-id: nodemcuv2
-name: "NodeMCU v2 (ESP8266)"
-description: "Popular ESP8266-based development board."
-platform: esp8266
-board: nodemcuv2
-tags: [esp8266, dev-kit, wifi]
-docs_url: "https://esphome.io/components/esp8266.html"
-image_url: null

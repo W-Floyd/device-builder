@@ -77,7 +77,9 @@ def build_automation_yaml(
     else:
         # Fall back: append at end
         separator = "\n" if current and not current.endswith("\n\n") else ""
-        new_content = current + separator + f"# Automation for {target_component_name}\n" + trigger_block
+        new_content = (
+            current + separator + f"# Automation for {target_component_name}\n" + trigger_block
+        )
 
     yaml_path.write_text(new_content, encoding="utf-8")
     return new_content

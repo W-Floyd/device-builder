@@ -64,14 +64,29 @@ The [frontend](https://github.com/esphome/device-builder-dashboard-frontend) is 
 
 ### Board & Component Definitions
 
-Boards and components are defined as individual YAML files in `esphome_device_builder/boards/` and `esphome_device_builder/components/`. Adding a new board or component is as simple as dropping in a YAML file — see any existing file for the schema.
+Boards and components live in `esphome_device_builder/definitions/`. Each board or component gets its own subfolder with a `manifest.yaml` and optional assets (e.g. images):
+
+```
+definitions/
+├── boards/
+│   ├── esp32-devkit-v1/
+│   │   ├── manifest.yaml
+│   │   └── image.png         (optional)
+│   └── ...
+└── components/
+    ├── binary_sensor/
+    │   └── manifest.yaml
+    └── ...
+```
+
+Adding a new board or component = adding a subfolder with a `manifest.yaml`. See any existing manifest for the schema.
 
 ## Contributing
 
 Contributions are welcome, especially:
 
-- Board definitions (add a YAML file to `boards/`)
-- Component definitions (add a YAML file to `components/`)
+- Board definitions (add a subfolder to `definitions/boards/`)
+- Component definitions (add a subfolder to `definitions/components/`)
 - Bug reports and feature requests via GitHub Issues
 
 ## License

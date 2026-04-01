@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import defaultdict
 from dataclasses import dataclass
 from functools import lru_cache
-import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -15,7 +15,7 @@ from esphome.enum import StrEnum
 from esphome.storage_json import StorageJSON, ext_storage_path
 
 if TYPE_CHECKING:
-    from .dashboard import DashboardEvent, ESPHomeDashboard
+    from .dashboard import ESPHomeDashboard
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -70,13 +70,13 @@ class DashboardEntry:
     """Represents a single ESPHome config file on disk."""
 
     __slots__ = (
-        "path",
-        "filename",
         "_storage_path",
-        "cache_key",
-        "storage",
-        "state",
         "_to_dict_cache",
+        "cache_key",
+        "filename",
+        "path",
+        "state",
+        "storage",
     )
 
     def __init__(self, path: Path, cache_key: DashboardCacheKeyType) -> None:
@@ -170,13 +170,13 @@ class DashboardEntries:
     """Manages all DashboardEntry objects, watching disk for changes."""
 
     __slots__ = (
-        "_dashboard",
-        "_loop",
         "_config_dir",
+        "_dashboard",
         "_entries",
+        "_loaded",
+        "_loop",
         "_name_to_entry",
         "_update_lock",
-        "_loaded",
     )
 
     def __init__(self, dashboard: ESPHomeDashboard) -> None:
@@ -223,9 +223,7 @@ class DashboardEntries:
             DashboardEvent.ENTRY_STATE_CHANGED, {"entry": entry, "state": state}
         )
 
-    def async_set_state_if_online_or_source(
-        self, entry: DashboardEntry, state: EntryState
-    ) -> None:
+    def async_set_state_if_online_or_source(self, entry: DashboardEntry, state: EntryState) -> None:
         if (
             state.reachable is ReachableState.ONLINE
             and entry.state.reachable is not ReachableState.ONLINE
@@ -248,9 +246,7 @@ class DashboardEntries:
     async def _do_update(self) -> None:
         from .dashboard import DashboardEvent  # avoid circular
 
-        path_to_cache_key = await self._loop.run_in_executor(
-            None, self._get_path_to_cache_key
-        )
+        path_to_cache_key = await self._loop.run_in_executor(None, self._get_path_to_cache_key)
 
         entries = self._entries
         name_to_entry = self._name_to_entry
@@ -270,7 +266,7 @@ class DashboardEntries:
                 original_names[entry] = entry.name
 
         if added or updated:
-            to_load = {**{e: k for e, k in added.items()}, **updated}
+            to_load = {**dict(added), **updated}
             await self._loop.run_in_executor(None, self._load_entries, to_load)
 
         for entry in added:

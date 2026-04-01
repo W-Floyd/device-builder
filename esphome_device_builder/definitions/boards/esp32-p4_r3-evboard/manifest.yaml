@@ -1,0 +1,21 @@
+id: esp32-p4_r3-evboard
+name: "Espressif ESP32-P4 Function EV Board v1.6 (rev.301)"
+description: "ESP32-P4-based board with 16MB flash, 400MHz featuring Bluetooth, openthread."
+manufacturer: "Espressif"
+
+esphome:
+  platform: esp32
+  board: esp32-p4_r3-evboard
+  variant: esp32p4
+
+hardware:
+  flash_size: "16MB"
+  ram_size: 512000
+  cpu_frequency: "400MHz"
+  connectivity: [bluetooth, openthread]
+
+tags: []
+docs_url: "https://esphome.io/components/esp32.html"
+product_url: "https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32p4/esp32-p4-function-ev-board/index.html"
+
+pins: []

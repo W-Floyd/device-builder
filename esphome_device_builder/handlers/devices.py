@@ -5,18 +5,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import shutil
-from dataclasses import asdict
 from pathlib import Path
 
 from aiohttp import web
-
 from esphome import const
+from esphome.config_helpers import import_config
+from esphome.dashboard.util.text import friendly_name_slugify
 from esphome.storage_json import (
-    StorageJSON,
     ext_storage_path,
 )
-from esphome.dashboard.util.text import friendly_name_slugify
 
 from ..dashboard import DASHBOARD
 from ..entries import entry_state_to_bool
@@ -27,8 +24,8 @@ from ..metadata import (
     set_device_metadata,
 )
 from ..models import (
-    ConfiguredDevice,
     AdoptableDevice,
+    ConfiguredDevice,
     DevicesResponse,
     UpdateDeviceRequest,
     UpdateDeviceResponse,
@@ -84,7 +81,7 @@ async def list_devices(request: web.Request) -> web.Response:
         if d.device_name not in configured_names
     ]
 
-    return json_response(asdict(DevicesResponse(configured=configured, importable=importable)))
+    return json_response(DevicesResponse(configured=configured, importable=importable).to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -99,8 +96,7 @@ async def ping(request: web.Request) -> web.Response:
     if dashboard.settings.status_use_mqtt:
         dashboard.mqtt_ping_request.set()
     result = {
-        entry.filename: entry_state_to_bool(entry.state)
-        for entry in dashboard.entries.async_all()
+        entry.filename: entry_state_to_bool(entry.state) for entry in dashboard.entries.async_all()
     }
     return json_response(result)
 
@@ -147,11 +143,7 @@ async def wizard(request: web.Request) -> web.Response:
         friendly = friendly_name_slugify(name)
 
         if config_type == "empty":
-            yaml = (
-                f"esphome:\n"
-                f"  name: {name}\n"
-                f"  friendly_name: {friendly}\n\n"
-            )
+            yaml = f"esphome:\n  name: {name}\n  friendly_name: {friendly}\n\n"
         else:  # "basic"
             yaml = (
                 f"esphome:\n"
@@ -183,7 +175,7 @@ async def wizard(request: web.Request) -> web.Response:
         )
 
     await DASHBOARD.entries.async_request_update_entries()
-    return json_response(asdict(WizardResponse(configuration=filename)), status=200)
+    return json_response(WizardResponse(configuration=filename).to_dict(), status=200)
 
 
 # ---------------------------------------------------------------------------
@@ -222,14 +214,12 @@ async def update_device(request: web.Request) -> web.Response:
 
     meta = get_device_metadata(settings.config_dir, filename)
     return json_response(
-        asdict(
-            UpdateDeviceResponse(
-                name=name,
-                friendly_name=meta.get("friendly_name", name),
-                comment=meta.get("comment"),
-                board_id=meta.get("board_id"),
-            )
-        )
+        UpdateDeviceResponse(
+            name=name,
+            friendly_name=meta.get("friendly_name", name),
+            comment=meta.get("comment"),
+            board_id=meta.get("board_id"),
+        ).to_dict()
     )
 
 
@@ -363,8 +353,6 @@ async def import_device(request: web.Request) -> web.Response:
         return error_response("name and package_import_url are required")
 
     try:
-        from esphome.config_helpers import import_config
-
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(
             None,

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from dataclasses import asdict
 from typing import Any
 
 import aiohttp
@@ -35,24 +34,32 @@ class _EventsConnection:
 
         # Send initial state
         entries = dashboard.entries.async_all()
-        await self._send({
-            "event": DashboardEvent.INITIAL_STATE,
-            "data": {
-                "devices": [
-                    {**e.to_dict(board_id=get_board_id(self._settings.config_dir, e.filename))}
-                    for e in entries
-                ],
-                "ping": {e.filename: entry_state_to_bool(e.state) for e in entries},
-            },
-        })
+        await self._send(
+            {
+                "event": DashboardEvent.INITIAL_STATE,
+                "data": {
+                    "devices": [
+                        {**e.to_dict(board_id=get_board_id(self._settings.config_dir, e.filename))}
+                        for e in entries
+                    ],
+                    "ping": {e.filename: entry_state_to_bool(e.state) for e in entries},
+                },
+            }
+        )
 
         # Subscribe to bus events
         bus = dashboard.bus
         self._unlisten = [
             bus.add_listener(DashboardEvent.ENTRY_STATE_CHANGED, self._on_state_changed),
-            bus.add_listener(DashboardEvent.ENTRY_ADDED, self._make_entry_handler(DashboardEvent.ENTRY_ADDED)),
-            bus.add_listener(DashboardEvent.ENTRY_REMOVED, self._make_entry_handler(DashboardEvent.ENTRY_REMOVED)),
-            bus.add_listener(DashboardEvent.ENTRY_UPDATED, self._make_entry_handler(DashboardEvent.ENTRY_UPDATED)),
+            bus.add_listener(
+                DashboardEvent.ENTRY_ADDED, self._make_entry_handler(DashboardEvent.ENTRY_ADDED)
+            ),
+            bus.add_listener(
+                DashboardEvent.ENTRY_REMOVED, self._make_entry_handler(DashboardEvent.ENTRY_REMOVED)
+            ),
+            bus.add_listener(
+                DashboardEvent.ENTRY_UPDATED, self._make_entry_handler(DashboardEvent.ENTRY_UPDATED)
+            ),
             bus.add_listener(DashboardEvent.IMPORTABLE_DEVICE_ADDED, self._on_importable_added),
             bus.add_listener(DashboardEvent.IMPORTABLE_DEVICE_REMOVED, self._on_importable_removed),
         ]
@@ -88,14 +95,16 @@ class _EventsConnection:
         entry = event.data["entry"]
         state = event.data["state"]
         asyncio.get_event_loop().create_task(
-            self._send({
-                "event": DashboardEvent.ENTRY_STATE_CHANGED,
-                "data": {
-                    "filename": entry.filename,
-                    "name": entry.name,
-                    "state": entry_state_to_bool(state),
-                },
-            })
+            self._send(
+                {
+                    "event": DashboardEvent.ENTRY_STATE_CHANGED,
+                    "data": {
+                        "filename": entry.filename,
+                        "name": entry.name,
+                        "state": entry_state_to_bool(state),
+                    },
+                }
+            )
         )
 
     def _make_entry_handler(self, event_type: DashboardEvent):
@@ -103,11 +112,14 @@ class _EventsConnection:
             entry = event.data["entry"]
             board_id = get_board_id(self._settings.config_dir, entry.filename)
             asyncio.get_event_loop().create_task(
-                self._send({
-                    "event": event_type,
-                    "data": entry.to_dict(board_id=board_id),
-                })
+                self._send(
+                    {
+                        "event": event_type,
+                        "data": entry.to_dict(board_id=board_id),
+                    }
+                )
             )
+
         return handler
 
     def _on_importable_added(self, event: Event) -> None:

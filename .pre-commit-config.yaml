@@ -1,16 +1,20 @@
 repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.6
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
   - repo: local
     hooks:
-      - id: ruff-lint
-        name: ruff lint
-        entry: uv run ruff check --fix
-        language: system
-        types: [python]
-      - id: ruff-format
-        name: ruff format
-        entry: uv run ruff format
-        language: system
-        types: [python]
+      - id: validate-definitions
+        name: validate board/component definitions
+        entry: python script/validate_definitions.py
+        language: python
+        additional_dependencies: [pyyaml, jsonschema]
+        pass_filenames: false
+        files: ^esphome_device_builder/definitions/
+        types: [yaml]
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -28,5 +32,6 @@ repos:
     rev: v2.4.1
     hooks:
       - id: codespell
+        exclude: ^esphome_device_builder/definitions/
         additional_dependencies:
           - tomli

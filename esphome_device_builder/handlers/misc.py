@@ -7,17 +7,15 @@ import gzip
 import importlib
 import json
 import logging
-from dataclasses import asdict
-from pathlib import Path
 
 from aiohttp import web
-
-from esphome import const, platformio_api, yaml_util
+from esphome import const, yaml_util
+from esphome.components.esp32 import VARIANTS as ESP32_VARIANTS
 from esphome.storage_json import StorageJSON, ext_storage_path
 from esphome.util import get_serial_ports
 
 from ..metadata import get_preferences, set_preferences
-from ..models import DownloadItem, SerialPort, VersionResponse
+from ..models import SerialPort, VersionResponse
 from .util import error_response, get_settings, json_response
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +30,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/version")
 async def version(request: web.Request) -> web.Response:
-    return json_response(asdict(VersionResponse(version=const.__version__)))
+    return json_response(VersionResponse(version=const.__version__).to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +47,7 @@ async def serial_ports(request: web.Request) -> web.Response:
         desc = p.description
         if p.path == "/dev/ttyAMA0":
             desc = "UART pins on GPIO header"
-        result.append(asdict(SerialPort(port=p.path, desc=desc)))
+        result.append(SerialPort(port=p.path, desc=desc).to_dict())
     return json_response(result)
 
 
@@ -84,9 +82,7 @@ async def secret_keys(request: web.Request) -> web.Response:
 async def preferences_get(request: web.Request) -> web.Response:
     settings = get_settings(request)
     loop = asyncio.get_running_loop()
-    prefs = await loop.run_in_executor(
-        None, get_preferences, settings.absolute_config_dir
-    )
+    prefs = await loop.run_in_executor(None, get_preferences, settings.absolute_config_dir)
     return json_response(prefs)
 
 
@@ -99,9 +95,7 @@ async def preferences_put(request: web.Request) -> web.Response:
         return error_response("Invalid JSON body")
 
     loop = asyncio.get_running_loop()
-    updated = await loop.run_in_executor(
-        None, set_preferences, settings.absolute_config_dir, body
-    )
+    updated = await loop.run_in_executor(None, set_preferences, settings.absolute_config_dir, body)
     return json_response(updated)
 
 
@@ -116,7 +110,7 @@ async def info(request: web.Request) -> web.Response:
     configuration = request.rel_url.query.get("configuration", "")
 
     try:
-        yaml_path = settings.rel_path(configuration)
+        settings.rel_path(configuration)
     except ValueError:
         return error_response("Forbidden", status=403)
 
@@ -169,7 +163,7 @@ async def downloads(request: web.Request) -> web.Response:
     configuration = request.rel_url.query.get("configuration", "")
 
     try:
-        yaml_path = settings.rel_path(configuration)
+        settings.rel_path(configuration)
     except ValueError:
         return error_response("Forbidden", status=403)
 
@@ -182,7 +176,6 @@ async def downloads(request: web.Request) -> web.Response:
     def _get_downloads():
         platform = (storage.target_platform or "").lower()
         try:
-            from esphome.components.esp32 import VARIANTS as ESP32_VARIANTS
             if platform.upper() in ESP32_VARIANTS:
                 platform_ = "esp32"
             elif platform in ("rtl87xx", "bk72xx", "ln882x", "libretiny"):
@@ -191,7 +184,7 @@ async def downloads(request: web.Request) -> web.Response:
                 platform_ = platform
 
             module = importlib.import_module(f"esphome.components.{platform_}")
-            get_types = getattr(module, "get_download_types")
+            get_types = module.get_download_types
             return get_types(storage)
         except Exception as exc:
             _LOGGER.warning("Could not determine download types: %s", exc)

@@ -55,4 +55,4 @@ Remove the toggle. The ESPHome container ships with the new dashboard baked in. 
 
 ## Board & Component Definitions
 
-Both are individual YAML files in their respective package directories. A loader reads all `*.yaml` files at startup. Adding a board or component = adding a YAML file. These directories can later be extracted into separate community-contributed repositories.
+Live in `esphome_device_builder/definitions/`. Each board or component is a subfolder with a `manifest.yaml` and optional assets (e.g. board images). A loader reads all `*/manifest.yaml` files at startup. Adding a board or component = adding a subfolder. These can later be extracted into a separate community-contributed repository.

@@ -1,8 +1,0 @@
-id: esp32-c3-devkitm-1
-name: "ESP32-C3 DevKitM-1"
-description: "Espressif's low-cost RISC-V ESP32-C3 development board."
-platform: esp32
-board: esp32-c3-devkitm-1
-tags: [esp32, dev-kit, wifi, bluetooth, low-power]
-docs_url: "https://esphome.io/components/esp32.html"
-image_url: null

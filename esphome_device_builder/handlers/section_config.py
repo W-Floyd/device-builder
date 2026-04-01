@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from dataclasses import asdict
 from typing import Any
 
 from aiohttp import web
@@ -40,7 +39,7 @@ async def section_config(request: web.Request) -> web.Response:
     if result is None:
         return error_response(f"Unknown section: {section_key}", status=404)
 
-    return json_response(asdict(result))
+    return json_response(result).to_dict()
 
 
 @routes.post("/devices/{configuration}/section-config")
@@ -72,9 +71,7 @@ async def update_section_config(request: web.Request) -> web.Response:
 
     new_yaml = _update_yaml_section(yaml_text, section_key, values)
 
-    await loop.run_in_executor(
-        None, lambda: path.write_text(new_yaml, encoding="utf-8")
-    )
+    await loop.run_in_executor(None, lambda: path.write_text(new_yaml, encoding="utf-8"))
 
     return json_response({"yaml": new_yaml})
 
@@ -101,7 +98,12 @@ def _update_yaml_section(yaml_text: str, section_key: str, values: dict[str, Any
     section_end = len(lines)
     for i in range(section_start + 1, len(lines)):
         stripped = lines[i]
-        if stripped and not stripped[0].isspace() and not stripped.startswith("#") and stripped.strip():
+        if (
+            stripped
+            and not stripped[0].isspace()
+            and not stripped.startswith("#")
+            and stripped.strip()
+        ):
             section_end = i
             break
 
@@ -115,9 +117,6 @@ def _update_yaml_section(yaml_text: str, section_key: str, values: dict[str, Any
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-
-        # Detect indentation
-        indent = line[: len(line) - len(line.lstrip())]
 
         # Handle nested parent (e.g. 'encryption:')
         parent_match = re.match(r"^(\s+)(\w[\w.]*)\s*:\s*$", line)

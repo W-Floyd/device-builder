@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import asdict
 
 from aiohttp import web
 
@@ -18,7 +17,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/config/catalog")
 async def config_catalog(request: web.Request) -> web.Response:
-    return json_response(asdict(CONFIG_CATALOG))
+    return json_response(CONFIG_CATALOG).to_dict()
 
 
 @routes.post("/devices/{configuration}/config-sections")
@@ -48,4 +47,4 @@ async def add_config_section(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     new_yaml = await loop.run_in_executor(None, append_yaml_block, path, block)
 
-    return json_response(asdict(AddConfigSectionResponse(yaml=new_yaml)))
+    return json_response(AddConfigSectionResponse(yaml=new_yaml).to_dict())
