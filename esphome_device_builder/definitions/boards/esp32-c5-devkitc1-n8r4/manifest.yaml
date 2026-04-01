@@ -1,0 +1,21 @@
+id: esp32-c5-devkitc1-n8r4
+name: "Espressif ESP32-C5-DevKitC-1 N8R4 (8 MB Flash Quad, 4 MB PSRAM Quad)"
+description: "ESP32-C5-based board with 8MB flash, 240MHz featuring Bluetooth, Wi-Fi."
+manufacturer: "Espressif"
+
+esphome:
+  platform: esp32
+  board: esp32-c5-devkitc1-n8r4
+  variant: esp32c5
+
+hardware:
+  flash_size: "8MB"
+  ram_size: 327680
+  cpu_frequency: "240MHz"
+  connectivity: [bluetooth, wifi]
+
+tags: []
+docs_url: "https://esphome.io/components/esp32.html"
+product_url: "https://docs.espressif.com/projects/esp-dev-kits/en/latest/esp32c5/esp32-c5-devkitc-1/user_guide.html"
+
+pins: []

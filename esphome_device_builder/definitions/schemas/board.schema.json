@@ -1,0 +1,178 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://esphome.io/schemas/device-builder/board.schema.json",
+  "title": "ESPHome Device Builder Board Definition",
+  "description": "Schema for board manifest.yaml files in the ESPHome Device Builder.",
+  "type": "object",
+  "required": ["id", "name", "esphome"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique board identifier. Must match the folder name.",
+      "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_.-]*$"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable board name."
+    },
+    "description": {
+      "type": "string",
+      "description": "Board description. Supports markdown."
+    },
+    "manufacturer": {
+      "type": "string",
+      "description": "Board manufacturer or vendor name."
+    },
+    "esphome": {
+      "type": "object",
+      "description": "ESPHome platform configuration for this board.",
+      "required": ["platform", "board"],
+      "additionalProperties": false,
+      "properties": {
+        "platform": {
+          "type": "string",
+          "description": "ESPHome platform.",
+          "enum": ["esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x"]
+        },
+        "board": {
+          "type": "string",
+          "description": "PlatformIO board identifier."
+        },
+        "variant": {
+          "type": ["string", "null"],
+          "description": "ESP32 chip variant. Only for esp32 platform.",
+          "enum": ["esp32", "esp32s2", "esp32s3", "esp32c2", "esp32c3", "esp32c5", "esp32c6", "esp32c61", "esp32h2", "esp32p4", null]
+        },
+        "framework": {
+          "type": ["string", "null"],
+          "description": "Build framework override. Omit or null for platform default.",
+          "enum": ["arduino", "esp-idf", null]
+        }
+      }
+    },
+    "hardware": {
+      "type": "object",
+      "description": "Hardware specifications.",
+      "additionalProperties": false,
+      "properties": {
+        "flash_size": {
+          "type": "string",
+          "description": "Flash memory size.",
+          "examples": ["2MB", "4MB", "8MB", "16MB"]
+        },
+        "ram_size": {
+          "type": "integer",
+          "description": "RAM size in bytes."
+        },
+        "cpu_frequency": {
+          "type": "string",
+          "description": "CPU clock frequency.",
+          "examples": ["80MHz", "160MHz", "240MHz"]
+        },
+        "connectivity": {
+          "type": "array",
+          "description": "Connectivity features.",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "images": {
+      "type": "array",
+      "description": "Board images. URLs or paths relative to the manifest. First is primary.",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tags": {
+      "type": "array",
+      "description": "Unique feature tags not captured by platform/variant/connectivity.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "compact", "dev-kit", "starter-kit", "module", "breakout",
+          "display", "camera", "rgb-led", "relay", "motor-driver", "sd-card",
+          "microphone", "speaker", "imu",
+          "lipo", "poe", "usb-c", "external-antenna", "solar", "battery",
+          "sonoff", "tuya", "shelly"
+        ]
+      }
+    },
+    "pins": {
+      "type": "array",
+      "description": "GPIO pin definitions.",
+      "items": {
+        "$ref": "#/$defs/pin"
+      }
+    },
+    "docs_url": {
+      "type": "string",
+      "description": "Link to ESPHome documentation for this platform.",
+      "format": "uri"
+    },
+    "product_url": {
+      "type": "string",
+      "description": "Link to manufacturer product page.",
+      "format": "uri"
+    },
+    "featured": {
+      "type": "boolean",
+      "description": "Highlighted board (e.g. official ESPHome starter kits).",
+      "default": false
+    },
+    "is_generic": {
+      "type": "boolean",
+      "description": "True for generic fallback boards where not all pins may be physically accessible.",
+      "default": false
+    }
+  },
+  "$defs": {
+    "pin": {
+      "type": "object",
+      "description": "A GPIO pin on the board.",
+      "required": ["gpio"],
+      "additionalProperties": false,
+      "properties": {
+        "gpio": {
+          "type": "integer",
+          "description": "GPIO number.",
+          "minimum": 0
+        },
+        "label": {
+          "type": "string",
+          "description": "Silkscreen label on the physical board (e.g. 'D1', 'GPIO0', 'A0')."
+        },
+        "features": {
+          "type": "array",
+          "description": "Pin capabilities and roles.",
+          "items": {
+            "type": "string",
+            "enum": [
+              "adc", "dac", "touch", "pwm",
+              "i2c_sda", "i2c_scl",
+              "spi_mosi", "spi_miso", "spi_clk", "spi_cs",
+              "uart_tx", "uart_rx",
+              "usb_dp", "usb_dm",
+              "rgb_led", "jtag",
+              "strapping", "input_only", "boot_button"
+            ]
+          }
+        },
+        "available": {
+          "type": ["boolean", "null"],
+          "description": "true = exposed on headers, false = not broken out, null = unknown (generic boards)."
+        },
+        "occupied_by": {
+          "type": "string",
+          "description": "Onboard component using this pin (e.g. 'Built-in LED', 'SPI Flash', 'BOOT button')."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Extra guidance for the user."
+        }
+      }
+    }
+  }
+}

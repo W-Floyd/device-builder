@@ -1,0 +1,182 @@
+"""Board and component definition loaders.
+
+Definitions are stored in subdirectories:
+
+    definitions/
+    ├── boards/
+    │   ├── esp32-devkit-v1/
+    │   │   ├── manifest.yaml
+    │   │   └── images/
+    │   │       └── board-top.png
+    │   └── ...
+    └── components/
+        ├── binary_sensor/
+        │   └── manifest.yaml
+        └── ...
+
+To add a new board or component, create a subfolder with a manifest.yaml file.
+See any existing manifest for the schema.
+"""
+
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import yaml
+
+from ..models import (
+    BoardCatalogEntry,
+    BoardCatalogResponse,
+    BoardEsphomeConfig,
+    BoardHardware,
+    BoardPin,
+    BoardTag,
+    Connectivity,
+    Esp32Variant,
+    PinFeature,
+    Platform,
+)
+
+_LOGGER = logging.getLogger(__name__)
+
+_DEFINITIONS_DIR = Path(__file__).parent
+_BOARDS_DIR = _DEFINITIONS_DIR / "boards"
+
+_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".webp")
+
+
+# ---------------------------------------------------------------------------
+# Boards
+# ---------------------------------------------------------------------------
+
+
+def _resolve_images(board_dir: Path, manifest_images: list[str] | None) -> list[str]:
+    """Build the images list from manifest entries and local files."""
+    images: list[str] = []
+
+    # First: explicit entries from manifest (URLs or relative paths)
+    for entry in manifest_images or []:
+        if entry.startswith(("http://", "https://")):
+            images.append(entry)
+        else:
+            # Resolve relative path against board directory
+            local = board_dir / entry
+            if local.exists():
+                images.append(str(local))
+
+    # Then: auto-discover images in an images/ subfolder (not already listed)
+    images_dir = board_dir / "images"
+    if images_dir.is_dir():
+        known = {Path(p).name for p in images}
+        for img in sorted(images_dir.iterdir()):
+            if img.suffix.lower() in _IMAGE_EXTENSIONS and img.name not in known:
+                images.append(str(img))
+
+    return images
+
+
+def _parse_pin_features(raw: list[str], board_id: str, gpio: int) -> list[PinFeature]:
+    """Parse pin feature strings into PinFeature enums, logging unknowns."""
+    features: list[PinFeature] = []
+    for f in raw:
+        try:
+            features.append(PinFeature(f))
+        except ValueError:
+            _LOGGER.warning(
+                "Board %s GPIO %d: unknown pin feature '%s' — skipping", board_id, gpio, f
+            )
+    return features
+
+
+def _parse_tags(raw: list[str], board_id: str) -> list[BoardTag]:
+    """Parse tag strings into BoardTag enums, logging unknowns."""
+    tags: list[BoardTag] = []
+    for t in raw:
+        try:
+            tags.append(BoardTag(t))
+        except ValueError:
+            _LOGGER.warning("Board %s: unknown tag '%s' — skipping", board_id, t)
+    return tags
+
+
+def _parse_connectivity(raw: list[str], board_id: str) -> list[Connectivity]:
+    """Parse connectivity strings into Connectivity enums, logging unknowns."""
+    result: list[Connectivity] = []
+    for c in raw:
+        try:
+            result.append(Connectivity(c))
+        except ValueError:
+            _LOGGER.warning("Board %s: unknown connectivity '%s' — skipping", board_id, c)
+    return result
+
+
+def _load_pin(data: dict, board_id: str) -> BoardPin:
+    """Load a BoardPin from a dict."""
+    gpio = data["gpio"]
+    return BoardPin(
+        gpio=gpio,
+        label=data.get("label", f"GPIO{gpio}"),
+        features=_parse_pin_features(data.get("features", []), board_id, gpio),
+        available=data.get("available"),
+        occupied_by=data.get("occupied_by"),
+        notes=data.get("notes"),
+    )
+
+
+def _load_esphome_config(data: dict, board_id: str) -> BoardEsphomeConfig:
+    """Load a BoardEsphomeConfig from a dict."""
+    platform = Platform(data["platform"])
+    variant_raw = data.get("variant")
+    variant = Esp32Variant(variant_raw) if variant_raw else None
+    return BoardEsphomeConfig(
+        platform=platform,
+        board=data["board"],
+        variant=variant,
+        framework=data.get("framework"),
+    )
+
+
+def _load_hardware(data: dict | None, board_id: str) -> BoardHardware:
+    """Load a BoardHardware from a dict."""
+    if not data:
+        return BoardHardware()
+    return BoardHardware(
+        flash_size=data.get("flash_size"),
+        ram_size=data.get("ram_size"),
+        cpu_frequency=data.get("cpu_frequency"),
+        connectivity=_parse_connectivity(data.get("connectivity", []), board_id),
+    )
+
+
+def load_board_catalog() -> BoardCatalogResponse:
+    """Load all board definitions from subdirectories."""
+    boards: list[BoardCatalogEntry] = []
+
+    for manifest in sorted(_BOARDS_DIR.glob("*/manifest.yaml")):
+        try:
+            data = yaml.safe_load(manifest.read_text())
+            board_dir = manifest.parent
+            board_id = board_dir.name
+
+            boards.append(
+                BoardCatalogEntry(
+                    id=data["id"],
+                    name=data["name"],
+                    description=data["description"],
+                    manufacturer=data.get("manufacturer", ""),
+                    esphome=_load_esphome_config(data["esphome"], board_id),
+                    hardware=_load_hardware(data.get("hardware"), board_id),
+                    images=_resolve_images(board_dir, data.get("images")),
+                    tags=_parse_tags(data.get("tags", []), board_id),
+                    pins=[_load_pin(p, board_id) for p in data.get("pins", [])],
+                    docs_url=data.get("docs_url", ""),
+                    product_url=data.get("product_url", ""),
+                    featured=data.get("featured", False),
+                    is_generic=data.get("is_generic", False),
+                )
+            )
+        except Exception:
+            _LOGGER.exception("Failed to load board definition from %s", manifest.parent.name)
+
+    return BoardCatalogResponse(boards=boards)
