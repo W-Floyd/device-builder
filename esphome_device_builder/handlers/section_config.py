@@ -39,7 +39,7 @@ async def section_config(request: web.Request) -> web.Response:
     if result is None:
         return error_response(f"Unknown section: {section_key}", status=404)
 
-    return json_response(result).to_dict()
+    return json_response(result)
 
 
 @routes.post("/devices/{configuration}/section-config")

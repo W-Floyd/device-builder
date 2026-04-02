@@ -17,7 +17,7 @@ routes = web.RouteTableDef()
 
 @routes.get("/config/catalog")
 async def config_catalog(request: web.Request) -> web.Response:
-    return json_response(CONFIG_CATALOG).to_dict()
+    return json_response(CONFIG_CATALOG)
 
 
 @routes.post("/devices/{configuration}/config-sections")

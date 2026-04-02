@@ -9,7 +9,7 @@ from pathlib import Path
 
 from aiohttp import web
 from esphome import const
-from esphome.config_helpers import import_config
+from esphome.components.dashboard_import import import_config
 from esphome.dashboard.util.text import friendly_name_slugify
 from esphome.storage_json import (
     ext_storage_path,
