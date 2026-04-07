@@ -127,6 +127,8 @@ class DeviceBuilder:
         """Start the application — load catalogs, initialize controllers."""
         from .controllers.boards import BoardCatalog
         from .controllers.components import ComponentCatalog
+        from .controllers.config import ConfigController
+        from .controllers.devices import DevicesController
         from .entries import DashboardEntries
 
         self.loop = asyncio.get_running_loop()
@@ -138,12 +140,14 @@ class DeviceBuilder:
         self.components = ComponentCatalog()
         self.components.load()
         self.entries = DashboardEntries(self)
+        self.config = ConfigController(self)
+        self.devices = DevicesController(self)
 
         # Load ignored devices
         await self.loop.run_in_executor(None, self._load_ignored_devices)
 
         # Collect command handlers from all controllers
-        for controller in (self.boards, self.components):
+        for controller in (self.boards, self.components, self.config, self.devices):
             self.command_handlers.update(collect_api_commands(controller))
 
         # Register built-in commands
