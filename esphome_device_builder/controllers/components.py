@@ -1,15 +1,13 @@
-"""Component catalog service.
-
-Loads component definitions from the pre-generated components.json file.
-This file is produced by script/sync_components.py from ESPHome's source.
-"""
+"""Component catalog controller."""
 
 from __future__ import annotations
 
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
+from ..helpers.api import api_command
 from ..models import (
     ComponentCatalogEntry,
     ComponentCategory,
@@ -97,10 +95,6 @@ class ComponentCatalog:
         self._by_id = {c.id: c for c in self._components}
         _LOGGER.info("Component catalog loaded: %d components", len(self._components))
 
-    def get_component(self, component_id: str) -> ComponentCatalogEntry | None:
-        """Get a single component by ID."""
-        return self._by_id.get(component_id)
-
     @property
     def categories(self) -> list[dict[str, str | int]]:
         """Return category list with counts."""
@@ -115,14 +109,22 @@ class ComponentCatalog:
             key=lambda c: (-c["count"], c["name"]),
         )
 
-    def get_components(
+    @api_command("components/get_component")
+    async def get_component(self, *, component_id: str, **kwargs: Any) -> dict | None:
+        """Get a single component by ID."""
+        comp = self._by_id.get(component_id)
+        return comp.to_dict() if comp else None
+
+    @api_command("components/get_components")
+    async def get_components(
         self,
         *,
         query: str | None = None,
         category: str | None = None,
         offset: int = 0,
         limit: int = 50,
-    ) -> PagedComponentsResponse:
+        **kwargs: Any,
+    ) -> dict:
         """Get components with optional filtering, search, and pagination."""
         results = self._components
 
@@ -147,8 +149,4 @@ class ComponentCatalog:
             offset=offset,
             limit=limit,
             categories=self.categories,
-        )
-
-
-# Module-level singleton — populated via load() on server startup
-COMPONENT_CATALOG = ComponentCatalog()
+        ).to_dict()

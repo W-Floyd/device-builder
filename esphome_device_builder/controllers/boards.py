@@ -1,15 +1,12 @@
-"""Board catalog service.
-
-Loads board definitions from YAML manifests in the definitions directory.
-This is the single source of truth — upstream data and pins are synced
-into the definitions via scripts in script/.
-"""
+"""Board catalog controller."""
 
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from ..definitions import load_board_catalog
+from ..helpers.api import api_command
 from ..models import BoardCatalogEntry, PagedBoardsResponse
 
 _LOGGER = logging.getLogger(__name__)
@@ -28,14 +25,16 @@ class BoardCatalog:
         self._boards = list(catalog.boards)
         _LOGGER.info("Board catalog loaded: %d boards", len(self._boards))
 
-    def get_board(self, board_id: str) -> BoardCatalogEntry | None:
+    @api_command("boards/get_board")
+    async def get_board(self, *, board_id: str, **kwargs: Any) -> dict | None:
         """Get a single board by ID."""
         for board in self._boards:
             if board.id == board_id:
-                return board
+                return board.to_dict()
         return None
 
-    def get_boards(
+    @api_command("boards/get_boards")
+    async def get_boards(
         self,
         *,
         query: str | None = None,
@@ -44,7 +43,8 @@ class BoardCatalog:
         tag: str | None = None,
         offset: int = 0,
         limit: int = 50,
-    ) -> PagedBoardsResponse:
+        **kwargs: Any,
+    ) -> dict:
         """Get boards with optional filtering, search, and pagination."""
         results = self._boards
 
@@ -75,7 +75,6 @@ class BoardCatalog:
                 or any(query_lower in t for t in b.tags)
             ]
 
-        # Sort: featured first, then generic last, alphabetical
         results = sorted(
             results,
             key=lambda b: (not b.featured, b.is_generic, b.name.lower()),
@@ -88,8 +87,4 @@ class BoardCatalog:
             total=total,
             offset=offset,
             limit=limit,
-        )
-
-
-# Module-level singleton — populated via load() on server startup
-BOARD_CATALOG = BoardCatalog()
+        ).to_dict()
