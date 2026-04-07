@@ -22,30 +22,15 @@ async def list_boards(request: web.Request) -> web.Response:
         offset:   Pagination offset (default: 0)
         limit:    Page size (default: 50, max: 200)
     """
-    query = request.query.get("query")
-    platform = request.query.get("platform")
-    variant = request.query.get("variant")
-    tag = request.query.get("tag")
-    offset = max(0, int(request.query.get("offset", "0")))
-    limit = min(200, max(1, int(request.query.get("limit", "50"))))
-
-    boards, total = BOARD_CATALOG.search(
-        query=query,
-        platform=platform,
-        variant=variant,
-        tag=tag,
-        offset=offset,
-        limit=limit,
+    result = BOARD_CATALOG.get_boards(
+        query=request.query.get("query"),
+        platform=request.query.get("platform"),
+        variant=request.query.get("variant"),
+        tag=request.query.get("tag"),
+        offset=max(0, int(request.query.get("offset", "0"))),
+        limit=min(200, max(1, int(request.query.get("limit", "50")))),
     )
-
-    return json_response(
-        {
-            "boards": [b.to_dict() for b in boards],
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-        }
-    )
+    return json_response(result.to_dict())
 
 
 @routes.get("/boards/{board_id}")

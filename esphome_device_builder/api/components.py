@@ -27,27 +27,13 @@ async def list_components(request: web.Request) -> web.Response:
         offset:   Pagination offset (default: 0)
         limit:    Page size (default: 50, max: 200)
     """
-    query = request.query.get("query")
-    category = request.query.get("category")
-    offset = max(0, int(request.query.get("offset", "0")))
-    limit = min(200, max(1, int(request.query.get("limit", "50"))))
-
-    components, total = COMPONENT_CATALOG.search(
-        query=query,
-        category=category,
-        offset=offset,
-        limit=limit,
+    result = COMPONENT_CATALOG.get_components(
+        query=request.query.get("query"),
+        category=request.query.get("category"),
+        offset=max(0, int(request.query.get("offset", "0"))),
+        limit=min(200, max(1, int(request.query.get("limit", "50")))),
     )
-
-    return json_response(
-        {
-            "components": [c.to_dict() for c in components],
-            "total": total,
-            "offset": offset,
-            "limit": limit,
-            "categories": COMPONENT_CATALOG.categories,
-        }
-    )
+    return json_response(result.to_dict())
 
 
 @routes.get("/components/{component_id}")

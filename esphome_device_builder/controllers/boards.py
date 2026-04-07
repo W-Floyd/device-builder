@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 
 from ..definitions import load_board_catalog
-from ..models import BoardCatalogEntry
+from ..models import BoardCatalogEntry, PagedBoardsResponse
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -28,11 +28,6 @@ class BoardCatalog:
         self._boards = list(catalog.boards)
         _LOGGER.info("Board catalog loaded: %d boards", len(self._boards))
 
-    @property
-    def all_boards(self) -> list[BoardCatalogEntry]:
-        """Return all boards in the catalog."""
-        return self._boards
-
     def get_board(self, board_id: str) -> BoardCatalogEntry | None:
         """Get a single board by ID."""
         for board in self._boards:
@@ -40,7 +35,7 @@ class BoardCatalog:
                 return board
         return None
 
-    def search(
+    def get_boards(
         self,
         *,
         query: str | None = None,
@@ -49,11 +44,8 @@ class BoardCatalog:
         tag: str | None = None,
         offset: int = 0,
         limit: int = 50,
-    ) -> tuple[list[BoardCatalogEntry], int]:
-        """Search boards with filtering and pagination.
-
-        Returns a tuple of (results, total_count).
-        """
+    ) -> PagedBoardsResponse:
+        """Get boards with optional filtering, search, and pagination."""
         results = self._boards
 
         if platform:
@@ -91,7 +83,12 @@ class BoardCatalog:
 
         total = len(results)
         page = results[offset : offset + limit]
-        return page, total
+        return PagedBoardsResponse(
+            boards=page,
+            total=total,
+            offset=offset,
+            limit=limit,
+        )
 
 
 # Module-level singleton — populated via load() on server startup

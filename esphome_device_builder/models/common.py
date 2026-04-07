@@ -7,6 +7,19 @@ from typing import Any
 
 from mashumaro.mixins.orjson import DataClassORJSONMixin
 
+# ---------------------------------------------------------------------------
+# Paged response base
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PagedResponse(DataClassORJSONMixin):
+    """Base for paginated API responses."""
+
+    total: int = 0
+    offset: int = 0
+    limit: int = 50
+
 
 @dataclass
 class ConfigValueOption(DataClassORJSONMixin):

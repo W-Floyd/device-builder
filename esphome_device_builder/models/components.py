@@ -8,6 +8,8 @@ from typing import Any
 
 from mashumaro.mixins.orjson import DataClassORJSONMixin
 
+from .common import PagedResponse
+
 
 class ConfigEntryType(StrEnum):
     """Config entry field types."""
@@ -116,3 +118,11 @@ class AddComponentResponse(DataClassORJSONMixin):
     """Response after adding a component."""
 
     yaml: str
+
+
+@dataclass
+class PagedComponentsResponse(PagedResponse):
+    """Paginated component catalog API response."""
+
+    components: list[ComponentCatalogEntry] = field(default_factory=list)
+    categories: list[dict[str, str | int]] = field(default_factory=list)

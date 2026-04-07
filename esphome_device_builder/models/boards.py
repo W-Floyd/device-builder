@@ -7,6 +7,8 @@ from enum import StrEnum
 
 from mashumaro.mixins.orjson import DataClassORJSONMixin
 
+from .common import PagedResponse
+
 
 class PinFeature(StrEnum):
     """Known GPIO pin features/capabilities."""
@@ -158,4 +160,13 @@ class BoardCatalogEntry(DataClassORJSONMixin):
 
 @dataclass
 class BoardCatalogResponse(DataClassORJSONMixin):
+    """Internal: raw board list from definitions loader."""
+
     boards: list[BoardCatalogEntry]
+
+
+@dataclass
+class PagedBoardsResponse(PagedResponse):
+    """Paginated board catalog API response."""
+
+    boards: list[BoardCatalogEntry] = field(default_factory=list)
