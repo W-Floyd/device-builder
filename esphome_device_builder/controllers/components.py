@@ -110,10 +110,11 @@ class ComponentCatalog:
         )
 
     @api_command("components/get_component")
-    async def get_component(self, *, component_id: str, **kwargs: Any) -> dict | None:
+    async def get_component(
+        self, *, component_id: str, **kwargs: Any
+    ) -> ComponentCatalogEntry | None:
         """Get a single component by ID."""
-        comp = self._by_id.get(component_id)
-        return comp.to_dict() if comp else None
+        return self._by_id.get(component_id)
 
     @api_command("components/get_components")
     async def get_components(
@@ -124,7 +125,7 @@ class ComponentCatalog:
         offset: int = 0,
         limit: int = 50,
         **kwargs: Any,
-    ) -> dict:
+    ) -> PagedComponentsResponse:
         """Get components with optional filtering, search, and pagination."""
         results = self._components
 
@@ -149,4 +150,4 @@ class ComponentCatalog:
             offset=offset,
             limit=limit,
             categories=self.categories,
-        ).to_dict()
+        )

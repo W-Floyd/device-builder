@@ -14,6 +14,7 @@ from esphome.storage_json import ext_storage_path
 from ..entries import entry_state_to_bool
 from ..helpers.api import api_command
 from ..models import (
+    AddComponentResponse,
     AdoptableDevice,
     ConfiguredDevice,
     DevicesResponse,
@@ -51,7 +52,7 @@ class DevicesController:
     # ------------------------------------------------------------------
 
     @api_command("devices/list")
-    async def list_devices(self, **kwargs: Any) -> dict:
+    async def list_devices(self, **kwargs: Any) -> DevicesResponse:
         """List all configured and importable devices."""
         db = self._db
         await db.entries.async_request_update_entries()
@@ -83,7 +84,7 @@ class DevicesController:
                 )
             )
 
-        return DevicesResponse(configured=configured, importable=importable).to_dict()
+        return DevicesResponse(configured=configured, importable=importable)
 
     @api_command("devices/get_states")
     async def get_device_states(self, **kwargs: Any) -> dict:
@@ -114,7 +115,7 @@ class DevicesController:
         file_content: str | None = None,
         board_id: str | None = None,
         **kwargs: Any,
-    ) -> dict:
+    ) -> WizardResponse:
         """Create a new device configuration."""
         db = self._db
         name = name.strip()
@@ -168,7 +169,7 @@ class DevicesController:
             )
 
         await db.entries.async_request_update_entries()
-        return WizardResponse(configuration=filename).to_dict()
+        return WizardResponse(configuration=filename)
 
     @api_command("devices/update")
     async def update_device(
@@ -179,7 +180,7 @@ class DevicesController:
         comment: str | None = None,
         board_id: str | None = None,
         **kwargs: Any,
-    ) -> dict:
+    ) -> UpdateDeviceResponse:
         """Update device metadata."""
         db = self._db
         filename = f"{name}.yaml"
@@ -202,7 +203,7 @@ class DevicesController:
             friendly_name=meta.get("friendly_name", name),
             comment=meta.get("comment"),
             board_id=meta.get("board_id"),
-        ).to_dict()
+        )
 
     @api_command("devices/delete")
     async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
@@ -248,6 +249,50 @@ class DevicesController:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, path.write_text, content, "utf-8")
         await db.entries.async_request_update_entries()
+
+    @api_command("devices/add_component")
+    async def add_component(
+        self,
+        *,
+        configuration: str,
+        component_id: str,
+        fields: dict[str, Any] | None = None,
+        sub_entities: dict[str, dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> AddComponentResponse:
+        """Add a component to a device configuration.
+
+        Looks up the component from the catalog, validates required fields,
+        generates YAML, and appends to the device config file.
+        """
+        from ..yaml_editor import generate_component_yaml
+
+        db = self._db
+        component = db.components.get_component(component_id=component_id)
+        if component is None:
+            msg = f"Unknown component: {component_id}"
+            raise ValueError(msg)
+
+        fields = fields or {}
+
+        # Validate required fields
+        for entry in component.config_entries:
+            if entry.required and entry.key not in fields:
+                msg = f"Missing required field: {entry.key}"
+                raise ValueError(msg)
+
+        # Generate YAML block
+        yaml_block = generate_component_yaml(component, fields, sub_entities)
+
+        # Read existing config and append
+        config_path = db.settings.rel_path(configuration)
+        loop = asyncio.get_running_loop()
+        existing = await loop.run_in_executor(None, config_path.read_text, "utf-8")
+        new_yaml = existing.rstrip() + "\n\n" + yaml_block + "\n"
+        await loop.run_in_executor(None, config_path.write_text, new_yaml, "utf-8")
+        await db.entries.async_request_update_entries()
+
+        return AddComponentResponse(yaml=new_yaml)
 
     @api_command("devices/import")
     async def import_device(

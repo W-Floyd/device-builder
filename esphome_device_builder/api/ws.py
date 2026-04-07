@@ -45,7 +45,9 @@ class WebSocketClient:
             pass
 
     async def send_result(self, message_id: str, result: Any = None) -> None:
-        """Send a success result."""
+        """Send a success result, serializing dataclass results automatically."""
+        if hasattr(result, "to_dict"):
+            result = result.to_dict()
         msg = ResultMessage(message_id=message_id, result=result)
         await self.send(msg.to_dict())
 

@@ -26,11 +26,11 @@ class BoardCatalog:
         _LOGGER.info("Board catalog loaded: %d boards", len(self._boards))
 
     @api_command("boards/get_board")
-    async def get_board(self, *, board_id: str, **kwargs: Any) -> dict | None:
+    async def get_board(self, *, board_id: str, **kwargs: Any) -> BoardCatalogEntry | None:
         """Get a single board by ID."""
         for board in self._boards:
             if board.id == board_id:
-                return board.to_dict()
+                return board
         return None
 
     @api_command("boards/get_boards")
@@ -44,7 +44,7 @@ class BoardCatalog:
         offset: int = 0,
         limit: int = 50,
         **kwargs: Any,
-    ) -> dict:
+    ) -> PagedBoardsResponse:
         """Get boards with optional filtering, search, and pagination."""
         results = self._boards
 
@@ -82,9 +82,4 @@ class BoardCatalog:
 
         total = len(results)
         page = results[offset : offset + limit]
-        return PagedBoardsResponse(
-            boards=page,
-            total=total,
-            offset=offset,
-            limit=limit,
-        ).to_dict()
+        return PagedBoardsResponse(boards=page, total=total, offset=offset, limit=limit)
