@@ -1,100 +1,38 @@
 """ESPHome Device Builder — core application singleton.
 
-The DeviceBuilder class is the main entry point. It owns all controllers,
-the event bus, the file watcher, and the aiohttp web application.
+The DeviceBuilder class is the main entry point. It owns controllers,
+the event bus, and the aiohttp web application. Device state lives in
+the DevicesController, not here.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
-import threading
-from collections.abc import Callable
-from dataclasses import dataclass
-from enum import StrEnum
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
-from esphome.storage_json import ignored_devices_storage_path
 
 from .controllers.config import DashboardSettings
 from .helpers.api import CommandHandler, collect_api_commands
+from .helpers.event_bus import EventBus
 from .helpers.json import cors_middleware
 
 if TYPE_CHECKING:
-    from .entries import DashboardEntries
+    from .controllers.boards import BoardCatalog
+    from .controllers.components import ComponentCatalog
+    from .controllers.config import ConfigController
+    from .controllers.devices import DevicesController
 
 _LOGGER = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# Event bus
-# ---------------------------------------------------------------------------
-
-
-class DashboardEvent(StrEnum):
-    """Events fired by the dashboard."""
-
-    ENTRY_ADDED = "entry_added"
-    ENTRY_REMOVED = "entry_removed"
-    ENTRY_UPDATED = "entry_updated"
-    ENTRY_STATE_CHANGED = "entry_state_changed"
-    IMPORTABLE_DEVICE_ADDED = "importable_device_added"
-    IMPORTABLE_DEVICE_REMOVED = "importable_device_removed"
-    INITIAL_STATE = "initial_state"
-    PING = "ping"
-    PONG = "pong"
-    REFRESH = "refresh"
-
-
-@dataclass
-class Event:
-    """A dashboard event."""
-
-    event_type: DashboardEvent
-    data: dict[str, Any]
-
-
-class EventBus:
-    """Simple synchronous event bus."""
-
-    def __init__(self) -> None:
-        self._listeners: dict[DashboardEvent, set[Callable[[Event], None]]] = {}
-
-    def add_listener(
-        self, event_type: DashboardEvent, listener: Callable[[Event], None]
-    ) -> Callable[[], None]:
-        """Add a listener. Returns an unsubscribe callback."""
-        self._listeners.setdefault(event_type, set()).add(listener)
-        return partial(self._remove_listener, event_type, listener)
-
-    def _remove_listener(
-        self, event_type: DashboardEvent, listener: Callable[[Event], None]
-    ) -> None:
-        self._listeners.get(event_type, set()).discard(listener)
-
-    def fire(self, event_type: DashboardEvent, data: dict[str, Any]) -> None:
-        """Fire an event to all listeners."""
-        event = Event(event_type, data)
-        for listener in list(self._listeners.get(event_type, set())):
-            try:
-                listener(event)
-            except Exception:
-                _LOGGER.exception("Event listener raised an exception")
-
-
-# ---------------------------------------------------------------------------
-# DeviceBuilder
-# ---------------------------------------------------------------------------
 
 
 class DeviceBuilder:
     """Core application singleton.
 
-    Owns all controllers, the event bus, the file watcher, and the web app.
+    Owns controllers, event bus, command registry, and web app.
+    All device state lives in DevicesController.
     """
 
     def __init__(self, settings: DashboardSettings) -> None:
@@ -103,19 +41,11 @@ class DeviceBuilder:
         self.bus = EventBus()
         self.loop: asyncio.AbstractEventLoop | None = None
 
-        # State
-        self.import_result: dict[str, Any] = {}
-        self.ignored_devices: set[str] = set()
-        self.ping_request: asyncio.Event | None = None
-        self.mqtt_ping_request = threading.Event()
-
         # Controllers — populated in start()
-        self.entries: DashboardEntries | None = None
-        self.boards: Any = None
-        self.components: Any = None
-        self.devices: Any = None
-        self.config: Any = None
-        self.metadata_ctrl: Any = None
+        self.boards: BoardCatalog | None = None
+        self.components: ComponentCatalog | None = None
+        self.config: ConfigController | None = None
+        self.devices: DevicesController | None = None
 
         # Command registry — populated from controllers
         self.command_handlers: dict[str, CommandHandler] = {}
@@ -130,32 +60,24 @@ class DeviceBuilder:
         from .controllers.components import ComponentCatalog
         from .controllers.config import ConfigController
         from .controllers.devices import DevicesController
-        from .entries import DashboardEntries
 
         self.loop = asyncio.get_running_loop()
-        self.ping_request = asyncio.Event()
 
         # Initialize controllers
         self.boards = BoardCatalog()
         self.boards.load()
         self.components = ComponentCatalog()
         self.components.load()
-        self.entries = DashboardEntries(self)
         self.config = ConfigController(self)
         self.devices = DevicesController(self)
-
-        # Load ignored devices
-        await self.loop.run_in_executor(None, self._load_ignored_devices)
+        await self.devices.start()
 
         # Collect command handlers from all controllers
         for controller in (self.boards, self.components, self.config, self.devices):
             self.command_handlers.update(collect_api_commands(controller))
 
         # Register built-in commands
-        self._register_builtin_commands()
-
-        # Initial file scan
-        await self.entries.async_update_entries()
+        self.command_handlers["ping"] = self._cmd_ping
 
         # Start background polling
         self._bg_task = asyncio.create_task(self._run_background())
@@ -180,32 +102,19 @@ class DeviceBuilder:
             await asyncio.gather(*self._background_tasks, return_exceptions=True)
 
     async def _run_background(self) -> None:
-        """Background polling loop (file watcher, ping)."""
+        """Background polling loop."""
         try:
             while True:
                 await asyncio.sleep(5)
-                if self.entries:
-                    await self.entries.async_request_update_entries()
-                if self.ping_request:
-                    self.ping_request.set()
+                if self.devices:
+                    await self.devices.poll()
         except asyncio.CancelledError:
             pass
 
-    def _load_ignored_devices(self) -> None:
-        """Load ignored devices list from disk."""
-        storage_path = ignored_devices_storage_path()
-        try:
-            with storage_path.open("r", encoding="utf-8") as f:
-                data = json.load(f)
-                self.ignored_devices = set(data.get("ignored_devices", []))
-        except FileNotFoundError:
-            pass
-
-    def save_ignored_devices(self) -> None:
-        """Persist ignored devices list to disk."""
-        storage_path = ignored_devices_storage_path()
-        with storage_path.open("w", encoding="utf-8") as f:
-            json.dump({"ignored_devices": sorted(self.ignored_devices)}, f, indent=2)
+    @staticmethod
+    async def _cmd_ping(**kwargs: Any) -> dict:
+        """Respond to ping."""
+        return {"pong": True}
 
     def create_background_task(self, coro: Any) -> asyncio.Task:
         """Create a tracked background task."""
@@ -213,16 +122,6 @@ class DeviceBuilder:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
         return task
-
-    def _register_builtin_commands(self) -> None:
-        """Register built-in commands that don't belong to a specific controller."""
-        from .helpers.api import api_command
-
-        @api_command("ping")
-        async def cmd_ping(**kwargs: Any) -> dict:
-            return {"pong": True}
-
-        self.command_handlers["ping"] = cmd_ping
 
     # ------------------------------------------------------------------
     # Web application
@@ -253,7 +152,6 @@ class DeviceBuilder:
                 "Install esphome-device-builder-frontend for the web UI."
             )
 
-        # Lifecycle hooks
         app.on_startup.append(self._on_startup)
         app.on_cleanup.append(self._on_cleanup)
 

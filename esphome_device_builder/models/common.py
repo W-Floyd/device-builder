@@ -26,6 +26,31 @@ class PagedResponse(DataClassORJSONMixin):
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Event types
+# ---------------------------------------------------------------------------
+
+
+class EventType(StrEnum):
+    """Events fired by the device builder."""
+
+    ENTRY_ADDED = "entry_added"
+    ENTRY_REMOVED = "entry_removed"
+    ENTRY_UPDATED = "entry_updated"
+    ENTRY_STATE_CHANGED = "entry_state_changed"
+    IMPORTABLE_DEVICE_ADDED = "importable_device_added"
+    IMPORTABLE_DEVICE_REMOVED = "importable_device_removed"
+    INITIAL_STATE = "initial_state"
+    PING = "ping"
+    PONG = "pong"
+    REFRESH = "refresh"
+
+
+# ---------------------------------------------------------------------------
+# Config entry types
+# ---------------------------------------------------------------------------
+
+
 class ConfigEntryType(StrEnum):
     """Config entry field types."""
 

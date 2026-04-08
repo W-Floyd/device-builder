@@ -75,32 +75,18 @@ def create_legacy_routes() -> web.RouteTableDef:
     async def legacy_devices(request: web.Request) -> web.Response:
         """Legacy GET /devices — returns configured + importable devices."""
         db = request.app["device_builder"]
-        if db.entries:
-            await db.entries.async_request_update_entries()
-        entries = await db.entries.async_all() if db.entries else []
+        devices_ctrl = db.devices
+        await devices_ctrl._request_update_entries()
 
         configured = []
-        for entry in entries:
+        for entry in devices_ctrl.get_all_entries():
             configured.append(
-                {
-                    "name": entry.name,
-                    "friendly_name": entry.friendly_name,
-                    "configuration": entry.filename,
-                    "path": str(entry.path),
-                    "comment": entry.comment,
-                    "address": entry.address,
-                    "web_port": entry.web_port,
-                    "target_platform": entry.target_platform,
-                    "current_version": entry.current_version,
-                    "deployed_version": entry.deployed_version,
-                    "loaded_integrations": entry.loaded_integrations,
-                    "board_id": get_board_id(db.settings.config_dir, entry.filename),
-                }
+                entry.to_legacy_dict(board_id=get_board_id(db.settings.config_dir, entry.filename))
             )
 
         importable = []
-        for name, imp in db.import_result.items():
-            if name in db.ignored_devices:
+        for name, imp in devices_ctrl.import_result.items():
+            if name in devices_ctrl.ignored_devices:
                 continue
             importable.append(
                 {
@@ -110,7 +96,7 @@ def create_legacy_routes() -> web.RouteTableDef:
                     "project_name": getattr(imp, "project_name", ""),
                     "project_version": getattr(imp, "project_version", ""),
                     "network": getattr(imp, "network", "wifi"),
-                    "ignored": name in db.ignored_devices,
+                    "ignored": name in devices_ctrl.ignored_devices,
                 }
             )
 
