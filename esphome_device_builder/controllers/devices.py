@@ -15,6 +15,7 @@ from esphome.dashboard.util.text import friendly_name_slugify
 from esphome.storage_json import StorageJSON, ext_storage_path, ignored_devices_storage_path
 
 from ..helpers.api import api_command
+from ..helpers.yaml import generate_component_yaml
 from ..models import (
     AddComponentResponse,
     AdoptableDevice,
@@ -398,8 +399,6 @@ class DevicesController:
         **kwargs: Any,
     ) -> AddComponentResponse:
         """Add a component to a device configuration."""
-        from ..yaml_editor import generate_component_yaml
-
         component = self._db.components.get_component(component_id=component_id)
         if component is None:
             msg = f"Unknown component: {component_id}"
