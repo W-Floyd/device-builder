@@ -10,33 +10,33 @@ The primary API. A single multiplexed WebSocket handles all commands.
 
 **Connect:** `ws://localhost:6052/ws`
 
-On connect, the server sends:
+On connect, the server sends a [`ServerInfoMessage`](../esphome_device_builder/models/api.py):
 ```json
 {"server_version": "0.0.0", "esphome_version": "2026.3.1"}
 ```
 
-**Send a command:**
+**Send a [`CommandMessage`](../esphome_device_builder/models/api.py):**
 ```json
 {"command": "devices/list", "message_id": "1", "args": {}}
 ```
 
-**Receive a result:**
+**Receive a [`ResultMessage`](../esphome_device_builder/models/api.py):**
 ```json
 {"message_id": "1", "result": { ... }}
 ```
 
-**Streaming output (compile/upload/logs):**
+**Streaming output ([`EventMessage`](../esphome_device_builder/models/api.py)):**
 ```json
 {"message_id": "1", "event": "output", "data": "Compiling...\n"}
 {"message_id": "1", "event": "result", "data": {"success": true, "code": 0}}
 ```
 
-**Error:**
+**Error ([`ErrorMessage`](../esphome_device_builder/models/api.py)):**
 ```json
 {"message_id": "1", "error_code": "unknown_command", "details": "..."}
 ```
 
-### Error Codes
+### Error Codes ([`ErrorCode`](../esphome_device_builder/models/api.py))
 
 | Code | Description |
 |------|-------------|
@@ -51,6 +51,10 @@ On connect, the server sends:
 ## Commands
 
 ### Devices
+
+> Models: [`Device`](../esphome_device_builder/models/devices.py), [`DevicesResponse`](../esphome_device_builder/models/devices.py), [`WizardResponse`](../esphome_device_builder/models/devices.py), [`UpdateDeviceResponse`](../esphome_device_builder/models/devices.py)
+>
+> Controller: [`DevicesController`](../esphome_device_builder/controllers/devices.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
@@ -72,19 +76,53 @@ On connect, the server sends:
 
 ### Boards
 
+> Models: [`BoardCatalogEntry`](../esphome_device_builder/models/boards.py), [`PagedBoardsResponse`](../esphome_device_builder/models/boards.py)
+>
+> Controller: [`BoardCatalog`](../esphome_device_builder/controllers/boards.py)
+>
+> Enums: [`Platform`](../esphome_device_builder/models/boards.py), [`Esp32Variant`](../esphome_device_builder/models/boards.py), [`BoardTag`](../esphome_device_builder/models/boards.py)
+
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `boards/get_boards` | `{query?, platform?, variant?, tag?, offset?, limit?}` | `PagedBoardsResponse` | Search/list boards |
 | `boards/get_board` | `{board_id}` | `BoardCatalogEntry` | Get single board with pin map |
 
+**`boards/get_boards` args detail:**
+
+| Arg | Type | Description |
+|-----|------|-------------|
+| `query` | `string` | Free-text search across name, description, manufacturer, id, tags |
+| `platform` | [`Platform`](../esphome_device_builder/models/boards.py) | Filter: `esp32`, `esp8266`, `rp2040`, `bk72xx`, `rtl87xx`, `ln882x` |
+| `variant` | [`Esp32Variant`](../esphome_device_builder/models/boards.py) | Filter: `esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`, ... |
+| `tag` | [`BoardTag`](../esphome_device_builder/models/boards.py) | Filter: `compact`, `dev-kit`, `starter-kit`, `display`, `poe`, `usb-c`, ... |
+| `offset` | `int` | Pagination offset (default: 0) |
+| `limit` | `int` | Page size (default: 50, max: 200) |
+
 ### Components
+
+> Models: [`ComponentCatalogEntry`](../esphome_device_builder/models/components.py), [`PagedComponentsResponse`](../esphome_device_builder/models/components.py), [`ConfigEntry`](../esphome_device_builder/models/common.py)
+>
+> Controller: [`ComponentCatalog`](../esphome_device_builder/controllers/components.py)
+>
+> Enums: [`ComponentCategory`](../esphome_device_builder/models/components.py), [`ConfigEntryType`](../esphome_device_builder/models/common.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `components/get_components` | `{query?, category?, offset?, limit?}` | `PagedComponentsResponse` | Search/list components |
 | `components/get_component` | `{component_id}` | `ComponentCatalogEntry` | Get component with config entries |
 
+**`components/get_components` args detail:**
+
+| Arg | Type | Description |
+|-----|------|-------------|
+| `query` | `string` | Free-text search across name, description, id |
+| `category` | [`ComponentCategory`](../esphome_device_builder/models/components.py) | Filter: `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `core`, `bus`, ... |
+| `offset` | `int` | Pagination offset (default: 0) |
+| `limit` | `int` | Page size (default: 50, max: 200) |
+
 ### Config
+
+> Controller: [`ConfigController`](../esphome_device_builder/controllers/config.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
@@ -100,7 +138,45 @@ On connect, the server sends:
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `ping` | — | `{pong: true}` | Health check |
-| `subscribe_events` | — | Streaming events | Subscribe to state changes |
+| `subscribe_events` | — | Streaming [`EventType`](../esphome_device_builder/models/common.py) | Subscribe to state changes |
+
+---
+
+## Models
+
+All models are dataclasses with mashumaro `DataClassORJSONMixin` for serialization.
+
+| Model | File | Description |
+|-------|------|-------------|
+| `Device` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | A configured ESPHome device |
+| `AdoptableDevice` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | A discoverable device for import |
+| `DevicesResponse` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | List of configured + importable devices |
+| `BoardCatalogEntry` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | Board with hardware specs, pins, images |
+| `BoardPin` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | GPIO pin with features and availability |
+| `PagedBoardsResponse` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | Paginated board list |
+| `ComponentCatalogEntry` | [`models/components.py`](../esphome_device_builder/models/components.py) | Component with config entries |
+| `ComponentSubEntity` | [`models/components.py`](../esphome_device_builder/models/components.py) | Sub-entity (e.g. DHT temperature) |
+| `PagedComponentsResponse` | [`models/components.py`](../esphome_device_builder/models/components.py) | Paginated component list |
+| `ConfigEntry` | [`models/common.py`](../esphome_device_builder/models/common.py) | Config field definition |
+| `PagedResponse` | [`models/common.py`](../esphome_device_builder/models/common.py) | Base for paginated responses |
+| `CommandMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Client → Server command |
+| `ResultMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client result |
+| `ErrorMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client error |
+| `EventMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client streaming event |
+
+## Enums
+
+| Enum | File | Values |
+|------|------|--------|
+| `Platform` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `esp32`, `esp8266`, `rp2040`, `bk72xx`, `rtl87xx`, `ln882x` |
+| `Esp32Variant` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `esp32`, `esp32s2`, `esp32s3`, `esp32c2`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32c61`, `esp32h2`, `esp32p4` |
+| `Connectivity` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `wifi`, `bluetooth`, `ethernet`, `zigbee`, `thread`, `openthread`, `can`, `matter`, `lora` |
+| `BoardTag` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `compact`, `dev-kit`, `starter-kit`, `display`, `camera`, `rgb-led`, `relay`, `lipo`, `poe`, `usb-c`, `sonoff`, `tuya`, `shelly`, ... |
+| `PinFeature` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `adc`, `dac`, `touch`, `pwm`, `i2c_sda`, `i2c_scl`, `spi_mosi`, `uart_tx`, `strapping`, `input_only`, `boot_button`, ... |
+| `ComponentCategory` | [`models/components.py`](../esphome_device_builder/models/components.py) | `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `core`, `bus`, `misc`, ... |
+| `ConfigEntryType` | [`models/common.py`](../esphome_device_builder/models/common.py) | `string`, `integer`, `float`, `boolean`, `select`, `pin`, `time_period`, `icon`, `id`, `unknown`, ... |
+| `EventType` | [`models/common.py`](../esphome_device_builder/models/common.py) | `entry_added`, `entry_removed`, `entry_updated`, `entry_state_changed`, ... |
+| `ErrorCode` | [`models/api.py`](../esphome_device_builder/models/api.py) | `invalid_message`, `unknown_command`, `invalid_args`, `not_found`, `internal_error` |
 
 ---
 

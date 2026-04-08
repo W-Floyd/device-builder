@@ -7,7 +7,7 @@ from typing import Any
 
 from ..definitions import load_board_catalog
 from ..helpers.api import api_command
-from ..models import BoardCatalogEntry, PagedBoardsResponse
+from ..models import BoardCatalogEntry, BoardTag, Esp32Variant, PagedBoardsResponse, Platform
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -38,9 +38,9 @@ class BoardCatalog:
         self,
         *,
         query: str | None = None,
-        platform: str | None = None,
-        variant: str | None = None,
-        tag: str | None = None,
+        platform: Platform | str | None = None,
+        variant: Esp32Variant | str | None = None,
+        tag: BoardTag | str | None = None,
         offset: int = 0,
         limit: int = 50,
         **kwargs: Any,

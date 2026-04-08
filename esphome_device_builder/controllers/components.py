@@ -121,7 +121,7 @@ class ComponentCatalog:
         self,
         *,
         query: str | None = None,
-        category: str | None = None,
+        category: ComponentCategory | str | None = None,
         offset: int = 0,
         limit: int = 50,
         **kwargs: Any,
