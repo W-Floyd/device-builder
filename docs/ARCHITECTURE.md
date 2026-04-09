@@ -2,7 +2,7 @@
 
 ## Principles
 
-1. **ESPHome is a CLI tool.** Operations (compile, upload, logs) shell out to `python -m esphome <command>`. Data access (device metadata, board definitions, serial ports) uses ESPHome Python imports.
+1. **ESPHome is a CLI tool.** Operations (compile, upload, logs) shell out to `python -m esphome <command>`. Device metadata and serial ports use ESPHome Python imports. Board and component definitions come from our own `definitions/` directory — synced from upstream sources via scripts.
 
 2. **ESPHome is an optional dependency.** `pip install .[esphome]` pulls it in for standalone use. Plain `pip install .` works when esphome is already present (e.g. inside the ESPHome container).
 

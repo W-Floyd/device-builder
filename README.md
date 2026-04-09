@@ -55,7 +55,7 @@ The backend is a **standalone project** using ESPHome as a dependency. It provid
 ```
 DeviceBuilder (singleton)
 ├── controllers/boards.py        — 501 board definitions with pin maps
-├── controllers/components.py    — 655 components parsed from ESPHome source
+├── controllers/components.py    — 655 components from definitions
 ├── controllers/devices.py       — device CRUD, file scanning, compile/upload/logs
 ├── controllers/automations.py   — context-aware triggers and actions
 ├── controllers/config.py        — settings, preferences, secrets, version
@@ -69,7 +69,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and [
 
 - **A device** = a YAML config file on disk in the config folder
 - **Board definitions** = YAML manifests in `definitions/boards/`, synced from PlatformIO repos
-- **Component catalog** = `definitions/components.json`, generated from ESPHome's Python source + docs
+- **Component catalog** = `definitions/components.json`, synced from ESPHome source + docs via script
 - **Real-time events** = clients subscribe once via WebSocket, get instant updates on device changes
 
 ### Sync scripts
