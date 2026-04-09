@@ -1,42 +1,13 @@
 # ESPHome Device Builder — Backend
 
 > **Status: In Development**
-> This project is under active development and aimed to replace the [current ESPHome dashboard](https://github.com/esphome/dashboard) soon.
+> This project is under active development and aimed to replace the [current ESPHome dashboard](https://github.com/esphome/dashboard).
 
 ## What is this?
 
-A new dashboard for [ESPHome](https://github.com/esphome/esphome) that goes beyond a YAML editor by providing a guided interface for composing device configurations. Users can explore devices, add components and boards step-by-step, manage automations, and push firmware updates — all without needing to learn YAML.
+A new dashboard for [ESPHome](https://github.com/esphome/esphome) that provides a guided interface for composing device configurations. Users can explore devices, add components and boards step-by-step, manage automations, and push firmware updates — all without needing to learn YAML.
 
-### Running
-
-```bash
-source .venv/bin/activate
-
-# Create a config directory for device YAML files
-mkdir -p configs
-
-# Start the API server
-esphome-device-builder ./configs --verbose
-```
-
-The server starts on `http://localhost:6052`. To develop with the frontend, start the frontend dev server in the [frontend repo](https://github.com/esphome/device-builder-dashboard-frontend) — it proxies API calls to port 6052.
-
-### CLI Options
-
-```
-esphome-device-builder [configuration] [options]
-
-positional arguments:
-  configuration      Path to ESPHome config directory (default: ./configs)
-
-options:
-  --port PORT        HTTP port (default: 6052)
-  --host HOST        Bind address (default: 0.0.0.0)
-  --username USER    Dashboard username
-  --password PASS    Dashboard password
-  --ha-addon         Running as Home Assistant add-on
-  --verbose, -v      Verbose logging
-```
+This repository contains the **backend API server**. The frontend is a separate project: [esphome/device-builder-dashboard-frontend](https://github.com/esphome/device-builder-dashboard-frontend).
 
 ## Development
 
@@ -52,41 +23,77 @@ script/setup
 
 This creates a virtualenv, installs the package in editable mode with all dependencies, and sets up pre-commit hooks.
 
+### Running
+
+```bash
+source .venv/bin/activate
+mkdir -p configs
+esphome-device-builder ./configs --verbose
+```
+
+The server starts on `http://localhost:6052`. To develop with the frontend, start the frontend dev server in the [frontend repo](https://github.com/esphome/device-builder-dashboard-frontend) — it proxies API calls to port 6052. Or use the VS Code debugger (F5 → "Run Server").
+
+### CLI Options
+
+```
+esphome-device-builder [configuration] [options]
+
+  configuration      Path to ESPHome config directory (default: ./configs)
+  --port PORT        HTTP port (default: 6052)
+  --host HOST        Bind address (default: 0.0.0.0)
+  --username USER    Dashboard username
+  --password PASS    Dashboard password
+  --ha-addon         Running as Home Assistant add-on
+  --verbose, -v      Verbose logging
+  --log-file PATH    Log to rotating file
+```
+
 ## Architecture
 
-The dashboard is a **standalone project** that uses ESPHome as a dependency:
-
-- **Operations** (compile, upload, logs) shell out to the `esphome` CLI as subprocesses
-- **Data access** (device metadata, board definitions, serial ports) uses ESPHome Python imports
-- **ESPHome is an optional dependency** — use `pip install .[esphome]` for standalone installs, or plain `pip install .` when esphome is already present (e.g. inside the ESPHome container)
-
-The [frontend](https://github.com/esphome/device-builder-dashboard-frontend) is built separately and distributed as a Python wheel. The backend try-imports it and serves the static files automatically. During development, the frontend dev server connects directly to the backend API on port 6052.
-
-### Board & Component Definitions
-
-Boards and components live in `esphome_device_builder/definitions/`. Each board or component gets its own subfolder with a `manifest.yaml` and optional assets (e.g. images):
+The backend is a **standalone project** using ESPHome as a dependency. It provides a **WebSocket-first API** on `/ws` — all frontend communication goes through a single multiplexed WebSocket with command/response protocol.
 
 ```
-definitions/
-├── boards/
-│   ├── esp32-devkit-v1/
-│   │   ├── manifest.yaml
-│   │   └── image.png         (optional)
-│   └── ...
-└── components/
-    ├── binary_sensor/
-    │   └── manifest.yaml
-    └── ...
+DeviceBuilder (singleton)
+├── controllers/boards.py        — 501 board definitions with pin maps
+├── controllers/components.py    — 655 components parsed from ESPHome source
+├── controllers/devices.py       — device CRUD, file scanning, compile/upload/logs
+├── controllers/automations.py   — context-aware triggers and actions
+├── controllers/config.py        — settings, preferences, secrets, version
+├── api/ws.py                    — /ws WebSocket dispatch (31 commands)
+└── api/legacy.py                — HA backward compat (4 endpoints)
 ```
 
-Adding a new board or component = adding a subfolder with a `manifest.yaml`. See any existing manifest for the schema.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and [docs/API.md](docs/API.md) for the complete API reference.
+
+### Key concepts
+
+- **A device** = a YAML config file on disk in the config folder
+- **Board definitions** = YAML manifests in `definitions/boards/`, synced from PlatformIO repos
+- **Component catalog** = `definitions/components.json`, generated from ESPHome's Python source + docs
+- **Real-time events** = clients subscribe once via WebSocket, get instant updates on device changes
+
+### Sync scripts
+
+```bash
+# Sync board definitions from PlatformIO repos (501 boards)
+python script/sync_boards.py
+
+# Sync component definitions from ESPHome source (655 components)
+python script/sync_components.py
+
+# Prefill pin data from generic boards + ESPHome named pins
+python script/prefill_pins.py
+```
+
+## Board Definitions
+
+Boards live in `esphome_device_builder/definitions/boards/`. Each board is a subfolder with a `manifest.yaml` and optional images. See [definitions/README.md](esphome_device_builder/definitions/README.md) for the schema and contributor guide.
 
 ## Contributing
 
 Contributions are welcome, especially:
 
 - Board definitions (add a subfolder to `definitions/boards/`)
-- Component definitions (add a subfolder to `definitions/components/`)
 - Bug reports and feature requests via GitHub Issues
 
 ## License

@@ -8,7 +8,9 @@
 
 3. **Frontend and backend are separate repos.** The frontend is published as a pip package. The backend try-imports it and serves the static files. During development, the frontend dev server proxies API calls to the backend.
 
-4. **WS-first API.** Everything goes through a single `/ws` WebSocket endpoint. REST endpoints only exist for HA backward compat.
+4. **WS-first API.** Everything goes through a single `/ws` WebSocket endpoint with command/response protocol. REST endpoints only exist for HA backward compat.
+
+5. **Real-time events.** Clients subscribe once via `subscribe_events`, then receive instant push notifications on device changes. No polling.
 
 ## Project Structure
 
@@ -16,45 +18,49 @@
 esphome_device_builder/
 ├── device_builder.py          # Core singleton — owns controllers, event bus, web app
 ├── __main__.py                # CLI entry point
-├── const.py                   # Version + defaults
+├── constants.py               # Version + defaults
 │
 ├── models/                    # Data shapes only — no logic, no I/O
 │   ├── common.py              # EventType, ConfigEntry, PagedResponse
 │   ├── devices.py             # Device, AdoptableDevice, DevicesResponse
-│   ├── boards.py              # Board enums + models
-│   ├── components.py          # Component enums + models
+│   ├── boards.py              # Board enums + models (Platform, PinFeature, etc.)
+│   ├── components.py          # Component enums + models (ComponentCategory, etc.)
 │   └── api.py                 # WebSocket protocol (Command/Result/Error/Event)
 │
 ├── controllers/               # Business logic — all state lives here
-│   ├── boards.py              # BoardCatalog: search/get boards
-│   ├── components.py          # ComponentCatalog: search/get components
-│   ├── config.py              # DashboardSettings + ConfigController + metadata persistence
-│   └── devices.py             # DevicesController: CRUD, file scanning, compile/upload/logs
+│   ├── boards.py              # BoardCatalog: 501 boards with pin maps
+│   ├── components.py          # ComponentCatalog: 655 components from ESPHome source
+│   ├── devices.py             # DevicesController: CRUD, file scanning, compile/upload/logs
+│   ├── automations.py         # AutomationsController: context-aware triggers + actions
+│   └── config.py              # ConfigController + DashboardSettings + metadata persistence
 │
 ├── helpers/                   # Pure utilities — no state
 │   ├── api.py                 # @api_command decorator + command registry
 │   ├── event_bus.py           # EventBus
-│   └── json.py                # JSON response helpers, CORS
+│   ├── json.py                # JSON response helpers, CORS
+│   └── yaml.py                # YAML generation for components
 │
 ├── api/                       # Transport layer
-│   ├── ws.py                  # /ws WebSocket dispatch
+│   ├── ws.py                  # /ws WebSocket dispatch (31 commands)
 │   └── legacy.py              # HA compat: GET /devices, GET /json-config, /compile, /upload
 │
 └── definitions/               # Data files
-    ├── boards/                # 501 board YAML manifests
-    ├── components.json        # Generated component catalog (655 components)
-    └── schemas/               # JSON schemas for validation
+    ├── boards/                # 501 board YAML manifests (synced from PlatformIO)
+    ├── components.json        # 655 components (synced from ESPHome source + docs)
+    └── schemas/               # JSON schemas for board/component validation
 ```
 
 ## How it works
 
 **DeviceBuilder** is the singleton. On startup it creates controllers, loads catalogs, and starts the web server. Controllers register their methods as WebSocket commands via `@api_command("devices/list")`. The WS handler dispatches incoming commands to the matching handler.
 
-**A device** is a YAML config file on disk. The `DevicesController` scans the config folder, builds `Device` models from ESPHome's `StorageJSON`, and serves them via commands. Compile/upload/logs stream output back over the WebSocket.
+**A device** is a YAML config file on disk. The `DevicesController` scans the config folder, builds `Device` models from ESPHome's `StorageJSON`, and serves them via commands. Compile/upload/logs stream output back over the WebSocket. The file scanner fires events on the EventBus when files change — connected clients subscribed via `subscribe_events` receive instant push updates.
 
-**Boards** come from YAML manifests in `definitions/boards/`, synced from PlatformIO repos via `script/sync_boards.py`. Each board has hardware specs, pin definitions, and optional images.
+**Boards** come from YAML manifests in `definitions/boards/`, synced from PlatformIO repos via `script/sync_boards.py`. Each board has hardware specs, pin definitions with features/availability, and optional images. 501 boards across ESP32/ESP8266/RP2040 platforms.
 
-**Components** come from `definitions/components.json`, generated by `script/sync_components.py` which introspects ESPHome's installed Python package and parses `CONFIG_SCHEMA` objects + docs metadata.
+**Components** come from `definitions/components.json`, generated by `script/sync_components.py` which introspects ESPHome's installed Python package (CONFIG_SCHEMA parsing) and enriches with titles/descriptions/images from the esphome-docs repo. 655 components with typed config entries.
+
+**Automations** are context-aware — the `AutomationsController` reads a device's YAML to determine which component types are present, then returns only the applicable triggers (e.g. `on_press` only if a `binary_sensor` is configured).
 
 ## Deployment
 
