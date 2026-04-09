@@ -78,6 +78,7 @@ class DeviceBuilder:
 
         # Register built-in commands
         self.command_handlers["ping"] = self._cmd_ping
+        self.command_handlers["subscribe_events"] = self._cmd_subscribe_events
 
         # Start background polling
         self._bg_task = asyncio.create_task(self._run_background())
@@ -115,6 +116,54 @@ class DeviceBuilder:
     async def _cmd_ping(**kwargs: Any) -> dict:
         """Respond to ping."""
         return {"pong": True}
+
+    async def _cmd_subscribe_events(
+        self, *, client: Any = None, message_id: str = "", **kwargs: Any
+    ) -> None:
+        """Subscribe a connected WS client to real-time events.
+
+        Registers a listener on the event bus that pushes EventMessages
+        to the client for the lifetime of the connection. The client
+        receives an immediate result confirming the subscription, then
+        ongoing events as they happen.
+        """
+        import asyncio as _asyncio
+
+        from .helpers.event_bus import Event
+        from .models import EventType
+
+        if client is None:
+            return
+
+        def _on_event(event: Event) -> None:
+            """Forward bus event to the WS client."""
+            # Serialize the event data — Device models need to_dict()
+            data = event.data
+            serialized: dict[str, Any] = {}
+            for key, value in data.items():
+                serialized[key] = value.to_dict() if hasattr(value, "to_dict") else value
+            task = _asyncio.create_task(
+                client.send_event(message_id, event.event_type.value, serialized)
+            )
+            _ = task  # prevent GC
+
+        # Subscribe to all event types
+        unsubscribers = []
+        for event_type in EventType:
+            unsub = self.bus.add_listener(event_type, _on_event)
+            unsubscribers.append(unsub)
+
+        # Send initial device list
+        if self.devices:
+            devices = self.devices.get_devices()
+            await client.send_event(
+                message_id,
+                "initial_state",
+                {"devices": [d.to_dict() for d in devices]},
+            )
+
+        # Confirm subscription
+        await client.send_result(message_id, {"subscribed": True})
 
     def create_background_task(self, coro: Any) -> asyncio.Task:
         """Create a tracked background task."""

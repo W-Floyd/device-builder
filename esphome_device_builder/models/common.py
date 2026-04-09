@@ -32,18 +32,19 @@ class PagedResponse(DataClassORJSONMixin):
 
 
 class EventType(StrEnum):
-    """Events fired by the device builder."""
+    """Events pushed to connected clients via subscribe_events."""
 
-    ENTRY_ADDED = "entry_added"
-    ENTRY_REMOVED = "entry_removed"
-    ENTRY_UPDATED = "entry_updated"
-    ENTRY_STATE_CHANGED = "entry_state_changed"
+    # Device config file changes (detected by disk scanner)
+    DEVICE_ADDED = "device_added"
+    DEVICE_REMOVED = "device_removed"
+    DEVICE_UPDATED = "device_updated"
+
+    # Device online/offline state changes
+    DEVICE_STATE_CHANGED = "device_state_changed"
+
+    # Discoverable device changes
     IMPORTABLE_DEVICE_ADDED = "importable_device_added"
     IMPORTABLE_DEVICE_REMOVED = "importable_device_removed"
-    INITIAL_STATE = "initial_state"
-    PING = "ping"
-    PONG = "pong"
-    REFRESH = "refresh"
 
 
 # ---------------------------------------------------------------------------

@@ -149,7 +149,7 @@ class DevicesController:
             for path, device in devices_loaded.items():
                 self._devices[path] = device
                 self._cache_keys[path] = path_to_cache_key[path]
-                event = EventType.ENTRY_ADDED if path in added_paths else EventType.ENTRY_UPDATED
+                event = EventType.DEVICE_ADDED if path in added_paths else EventType.DEVICE_UPDATED
                 bus.fire(event, {"device": device})
 
         # Remove deleted devices
@@ -157,7 +157,7 @@ class DevicesController:
             device = self._devices.pop(path, None)
             self._cache_keys.pop(path, None)
             if device:
-                bus.fire(EventType.ENTRY_REMOVED, {"device": device})
+                bus.fire(EventType.DEVICE_REMOVED, {"device": device})
 
     def _load_devices(self, paths: set[Path], config_dir: Path) -> dict[Path, Device]:
         """Load Device models from disk (runs in executor)."""
@@ -345,6 +345,32 @@ class DevicesController:
             comment=meta.get("comment"),
             board_id=meta.get("board_id"),
         )
+
+    @api_command("devices/rename")
+    async def rename_device(
+        self,
+        *,
+        configuration: str,
+        new_name: str,
+        **kwargs: Any,
+    ) -> None:
+        """Rename a device via esphome CLI."""
+        config_path = str(self._db.settings.rel_path(configuration))
+        cmd = [*_ESPHOME_CMD, "rename", config_path, new_name]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            stdin=asyncio.subprocess.PIPE,
+        )
+        # ESPHome rename prompts for confirmation — send 'y'
+        if proc.stdin:
+            proc.stdin.write(b"y\n")
+            await proc.stdin.drain()
+            proc.stdin.close()
+        await proc.wait()
+        await self._request_scan()
 
     @api_command("devices/delete")
     async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
