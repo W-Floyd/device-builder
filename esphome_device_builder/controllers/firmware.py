@@ -6,8 +6,10 @@ import asyncio
 import gzip
 import importlib
 import logging
+import shutil
 import sys
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -22,8 +24,34 @@ if TYPE_CHECKING:
     from ..device_builder import DeviceBuilder
 
 _LOGGER = logging.getLogger(__name__)
-_ESPHOME_CMD = [sys.executable, "-m", "esphome"]
 _JOBS_KEY = "_firmware_jobs"
+
+# Error patterns in output that indicate failure regardless of exit code
+_ERROR_PATTERNS = [
+    "ModuleNotFoundError",
+    "ImportError",
+    "No module named",
+    "FileNotFoundError",
+    "command not found",
+]
+
+
+def _find_esphome_cmd() -> list[str]:
+    """Find the esphome command, preferring the venv's Python."""
+    # Use the same Python that's running this process
+    python = sys.executable
+
+    # But verify esphome is actually importable from it
+    venv_python = Path(python).parent / "python"
+    if venv_python.exists():
+        python = str(venv_python)
+
+    # Also check if esphome is a standalone script in the venv
+    esphome_bin = shutil.which("esphome")
+    if esphome_bin and str(Path(python).parent) in esphome_bin:
+        return [esphome_bin]
+
+    return [python, "-m", "esphome"]
 
 
 class FirmwareController:
@@ -41,9 +69,12 @@ class FirmwareController:
         self._current_job: FirmwareJob | None = None
         self._current_process: asyncio.subprocess.Process | None = None
         self._runner_task: asyncio.Task | None = None
+        self._esphome_cmd: list[str] = []
 
     async def start(self) -> None:
         """Start the queue processor and restore persisted jobs."""
+        self._esphome_cmd = _find_esphome_cmd()
+        _LOGGER.info("ESPHome command: %s", " ".join(self._esphome_cmd))
         await self._load_jobs()
         self._runner_task = self._db.create_background_task(self._run_queue())
 
@@ -67,12 +98,19 @@ class FirmwareController:
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now(UTC).isoformat()
         self._current_job = job
+        _LOGGER.info(
+            "Starting job %s: %s %s",
+            job.job_id,
+            job.job_type,
+            job.configuration,
+        )
         self._db.bus.fire(EventType.JOB_STARTED, {"job": job})
         await self._persist_jobs()
 
         try:
             config_path = str(self._db.settings.rel_path(job.configuration))
             cmd = self._build_command(job.job_type, config_path, job.port)
+            _LOGGER.debug("Running: %s", " ".join(cmd))
 
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -81,45 +119,62 @@ class FirmwareController:
             )
             self._current_process = proc
 
+            has_error_in_output = False
             assert proc.stdout is not None
             async for line_bytes in proc.stdout:
                 line = line_bytes.decode("utf-8", errors="replace")
                 job.output.append(line)
                 self._db.bus.fire(
                     EventType.JOB_OUTPUT,
-                    {
-                        "job_id": job.job_id,
-                        "line": line,
-                    },
+                    {"job_id": job.job_id, "line": line},
                 )
+                # Detect errors in output even if exit code is 0
+                if not has_error_in_output:
+                    for pattern in _ERROR_PATTERNS:
+                        if pattern in line:
+                            has_error_in_output = True
+                            break
 
             exit_code = await proc.wait()
             job.exit_code = exit_code
-            job.status = JobStatus.COMPLETED if exit_code == 0 else JobStatus.FAILED
+
+            # Determine real success — exit code AND output content
+            success = exit_code == 0 and not has_error_in_output
+            job.status = JobStatus.COMPLETED if success else JobStatus.FAILED
             job.completed_at = datetime.now(UTC).isoformat()
 
-            event = EventType.JOB_COMPLETED if exit_code == 0 else EventType.JOB_FAILED
+            if has_error_in_output and exit_code == 0:
+                job.error = "Process exited 0 but output contains errors"
+                _LOGGER.warning("Job %s: exit code 0 but errors detected in output", job.job_id)
+
+            event = EventType.JOB_COMPLETED if success else EventType.JOB_FAILED
             self._db.bus.fire(event, {"job": job})
+            _LOGGER.info(
+                "Job %s %s (exit code %s)",
+                job.job_id,
+                job.status,
+                exit_code,
+            )
 
         except asyncio.CancelledError:
             if self._current_process:
                 self._current_process.terminate()
             job.status = JobStatus.CANCELLED
             job.completed_at = datetime.now(UTC).isoformat()
+            _LOGGER.info("Job %s cancelled", job.job_id)
             raise
         except Exception as exc:
             job.status = JobStatus.FAILED
             job.error = str(exc)
             job.completed_at = datetime.now(UTC).isoformat()
             self._db.bus.fire(EventType.JOB_FAILED, {"job": job})
-            _LOGGER.exception("Job %s failed", job.job_id)
+            _LOGGER.exception("Job %s failed: %s", job.job_id, exc)
         finally:
             self._current_job = None
             self._current_process = None
             await self._persist_jobs()
 
-    @staticmethod
-    def _build_command(job_type: JobType, config_path: str, port: str) -> list[str]:
+    def _build_command(self, job_type: JobType, config_path: str, port: str) -> list[str]:
         """Build the esphome CLI command for a job type."""
         cmd_map = {
             JobType.COMPILE: "compile",
@@ -127,7 +182,7 @@ class FirmwareController:
             JobType.INSTALL: "run",
             JobType.CLEAN: "clean",
         }
-        cmd = [*_ESPHOME_CMD, cmd_map[job_type], config_path]
+        cmd = [*self._esphome_cmd, cmd_map[job_type], config_path]
         if job_type in (JobType.UPLOAD, JobType.INSTALL) and port:
             cmd.extend(["--device", port])
         return cmd

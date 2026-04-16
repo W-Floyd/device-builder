@@ -7,7 +7,6 @@ import base64
 import json
 import logging
 import secrets
-import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -43,7 +42,7 @@ if TYPE_CHECKING:
     from ..device_builder import DeviceBuilder
 
 _LOGGER = logging.getLogger(__name__)
-_ESPHOME_CMD = [sys.executable, "-m", "esphome"]
+_ESPHOME_CMD: list[str] = []  # resolved in start()
 
 # Cache key for file change detection: (inode, device, mtime, size)
 _CacheKey = tuple[int, int, float, int]
@@ -175,10 +174,15 @@ class DevicesController:
 
     async def start(self) -> None:
         """Initialize — load state, scan files."""
+        global _ESPHOME_CMD
+        from .firmware import _find_esphome_cmd
+
+        _ESPHOME_CMD = _find_esphome_cmd()
         self.ping_request = asyncio.Event()
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._load_ignored_devices)
         await self.scan_devices()
+        _LOGGER.info("Devices controller started — %d devices loaded", len(self._devices))
 
     async def poll(self) -> None:
         """Poll for file changes and device state."""
