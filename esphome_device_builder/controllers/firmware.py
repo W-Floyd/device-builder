@@ -257,6 +257,75 @@ class FirmwareController:
         """Get a specific job with full output."""
         return self._jobs.get(job_id)
 
+    @api_command("firmware/follow_job")
+    async def follow_job(
+        self, *, job_id: str, client: Any = None, message_id: str = "", **kwargs: Any
+    ) -> None:
+        """Follow a job's output: sends historical lines then streams new ones.
+
+        Like `tail -f` with history. No race conditions, no dedup needed.
+        If the job is already finished, sends all output and a result event.
+        """
+        job = self._jobs.get(job_id)
+        if not job:
+            msg = f"Job not found: {job_id}"
+            raise ValueError(msg)
+
+        # Send historical output
+        for line in job.output:
+            await client.send_event(message_id, "output", line)
+
+        # If already finished, send final status and return
+        if job.status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED):
+            await client.send_event(
+                message_id,
+                "result",
+                {
+                    "status": job.status.value,
+                    "exit_code": job.exit_code,
+                },
+            )
+            return
+
+        # Subscribe to new output for this specific job
+        done = asyncio.Event()
+
+        def _on_event(event: Any) -> None:
+            if event.event_type == EventType.JOB_OUTPUT:
+                if event.data.get("job_id") == job_id:
+                    task = asyncio.create_task(
+                        client.send_event(message_id, "output", event.data["line"])
+                    )
+                    _ = task
+            elif event.event_type in (EventType.JOB_COMPLETED, EventType.JOB_FAILED):
+                ev_job = event.data.get("job")
+                if ev_job and getattr(ev_job, "job_id", None) == job_id:
+                    status = getattr(ev_job, "status", "unknown")
+                    status_val = status.value if hasattr(status, "value") else str(status)
+                    task = asyncio.create_task(
+                        client.send_event(
+                            message_id,
+                            "result",
+                            {
+                                "status": status_val,
+                                "exit_code": getattr(ev_job, "exit_code", None),
+                            },
+                        )
+                    )
+                    _ = task
+                    done.set()
+
+        unsub_output = self._db.bus.add_listener(EventType.JOB_OUTPUT, _on_event)
+        unsub_completed = self._db.bus.add_listener(EventType.JOB_COMPLETED, _on_event)
+        unsub_failed = self._db.bus.add_listener(EventType.JOB_FAILED, _on_event)
+
+        try:
+            await done.wait()
+        finally:
+            unsub_output()
+            unsub_completed()
+            unsub_failed()
+
     @api_command("firmware/cancel")
     async def cancel(self, *, job_id: str, **kwargs: Any) -> None:
         """Cancel a queued job. Running jobs cannot be cancelled."""
