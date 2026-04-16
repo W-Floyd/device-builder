@@ -128,6 +128,17 @@ def _load_device_from_storage(path: Path, board_id: str = "") -> Device:
     filename = path.name
     storage = StorageJSON.load(ext_storage_path(filename))
     name = storage.name if storage else filename.removesuffix(".yml").removesuffix(".yaml")
+
+    # Detect pending changes: YAML modified after last compile
+    has_pending = True  # default: no compile yet = pending
+    if storage and storage.firmware_bin_path:
+        try:
+            yaml_mtime = path.stat().st_mtime
+            bin_mtime = storage.firmware_bin_path.stat().st_mtime
+            has_pending = yaml_mtime > bin_mtime
+        except OSError:
+            has_pending = True
+
     return Device(
         name=name,
         friendly_name=storage.friendly_name if storage else name,
@@ -141,6 +152,7 @@ def _load_device_from_storage(path: Path, board_id: str = "") -> Device:
         deployed_version=storage.esphome_version or "" if storage else "",
         loaded_integrations=sorted(storage.loaded_integrations) if storage else [],
         board_id=board_id,
+        has_pending_changes=has_pending,
     )
 
 
@@ -594,8 +606,37 @@ class DevicesController:
         await loop.run_in_executor(None, self._save_ignored_devices)
 
     # ------------------------------------------------------------------
-    # Live device log streaming (not a job — per-connection)
+    # YAML validation and live log streaming (per-connection, not queued)
     # ------------------------------------------------------------------
+
+    @api_command("devices/validate")
+    async def validate_config(
+        self,
+        *,
+        configuration: str,
+        client: Any = None,
+        message_id: str = "",
+        **kwargs: Any,
+    ) -> None:
+        """Validate a device YAML config. Streams output per-connection."""
+        config_path = str(self._db.settings.rel_path(configuration))
+        cmd = [*_ESPHOME_CMD, "config", config_path]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        assert proc.stdout is not None
+        async for line_bytes in proc.stdout:
+            line = line_bytes.decode("utf-8", errors="replace")
+            await client.send_event(message_id, "output", line)
+
+        exit_code = await proc.wait()
+        await client.send_event(
+            message_id, "result", {"success": exit_code == 0, "code": exit_code}
+        )
 
     @api_command("devices/logs")
     async def stream_logs(
