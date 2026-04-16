@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -801,11 +802,13 @@ class DevicesController:
         """Validate a device YAML config. Streams output per-connection."""
         config_path = str(self._db.settings.rel_path(configuration))
         cmd = [*_ESPHOME_CMD, "config", config_path]
+        env = {**os.environ, "PLATFORMIO_FORCE_ANSI": "true"}
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env,
         )
 
         assert proc.stdout is not None  # type narrowing
@@ -833,11 +836,13 @@ class DevicesController:
         cmd = [*_ESPHOME_CMD, "logs", config_path]
         if port:
             cmd.extend(["--device", port])
+        env = {**os.environ, "PLATFORMIO_FORCE_ANSI": "true"}
 
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
+            env=env,
         )
 
         assert proc.stdout is not None  # type narrowing

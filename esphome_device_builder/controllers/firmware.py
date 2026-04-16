@@ -6,6 +6,7 @@ import asyncio
 import gzip
 import importlib
 import logging
+import os
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -112,10 +113,13 @@ class FirmwareController:
             cmd = self._build_command(job.job_type, config_path, job.port)
             _LOGGER.debug("Running: %s", " ".join(cmd))
 
+            # Force ANSI color output even though stdout is piped
+            env = {**os.environ, "PLATFORMIO_FORCE_ANSI": "true"}
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
+                env=env,
             )
             self._current_process = proc
 
