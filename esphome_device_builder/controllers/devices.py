@@ -7,11 +7,16 @@ import base64
 import json
 import logging
 import secrets
-import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from esphome import const, util
+from esphome.zeroconf import AsyncEsphomeZeroconf
+
+try:
+    from icmplib import async_ping as icmp_ping
+except ImportError:
+    icmp_ping = None  # type: ignore[assignment]
 from esphome.dashboard.util.text import friendly_name_slugify
 from esphome.storage_json import StorageJSON, ext_storage_path, ignored_devices_storage_path
 
@@ -22,6 +27,7 @@ from ..models import (
     AdoptableDevice,
     Device,
     DevicesResponse,
+    DeviceState,
     EventType,
     UpdateDeviceResponse,
     WizardResponse,
@@ -46,6 +52,9 @@ _ESPHOME_CMD: list[str] = []  # resolved in start()
 
 # Cache key for file change detection: (inode, device, mtime, size)
 _CacheKey = tuple[int, int, float, int]
+_ESPHOME_SERVICE_TYPE = "_esphomelib._tcp.local."
+_PING_INTERVAL = 60  # seconds between ping sweeps
+_PING_BATCH_SIZE = 10
 
 
 def _generate_device_yaml(
@@ -166,29 +175,149 @@ class DevicesController:
         self._cache_keys: dict[Path, _CacheKey] = {}
         self._scan_lock = asyncio.Lock()
 
-        # Device state
+        # Device connectivity state
+        self._state_source: dict[str, str] = {}  # device name → "mdns" | "ping"
+
+        # Discovery state
         self.import_result: dict[str, Any] = {}
         self.ignored_devices: set[str] = set()
-        self.ping_request: asyncio.Event | None = None
-        self.mqtt_ping_request = threading.Event()
+
+        # mDNS
+        self._zeroconf: AsyncEsphomeZeroconf | None = None
+        self._mdns_browser: Any = None
 
     async def start(self) -> None:
-        """Initialize — load state, scan files."""
+        """Initialize — load state, scan files, start discovery."""
         global _ESPHOME_CMD
         from .firmware import _find_esphome_cmd
 
         _ESPHOME_CMD = _find_esphome_cmd()
-        self.ping_request = asyncio.Event()
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, self._load_ignored_devices)
         await self.scan_devices()
         _LOGGER.info("Devices controller started — %d devices loaded", len(self._devices))
 
+        # Start mDNS browser for device discovery
+        await self._start_mdns_browser()
+
+        # Start ping sweep as fallback
+        self._db.create_background_task(self._ping_loop())
+
     async def poll(self) -> None:
-        """Poll for file changes and device state."""
+        """Poll for file changes."""
         await self._request_scan()
-        if self.ping_request:
-            self.ping_request.set()
+
+    # ------------------------------------------------------------------
+    # Device connectivity state
+    # ------------------------------------------------------------------
+
+    def _find_device_by_name(self, name: str) -> Device | None:
+        """Find a loaded device by its ESPHome name."""
+        for device in self._devices.values():
+            if device.name == name:
+                return device
+        return None
+
+    def _set_device_state(self, name: str, state: DeviceState, source: str) -> None:
+        """Update a device's connectivity state with source priority.
+
+        mDNS always wins. Ping only sets state when mDNS hasn't resolved it.
+        Fires DEVICE_STATE_CHANGED event if state actually changes.
+        """
+        device = self._find_device_by_name(name)
+        if device is None:
+            return
+        # mDNS always wins — ping cannot override mDNS
+        current_source = self._state_source.get(name, "unknown")
+        if source == "ping" and current_source == "mdns":
+            return
+        if device.state == state:
+            return
+        device.state = state
+        self._state_source[name] = source
+        _LOGGER.debug("Device %s: %s (via %s)", name, state, source)
+        self._db.bus.fire(EventType.DEVICE_STATE_CHANGED, {"device": device})
+
+    # ------------------------------------------------------------------
+    # mDNS browser
+    # ------------------------------------------------------------------
+
+    async def _start_mdns_browser(self) -> None:
+        """Start the mDNS browser for ESPHome device discovery."""
+        try:
+            from zeroconf import ServiceStateChange
+            from zeroconf.asyncio import AsyncServiceBrowser
+
+            self._zeroconf = AsyncEsphomeZeroconf()
+
+            def _on_service_state_change(
+                zeroconf: Any, service_type: str, name: str, state_change: ServiceStateChange
+            ) -> None:
+                # Extract device name from mDNS name (e.g. "my-device._esphomelib._tcp.local.")
+                device_name = name.split(".")[0].replace("-", "_")
+
+                if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated):
+                    self._set_device_state(device_name, DeviceState.ONLINE, "mdns")
+                elif state_change == ServiceStateChange.Removed:
+                    self._set_device_state(device_name, DeviceState.OFFLINE, "mdns")
+                    # Clear the mdns source so ping can take over
+                    self._state_source.pop(device_name, None)
+
+            self._mdns_browser = AsyncServiceBrowser(
+                self._zeroconf.zeroconf,
+                _ESPHOME_SERVICE_TYPE,
+                handlers=[_on_service_state_change],
+            )
+            _LOGGER.info("mDNS browser started for %s", _ESPHOME_SERVICE_TYPE)
+        except Exception:
+            _LOGGER.warning("Could not start mDNS browser — device discovery limited to ping")
+
+    # ------------------------------------------------------------------
+    # Ping sweep (fallback)
+    # ------------------------------------------------------------------
+
+    async def _ping_loop(self) -> None:
+        """Periodically ping devices not already discovered by mDNS."""
+        try:
+            while True:
+                await asyncio.sleep(_PING_INTERVAL)
+                await self._ping_sweep()
+        except asyncio.CancelledError:
+            pass
+
+    async def _ping_sweep(self) -> None:
+        """Ping all devices not already marked online by mDNS."""
+        if icmp_ping is None:
+            return
+
+        devices_to_ping = [
+            d
+            for d in self._devices.values()
+            if d.address and self._state_source.get(d.name, "unknown") != "mdns"
+        ]
+
+        if not devices_to_ping:
+            return
+
+        _LOGGER.debug("Pinging %d devices", len(devices_to_ping))
+
+        # Ping in batches
+        for i in range(0, len(devices_to_ping), _PING_BATCH_SIZE):
+            batch = devices_to_ping[i : i + _PING_BATCH_SIZE]
+            tasks = [self._ping_device(d) for d in batch]
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _ping_device(self, device: Device) -> None:
+        """Ping a single device and update state."""
+        try:
+            result = await icmp_ping(device.address, count=1, timeout=3, privileged=False)
+            if result.is_alive:
+                self._set_device_state(device.name, DeviceState.ONLINE, "ping")
+            else:
+                self._set_device_state(device.name, DeviceState.OFFLINE, "ping")
+        except Exception:  # noqa: S110
+            # Ping failed (permissions, network error) — don't change state
+            pass
 
     # ------------------------------------------------------------------
     # File scanning
@@ -321,12 +450,8 @@ class DevicesController:
 
     @api_command("devices/get_states")
     async def get_device_states(self, **kwargs: Any) -> dict:
-        """Get online/offline state for all devices."""
-        if self.ping_request:
-            self.ping_request.set()
-        if self._db.settings.status_use_mqtt:
-            self.mqtt_ping_request.set()
-        return {}
+        """Get connectivity state for all devices."""
+        return {d.configuration: d.state.value for d in self._devices.values()}
 
     # ------------------------------------------------------------------
     # API commands — device CRUD
@@ -591,8 +716,6 @@ class DevicesController:
             encryption,
         )
 
-        if self.ping_request:
-            self.ping_request.set()
         await self._request_scan()
         return {"configuration": f"{name}.yaml"}
 

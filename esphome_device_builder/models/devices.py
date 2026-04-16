@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import StrEnum
 
 from mashumaro.mixins.orjson import DataClassORJSONMixin
+
+
+class DeviceState(StrEnum):
+    """Device connectivity state."""
+
+    UNKNOWN = "unknown"
+    ONLINE = "online"
+    OFFLINE = "offline"
 
 
 @dataclass
@@ -23,6 +32,7 @@ class Device(DataClassORJSONMixin):
     deployed_version: str = ""
     loaded_integrations: list[str] = field(default_factory=list)
     board_id: str = ""
+    state: DeviceState = DeviceState.UNKNOWN
     # True=needs update, False=up to date, None=never compiled
     has_pending_changes: bool | None = None
 
