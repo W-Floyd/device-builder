@@ -124,11 +124,12 @@ class FirmwareController:
         cmd_map = {
             JobType.COMPILE: "compile",
             JobType.UPLOAD: "upload",
+            JobType.RUN: "run",
             JobType.VALIDATE: "config",
             JobType.CLEAN: "clean",
         }
         cmd = [*_ESPHOME_CMD, cmd_map[job_type], config_path]
-        if job_type == JobType.UPLOAD and port:
+        if job_type in (JobType.UPLOAD, JobType.RUN) and port:
             cmd.extend(["--device", port])
         return cmd
 
@@ -214,12 +215,30 @@ class FirmwareController:
         job = self._create_job(configuration, JobType.CLEAN)
         return await self._enqueue(job)
 
+    @api_command("firmware/run")
+    async def run(self, *, configuration: str, port: str = "OTA", **kwargs: Any) -> FirmwareJob:
+        """Queue a compile + upload job (esphome run). Defaults to OTA."""
+        job = self._create_job(configuration, JobType.RUN, port=port)
+        return await self._enqueue(job)
+
     @api_command("firmware/compile_bulk")
     async def compile_bulk(self, *, configurations: list[str], **kwargs: Any) -> list[FirmwareJob]:
         """Queue multiple compile jobs at once."""
         jobs = []
         for config in configurations:
             job = self._create_job(config, JobType.COMPILE)
+            await self._enqueue(job)
+            jobs.append(job)
+        return jobs
+
+    @api_command("firmware/run_bulk")
+    async def run_bulk(
+        self, *, configurations: list[str], port: str = "OTA", **kwargs: Any
+    ) -> list[FirmwareJob]:
+        """Queue compile + upload for multiple devices. Defaults to OTA."""
+        jobs = []
+        for config in configurations:
+            job = self._create_job(config, JobType.RUN, port=port)
             await self._enqueue(job)
             jobs.append(job)
         return jobs
