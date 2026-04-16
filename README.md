@@ -21,17 +21,14 @@ cd device-builder-dashboard-backend
 script/setup
 ```
 
-This creates a virtualenv, installs the package in editable mode with all dependencies, and sets up pre-commit hooks.
-
 ### Running
 
 ```bash
 source .venv/bin/activate
-mkdir -p configs
 esphome-device-builder ./configs --verbose
 ```
 
-The server starts on `http://localhost:6052`. To develop with the frontend, start the frontend dev server in the [frontend repo](https://github.com/esphome/device-builder-dashboard-frontend) — it proxies API calls to port 6052. Or use the VS Code debugger (F5 → "Run Server").
+The server starts on `http://localhost:6052`. Use the VS Code debugger (F5 → "Run Server") for breakpoint debugging.
 
 ### CLI Options
 
@@ -50,39 +47,36 @@ esphome-device-builder [configuration] [options]
 
 ## Architecture
 
-The backend is a **standalone project** using ESPHome as a dependency. It provides a **WebSocket-first API** on `/ws` — all frontend communication goes through a single multiplexed WebSocket with command/response protocol.
+**WebSocket-first API** on `/ws` — 43 commands across 6 controllers, all through a single multiplexed WebSocket with command/response protocol.
 
 ```
 DeviceBuilder (singleton)
-├── controllers/boards.py        — 501 board definitions with pin maps
-├── controllers/components.py    — 655 components from definitions
-├── controllers/devices.py       — device CRUD, file scanning, compile/upload/logs
-├── controllers/automations.py   — context-aware triggers and actions
-├── controllers/config.py        — settings, preferences, secrets, version
-├── api/ws.py                    — /ws WebSocket dispatch (31 commands)
+├── controllers/devices.py       — 14 commands: device CRUD, validation, live logs
+├── controllers/firmware.py      — 13 commands: job queue, compile, install, download
+├── controllers/boards.py        —  3 commands: 505 boards with pin maps
+├── controllers/components.py    —  3 commands: 655 components from ESPHome
+├── controllers/automations.py   —  3 commands: context-aware triggers + actions
+├── controllers/config.py        —  5 commands: version, preferences, secrets
+├── api/ws.py                    — /ws WebSocket dispatch
 └── api/legacy.py                — HA backward compat (4 endpoints)
 ```
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and [docs/API.md](docs/API.md) for the complete API reference.
-
 ### Key concepts
 
-- **A device** = a YAML config file on disk in the config folder
-- **Board definitions** = YAML manifests in `definitions/boards/`, synced from PlatformIO repos
-- **Component catalog** = `definitions/components.json`, synced from ESPHome source + docs via script
-- **Real-time events** = clients subscribe once via WebSocket, get instant updates on device changes
+- **A device** = a YAML config file on disk. Has a `has_pending_changes` flag (true if YAML newer than compiled binary)
+- **Board definitions** = YAML manifests in `definitions/boards/`, synced from PlatformIO. 505 boards with pin maps, hardware specs, images
+- **Component catalog** = `definitions/components.json`, synced from ESPHome source + docs. 655 components with config entries
+- **Firmware jobs** = persistent queue, one at a time. Compile/install/upload. Survive page refresh and server restart
+- **Real-time events** = subscribe once, get instant updates. No polling
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and [docs/API.md](docs/API.md) for the complete API reference with all 43 commands.
 
 ### Sync scripts
 
 ```bash
-# Sync board definitions from PlatformIO repos (501 boards)
-python script/sync_boards.py
-
-# Sync component definitions from ESPHome source (655 components)
-python script/sync_components.py
-
-# Prefill pin data from generic boards + ESPHome named pins
-python script/prefill_pins.py
+python script/sync_boards.py          # Sync 505 boards from PlatformIO
+python script/sync_components.py      # Sync 655 components from ESPHome
+python script/prefill_pins.py         # Prefill pin data from chip variants
 ```
 
 ## Board Definitions
@@ -91,10 +85,7 @@ Boards live in `esphome_device_builder/definitions/boards/`. Each board is a sub
 
 ## Contributing
 
-Contributions are welcome, especially:
-
-- Board definitions (add a subfolder to `definitions/boards/`)
-- Bug reports and feature requests via GitHub Issues
+Contributions welcome — especially board definitions (add a subfolder to `definitions/boards/`).
 
 ## License
 

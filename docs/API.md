@@ -4,7 +4,7 @@ Base URL: `http://localhost:6052`
 
 ## WebSocket API (`/ws`)
 
-The primary API. A single multiplexed WebSocket handles all commands.
+The primary API. A single multiplexed WebSocket handles all 43 commands.
 
 ### Protocol
 
@@ -50,9 +50,9 @@ On connect, the server sends a [`ServerInfoMessage`](../esphome_device_builder/m
 
 ## Commands
 
-### Devices
+### Devices (14 commands)
 
-> Models: [`Device`](../esphome_device_builder/models/devices.py), [`DevicesResponse`](../esphome_device_builder/models/devices.py), [`WizardResponse`](../esphome_device_builder/models/devices.py), [`UpdateDeviceResponse`](../esphome_device_builder/models/devices.py)
+> Models: [`Device`](../esphome_device_builder/models/devices.py), [`DevicesResponse`](../esphome_device_builder/models/devices.py)
 >
 > Controller: [`DevicesController`](../esphome_device_builder/controllers/devices.py)
 
@@ -60,25 +60,50 @@ On connect, the server sends a [`ServerInfoMessage`](../esphome_device_builder/m
 |---------|------|----------|-------------|
 | `devices/list` | — | `DevicesResponse` | List configured + importable devices |
 | `devices/get_states` | — | `dict` | Get device online/offline states |
-| `devices/create` | `{name, config_type?, platform?, board?, ssid?, psk?, password?, file_content?, board_id?}` | `WizardResponse` | Create new device config |
+| `devices/create` | `{name, board_id, config_type?, ssid?, psk?, file_content?}` | `WizardResponse` | Create device from board definition |
 | `devices/update` | `{name, friendly_name?, comment?, board_id?}` | `UpdateDeviceResponse` | Update device metadata |
 | `devices/rename` | `{configuration, new_name}` | — | Rename device via ESPHome CLI |
 | `devices/delete` | `{configuration}` | — | Delete device and associated files |
+| `devices/delete_bulk` | `{configurations: string[]}` | `[{configuration, success, error?}]` | Delete multiple devices |
 | `devices/get_config` | `{configuration}` | `string` | Read device YAML config |
 | `devices/update_config` | `{configuration, content}` | — | Write device YAML config |
 | `devices/add_component` | `{configuration, component_id, fields?, sub_entities?}` | `AddComponentResponse` | Add component to device config |
-| `devices/import` | `{name, project_name?, package_import_url?, friendly_name?, encryption?}` | `dict` | Import/adopt discovered device |
-| `devices/ignore` | `{name, ignore?}` | — | Toggle device visibility in import list |
-| `devices/compile` | `{configuration}` | Streaming | Compile device firmware |
-| `devices/upload` | `{configuration, port?}` | Streaming | Upload firmware to device |
-| `devices/logs` | `{configuration, port?}` | Streaming | Stream device logs |
+| `devices/import` | `{name, project_name?, package_import_url?, ...}` | `dict` | Import/adopt discovered device |
+| `devices/ignore` | `{name, ignore?}` | — | Toggle device visibility |
 | `devices/validate` | `{configuration}` | Streaming | Validate YAML config |
-| `devices/clean` | `{configuration}` | Streaming | Clean build files |
+| `devices/logs` | `{configuration, port?}` | Streaming | Stream live device logs |
 
-### Boards
+`Device.has_pending_changes`: `true` = YAML newer than compiled binary, `false` = up to date, `null` = never compiled.
 
-> Models: [`BoardCatalogEntry`](../esphome_device_builder/models/boards.py), [`PagedBoardsResponse`](../esphome_device_builder/models/boards.py)
+### Firmware (13 commands)
+
+> Models: [`FirmwareJob`](../esphome_device_builder/models/firmware.py), [`JobStatus`](../esphome_device_builder/models/firmware.py), [`JobType`](../esphome_device_builder/models/firmware.py)
 >
+> Controller: [`FirmwareController`](../esphome_device_builder/controllers/firmware.py)
+
+| Command | Args | Response | Description |
+|---------|------|----------|-------------|
+| `firmware/compile` | `{configuration}` | `FirmwareJob` | Queue compile job |
+| `firmware/upload` | `{configuration, port?}` | `FirmwareJob` | Queue upload of existing binary |
+| `firmware/install` | `{configuration, port?: "OTA"}` | `FirmwareJob` | Queue compile + upload |
+| `firmware/clean` | `{configuration}` | `FirmwareJob` | Queue build clean |
+| `firmware/compile_bulk` | `{configurations: string[]}` | `[FirmwareJob]` | Queue multiple compiles |
+| `firmware/install_bulk` | `{configurations: string[], port?: "OTA"}` | `[FirmwareJob]` | Queue multiple installs |
+| `firmware/get_jobs` | `{status?, configuration?}` | `[FirmwareJob]` | List jobs with filters |
+| `firmware/get_job` | `{job_id}` | `FirmwareJob` | Get job with full output |
+| `firmware/follow_job` | `{job_id}` | Streaming | Historical output + live stream |
+| `firmware/get_binaries` | `{configuration}` | `[{title, file}]` | List compiled firmware files |
+| `firmware/download` | `{configuration, file, compressed?}` | `{filename, data, size}` | Download binary (base64) |
+| `firmware/cancel` | `{job_id}` | — | Cancel queued job |
+| `firmware/clear` | `{status?}` | — | Remove finished jobs |
+
+**Job queue**: one job runs at a time, others wait. Jobs persist across server restarts. Output buffered in `FirmwareJob.output` — clients can reconnect via `firmware/follow_job`.
+
+**Job events** (broadcast to all subscribed clients):
+- `job_queued`, `job_started`, `job_output`, `job_completed`, `job_failed`
+
+### Boards (3 commands)
+
 > Controller: [`BoardCatalog`](../esphome_device_builder/controllers/boards.py)
 >
 > Enums: [`Platform`](../esphome_device_builder/models/boards.py), [`Esp32Variant`](../esphome_device_builder/models/boards.py), [`BoardTag`](../esphome_device_builder/models/boards.py)
@@ -86,139 +111,65 @@ On connect, the server sends a [`ServerInfoMessage`](../esphome_device_builder/m
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `boards/get_boards` | `{query?, platform?, variant?, tag?, offset?, limit?}` | `PagedBoardsResponse` | Search/list boards |
-| `boards/get_board` | `{board_id}` | `BoardCatalogEntry` | Get single board with pin map |
+| `boards/get_board` | `{board_id}` | `BoardCatalogEntry` | Get board with pin map |
 
-**`boards/get_boards` args detail:**
+### Components (3 commands)
 
-| Arg | Type | Description |
-|-----|------|-------------|
-| `query` | `string` | Free-text search across name, description, manufacturer, id, tags |
-| `platform` | [`Platform`](../esphome_device_builder/models/boards.py) | Filter: `esp32`, `esp8266`, `rp2040`, `bk72xx`, `rtl87xx`, `ln882x` |
-| `variant` | [`Esp32Variant`](../esphome_device_builder/models/boards.py) | Filter: `esp32`, `esp32s2`, `esp32s3`, `esp32c3`, `esp32c6`, `esp32h2`, ... |
-| `tag` | [`BoardTag`](../esphome_device_builder/models/boards.py) | Filter: `compact`, `dev-kit`, `starter-kit`, `display`, `poe`, `usb-c`, ... |
-| `offset` | `int` | Pagination offset (default: 0) |
-| `limit` | `int` | Page size (default: 50, max: 200) |
-
-### Components
-
-> Models: [`ComponentCatalogEntry`](../esphome_device_builder/models/components.py), [`PagedComponentsResponse`](../esphome_device_builder/models/components.py), [`ConfigEntry`](../esphome_device_builder/models/common.py)
->
 > Controller: [`ComponentCatalog`](../esphome_device_builder/controllers/components.py)
 >
 > Enums: [`ComponentCategory`](../esphome_device_builder/models/components.py), [`ConfigEntryType`](../esphome_device_builder/models/common.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
-| `components/get_categories` | — | `[{id, name, count}]` | List component categories with counts |
+| `components/get_categories` | — | `[{id, name, count}]` | List categories with counts |
 | `components/get_components` | `{query?, category?, offset?, limit?}` | `PagedComponentsResponse` | Search/list components |
 | `components/get_component` | `{component_id}` | `ComponentCatalogEntry` | Get component with config entries |
 
-**`components/get_components` args detail:**
+### Automations (3 commands)
 
-| Arg | Type | Description |
-|-----|------|-------------|
-| `query` | `string` | Free-text search across name, description, id |
-| `category` | [`ComponentCategory`](../esphome_device_builder/models/components.py) | Filter: `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `core`, `bus`, ... |
-| `offset` | `int` | Pagination offset (default: 0) |
-| `limit` | `int` | Page size (default: 50, max: 200) |
-
-### Automations
-
-> Models: [`AutomationTrigger`](../esphome_device_builder/controllers/automations.py), [`AutomationAction`](../esphome_device_builder/controllers/automations.py)
->
 > Controller: [`AutomationsController`](../esphome_device_builder/controllers/automations.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
-| `automations/get_triggers` | `{platform_type?}` | `[AutomationTrigger]` | List triggers, optionally filtered by platform type |
-| `automations/get_actions` | — | `[AutomationAction]` | List all available actions |
-| `automations/get_available` | `{configuration}` | `{triggers, actions, present_platform_types}` | Context-aware: returns triggers + actions for a specific device based on its config |
+| `automations/get_triggers` | `{platform_type?}` | `[AutomationTrigger]` | List triggers by platform type |
+| `automations/get_actions` | — | `[AutomationAction]` | List all actions |
+| `automations/get_available` | `{configuration}` | `{triggers, actions, present_platform_types}` | Context-aware for a device |
 
-**`automations/get_available` flow:**
-1. Reads the device YAML config
-2. Detects which platform types are present (binary_sensor, sensor, switch, etc.)
-3. Returns device-level triggers (on_boot, on_shutdown) + component-level triggers matching present types + all actions
-
-### Config
+### Config (5 commands)
 
 > Controller: [`ConfigController`](../esphome_device_builder/controllers/config.py)
+>
+> Models: [`UserPreferences`](../esphome_device_builder/models/preferences.py)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `config/version` | — | `{server_version, esphome_version}` | Get versions |
 | `config/serial_ports` | — | `[{port, desc}]` | List serial ports |
-| `config/get_preferences` | — | `dict` | Get user preferences |
-| `config/set_preferences` | `{...prefs}` | `dict` | Update user preferences |
+| `config/get_preferences` | — | `UserPreferences` | Get user preferences |
+| `config/set_preferences` | `{theme?, dashboard_view?, ...}` | `UserPreferences` | Update preferences (partial) |
 | `config/get_secrets` | — | `[string]` | List secret key names |
-| `config/get_info` | `{configuration}` | `dict` | Get compiled device metadata |
 
-### Utility
+### Utility (2 commands)
 
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `ping` | — | `{pong: true}` | Health check |
-| `subscribe_events` | — | Streaming [`EventType`](../esphome_device_builder/models/common.py) | Subscribe to real-time device events |
+| `subscribe_events` | — | Streaming | Subscribe to real-time events |
 
-**`subscribe_events` flow:**
-1. Immediately sends `initial_state` event with current device list
-2. Confirms with `{subscribed: true}` result
-3. Pushes events as they happen — no polling needed:
-   - `device_added` — new config file detected
-   - `device_removed` — config file deleted
-   - `device_updated` — config file modified
-   - `device_state_changed` — device online/offline state changed
-   - `importable_device_added` / `importable_device_removed` — discovered devices
-
----
-
-## Models
-
-All models are dataclasses with mashumaro `DataClassORJSONMixin` for serialization.
-
-| Model | File | Description |
-|-------|------|-------------|
-| `Device` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | A configured ESPHome device |
-| `AdoptableDevice` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | A discoverable device for import |
-| `DevicesResponse` | [`models/devices.py`](../esphome_device_builder/models/devices.py) | List of configured + importable devices |
-| `BoardCatalogEntry` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | Board with hardware specs, pins, images |
-| `BoardPin` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | GPIO pin with features and availability |
-| `PagedBoardsResponse` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | Paginated board list |
-| `ComponentCatalogEntry` | [`models/components.py`](../esphome_device_builder/models/components.py) | Component with config entries |
-| `ComponentSubEntity` | [`models/components.py`](../esphome_device_builder/models/components.py) | Sub-entity (e.g. DHT temperature) |
-| `PagedComponentsResponse` | [`models/components.py`](../esphome_device_builder/models/components.py) | Paginated component list |
-| `AutomationTrigger` | [`controllers/automations.py`](../esphome_device_builder/controllers/automations.py) | Trigger that starts an automation |
-| `AutomationAction` | [`controllers/automations.py`](../esphome_device_builder/controllers/automations.py) | Action performed in an automation |
-| `ConfigEntry` | [`models/common.py`](../esphome_device_builder/models/common.py) | Config field definition |
-| `PagedResponse` | [`models/common.py`](../esphome_device_builder/models/common.py) | Base for paginated responses |
-| `CommandMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Client → Server command |
-| `ResultMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client result |
-| `ErrorMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client error |
-| `EventMessage` | [`models/api.py`](../esphome_device_builder/models/api.py) | Server → Client streaming event |
-
-## Enums
-
-| Enum | File | Values |
-|------|------|--------|
-| `Platform` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `esp32`, `esp8266`, `rp2040`, `bk72xx`, `rtl87xx`, `ln882x` |
-| `Esp32Variant` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `esp32`, `esp32s2`, `esp32s3`, `esp32c2`, `esp32c3`, `esp32c5`, `esp32c6`, `esp32c61`, `esp32h2`, `esp32p4` |
-| `Connectivity` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `wifi`, `bluetooth`, `ethernet`, `zigbee`, `thread`, `openthread`, `can`, `matter`, `lora` |
-| `BoardTag` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `compact`, `dev-kit`, `starter-kit`, `display`, `camera`, `rgb-led`, `relay`, `lipo`, `poe`, `usb-c`, `sonoff`, `tuya`, `shelly`, ... |
-| `PinFeature` | [`models/boards.py`](../esphome_device_builder/models/boards.py) | `adc`, `dac`, `touch`, `pwm`, `i2c_sda`, `i2c_scl`, `spi_mosi`, `uart_tx`, `strapping`, `input_only`, `boot_button`, ... |
-| `ComponentCategory` | [`models/components.py`](../esphome_device_builder/models/components.py) | `sensor`, `binary_sensor`, `switch`, `light`, `climate`, `core`, `bus`, `misc`, ... |
-| `ConfigEntryType` | [`models/common.py`](../esphome_device_builder/models/common.py) | `string`, `integer`, `float`, `boolean`, `select`, `pin`, `time_period`, `icon`, `id`, `unknown`, ... |
-| `EventType` | [`models/common.py`](../esphome_device_builder/models/common.py) | `device_added`, `device_removed`, `device_updated`, `device_state_changed`, `importable_device_added`, `importable_device_removed` |
-| `ErrorCode` | [`models/api.py`](../esphome_device_builder/models/api.py) | `invalid_message`, `unknown_command`, `invalid_args`, `not_found`, `internal_error` |
+**`subscribe_events` events:**
+- `device_added`, `device_removed`, `device_updated`, `device_state_changed`
+- `importable_device_added`, `importable_device_removed`
+- `job_queued`, `job_started`, `job_output`, `job_completed`, `job_failed`
 
 ---
 
 ## Legacy REST Endpoints (Deprecated)
 
-For backward compatibility with the Home Assistant ESPHome integration only.
-New clients must use the `/ws` WebSocket API.
+For Home Assistant ESPHome integration backward compat only.
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /devices` | List devices (HA dashboard-api) |
+| `GET /devices` | List devices |
 | `GET /json-config?configuration=...` | Get parsed YAML as JSON |
 | `GET /compile` (WebSocket) | Compile via spawn protocol |
 | `GET /upload` (WebSocket) | Upload via spawn protocol |
