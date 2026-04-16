@@ -114,7 +114,14 @@ async def websocket_handler(request: web.Request) -> web.WebSocketResponse:
     client = WebSocketClient(ws, device_builder)
 
     # Send server info on connect
-    info = ServerInfoMessage(server_version=__version__, esphome_version=esphome_version)
+    settings = device_builder.settings
+    info = ServerInfoMessage(
+        server_version=__version__,
+        esphome_version=esphome_version,
+        port=settings.port,
+        ha_addon=settings.on_ha_addon,
+        requires_auth=settings.using_auth,
+    )
     await client.send(info.to_dict())
 
     try:

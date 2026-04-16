@@ -60,3 +60,6 @@ class ServerInfoMessage(DataClassORJSONMixin):
 
     server_version: str
     esphome_version: str
+    port: int
+    ha_addon: bool = False
+    requires_auth: bool = False
