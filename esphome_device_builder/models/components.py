@@ -67,6 +67,8 @@ class ComponentCatalogEntry(DataClassORJSONMixin):
     dependencies: list[str] = field(default_factory=list)
     auto_load: list[str] = field(default_factory=list)
     multi_conf: bool = False
+    # Empty = works on all platforms. Non-empty = only these platforms.
+    supported_platforms: list[str] = field(default_factory=list)
     config_entries: list[ConfigEntry] = field(default_factory=list)
     sub_entities: list[ComponentSubEntity] = field(default_factory=list)
 

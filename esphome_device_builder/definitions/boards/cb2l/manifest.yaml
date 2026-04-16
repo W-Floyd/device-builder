@@ -1,0 +1,14 @@
+id: cb2l
+name: CB2L Wi-Fi Module
+description: CB2L Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: cb2l
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

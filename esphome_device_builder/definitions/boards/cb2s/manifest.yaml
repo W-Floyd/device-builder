@@ -1,0 +1,14 @@
+id: cb2s
+name: CB2S Wi-Fi Module
+description: CB2S Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: cb2s
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

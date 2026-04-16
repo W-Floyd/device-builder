@@ -1,0 +1,14 @@
+id: cr3l
+name: CR3L Wi-Fi Module
+description: CR3L Wi-Fi Module (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: cr3l
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

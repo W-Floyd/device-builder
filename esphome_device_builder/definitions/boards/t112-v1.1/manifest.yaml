@@ -1,0 +1,14 @@
+id: t112-v1.1
+name: T112_V1.1
+description: T112_V1.1 (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: t112-v1.1
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

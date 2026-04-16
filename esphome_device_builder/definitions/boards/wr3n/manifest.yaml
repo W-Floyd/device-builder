@@ -1,0 +1,14 @@
+id: wr3n
+name: WR3N Wi-Fi Module
+description: WR3N Wi-Fi Module (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: wr3n
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

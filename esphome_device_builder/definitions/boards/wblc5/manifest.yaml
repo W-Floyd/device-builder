@@ -1,0 +1,14 @@
+id: wblc5
+name: WBLC5 Wi-Fi Module
+description: WBLC5 Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: wblc5
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

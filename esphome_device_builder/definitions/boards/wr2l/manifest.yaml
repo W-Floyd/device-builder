@@ -1,0 +1,14 @@
+id: wr2l
+name: WR2L Wi-Fi Module
+description: WR2L Wi-Fi Module (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: wr2l
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

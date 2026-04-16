@@ -1,0 +1,14 @@
+id: cbu
+name: CBU Wi-Fi Module
+description: CBU Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: cbu
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

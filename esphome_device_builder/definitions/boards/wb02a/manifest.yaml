@@ -1,0 +1,14 @@
+id: wb02a
+name: WB02A Wi-Fi/BLE Module
+description: WB02A Wi-Fi/BLE Module (LN882X board).
+manufacturer: ''
+esphome:
+  platform: ln882x
+  board: wb02a
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

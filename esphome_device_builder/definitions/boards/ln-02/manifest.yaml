@@ -1,0 +1,14 @@
+id: ln-02
+name: LN-02 Wi-Fi/BLE Module
+description: LN-02 Wi-Fi/BLE Module (LN882X board).
+manufacturer: ''
+esphome:
+  platform: ln882x
+  board: ln-02
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

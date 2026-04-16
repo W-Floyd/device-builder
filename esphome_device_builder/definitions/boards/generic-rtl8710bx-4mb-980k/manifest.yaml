@@ -1,0 +1,14 @@
+id: generic-rtl8710bx-4mb-980k
+name: Generic - RTL8710BX (4M/980k)
+description: Generic - RTL8710BX (4M/980k) (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: generic-rtl8710bx-4mb-980k
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

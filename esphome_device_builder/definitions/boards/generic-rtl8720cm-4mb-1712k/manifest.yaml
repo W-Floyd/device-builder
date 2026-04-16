@@ -1,0 +1,14 @@
+id: generic-rtl8720cm-4mb-1712k
+name: Generic - RTL8720CM (4M/1712k)
+description: Generic - RTL8720CM (4M/1712k) (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: generic-rtl8720cm-4mb-1712k
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

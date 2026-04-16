@@ -1,0 +1,14 @@
+id: wbr1
+name: WBR1 Wi-Fi Module
+description: WBR1 Wi-Fi Module (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: wbr1
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

@@ -1,0 +1,14 @@
+id: wb3l
+name: WB3L Wi-Fi Module
+description: WB3L Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: wb3l
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

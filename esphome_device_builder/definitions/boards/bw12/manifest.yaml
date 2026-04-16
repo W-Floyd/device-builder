@@ -1,0 +1,14 @@
+id: bw12
+name: BW12
+description: BW12 (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: bw12
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

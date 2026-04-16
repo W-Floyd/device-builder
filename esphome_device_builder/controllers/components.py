@@ -82,6 +82,7 @@ def _load_component(data: dict) -> ComponentCatalogEntry:
         dependencies=data.get("dependencies", []),
         auto_load=data.get("auto_load", []),
         multi_conf=data.get("multi_conf", False),
+        supported_platforms=data.get("supported_platforms", []),
         config_entries=[_load_config_entry(e) for e in data.get("config_entries", [])],
         sub_entities=[_load_sub_entity(s) for s in data.get("sub_entities", [])],
     )
@@ -141,6 +142,7 @@ class ComponentCatalog:
         *,
         query: str | None = None,
         category: ComponentCategory | str | None = None,
+        platform: str | None = None,
         offset: int = 0,
         limit: int = 50,
         **kwargs: Any,
@@ -150,6 +152,12 @@ class ComponentCatalog:
 
         if category:
             results = [c for c in results if c.category == category]
+
+        if platform:
+            # Show components that work on this platform (empty = all platforms)
+            results = [
+                c for c in results if not c.supported_platforms or platform in c.supported_platforms
+            ]
 
         if query:
             query_lower = query.lower()

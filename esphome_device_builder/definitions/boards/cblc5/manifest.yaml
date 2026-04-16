@@ -1,0 +1,14 @@
+id: cblc5
+name: CBLC5 Wi-Fi Module
+description: CBLC5 Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: cblc5
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

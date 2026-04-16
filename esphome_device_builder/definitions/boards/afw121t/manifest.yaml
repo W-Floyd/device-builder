@@ -1,0 +1,14 @@
+id: afw121t
+name: AFW121T
+description: AFW121T (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: afw121t
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

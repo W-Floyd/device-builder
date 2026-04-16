@@ -1,0 +1,14 @@
+id: cb3se
+name: CB3SE Wi-Fi Module
+description: CB3SE Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: cb3se
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

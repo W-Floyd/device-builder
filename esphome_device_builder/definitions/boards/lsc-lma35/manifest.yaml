@@ -1,0 +1,14 @@
+id: lsc-lma35
+name: LSC LMA35 BK7231N
+description: LSC LMA35 BK7231N (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: lsc-lma35
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

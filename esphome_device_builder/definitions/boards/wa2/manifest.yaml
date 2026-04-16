@@ -1,0 +1,14 @@
+id: wa2
+name: WA2 Wi-Fi Module
+description: WA2 Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: wa2
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

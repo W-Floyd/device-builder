@@ -1,0 +1,14 @@
+id: wb2s
+name: WB2S Wi-Fi Module
+description: WB2S Wi-Fi Module (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: wb2s
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

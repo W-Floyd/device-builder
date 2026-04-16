@@ -1,0 +1,14 @@
+id: xiao_ble
+name: Xiao Ble
+description: NRF52 board (xiao_ble).
+manufacturer: ''
+esphome:
+  platform: nrf52
+  board: xiao_ble
+  framework: zephyr
+hardware:
+  connectivity:
+  - bluetooth
+tags: []
+docs_url: https://esphome.io/components/nrf52.html
+pins: []

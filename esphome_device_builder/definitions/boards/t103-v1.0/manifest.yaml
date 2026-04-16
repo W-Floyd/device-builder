@@ -1,0 +1,14 @@
+id: t103-v1.0
+name: T103_V1.0
+description: T103_V1.0 (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: t103-v1.0
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

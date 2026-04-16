@@ -11,6 +11,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "active_pullup",
@@ -68,6 +69,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -92,6 +94,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -116,6 +119,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "max_speed",
@@ -190,6 +194,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "temperature",
@@ -240,6 +245,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "adc128s102_id",
@@ -287,6 +293,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "irq_pin",
@@ -510,6 +517,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "irq_pin",
@@ -762,6 +770,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ads1115_id",
@@ -864,6 +873,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -927,6 +937,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "variant",
@@ -998,6 +1009,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -1035,6 +1047,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pm_2_5",
@@ -1084,6 +1097,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "esp32_ble_id",
@@ -1108,6 +1122,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "battery_update_interval",
@@ -1180,6 +1195,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -1252,6 +1268,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -1310,6 +1327,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -1368,6 +1386,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ble_client_id",
@@ -1413,6 +1432,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "as3935_id",
@@ -1448,6 +1468,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -1506,6 +1527,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -1564,6 +1586,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -1618,6 +1641,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -1872,6 +1896,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "gain",
@@ -1951,6 +1976,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "type",
@@ -1987,6 +2013,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "as5600_id",
@@ -2055,6 +2082,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "gain",
@@ -2201,6 +2229,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -2261,6 +2290,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "line_frequency",
@@ -2467,6 +2497,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "line_frequency",
@@ -2624,6 +2655,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -2714,6 +2746,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -2774,6 +2807,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -3070,6 +3104,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bedjet_id",
@@ -3105,6 +3140,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -3165,6 +3201,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "legacy_mode",
@@ -3346,6 +3383,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "line_frequency",
@@ -3479,6 +3517,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -3526,6 +3565,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -3573,6 +3613,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -3646,6 +3687,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -3726,6 +3768,9 @@
         "bytebuffer"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [
         {
           "key": "ble_id",
@@ -3826,6 +3871,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -3956,6 +4002,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -4113,6 +4160,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -4256,6 +4304,7 @@
         "text_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bme680_bsec_id",
@@ -4360,6 +4409,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bme68x_bsec2_id",
@@ -4473,6 +4523,7 @@
         "bme68x_bsec2"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "raw_data_id",
@@ -4602,6 +4653,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -4685,6 +4737,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -4743,6 +4796,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -4851,6 +4905,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -4986,6 +5041,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -5097,6 +5153,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -5235,6 +5292,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -5369,6 +5427,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -5458,6 +5517,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -5560,6 +5620,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -5635,6 +5696,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -5702,6 +5764,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "baseline",
@@ -5801,6 +5864,7 @@
         "voltage_sampler"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "cd74hc4067_id",
@@ -5858,6 +5922,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "k_value",
@@ -5950,6 +6015,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -5976,6 +6042,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -6002,6 +6069,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -6082,6 +6150,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -6426,6 +6495,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -6720,6 +6790,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "source_id",
@@ -6744,6 +6815,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -6804,6 +6876,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -6866,6 +6939,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -6920,6 +6994,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sensor",
@@ -6964,6 +7039,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -7004,6 +7080,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -7254,6 +7331,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -7341,6 +7419,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -7635,6 +7714,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -7929,6 +8009,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -8233,6 +8314,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "resolution",
@@ -8306,6 +8388,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -8618,6 +8701,7 @@
         "valve"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "alarm_control_panels",
@@ -9034,6 +9118,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "temperature",
@@ -9070,6 +9155,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -9124,6 +9210,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -9188,6 +9275,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -9248,6 +9336,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "dlms_meter_id",
@@ -9338,6 +9427,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -9401,6 +9491,7 @@
         "text_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "dsmr_id",
@@ -10021,6 +10112,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -10059,6 +10151,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "method",
@@ -10083,6 +10176,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -10161,6 +10255,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -10224,6 +10319,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -10326,6 +10422,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "emc2101_id",
@@ -10381,6 +10478,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -10675,6 +10773,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -10829,6 +10928,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -10892,6 +10992,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -10982,6 +11083,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -11040,6 +11142,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bits_per_sample",
@@ -11110,6 +11213,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mic_gain",
@@ -11157,6 +11261,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -11194,6 +11299,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bits_per_sample",
@@ -11284,43 +11390,6 @@
       "sub_entities": []
     },
     {
-      "id": "es8388",
-      "name": "ES8388",
-      "description": "Instructions for using ESPHome's es8388 audio DAC platform to play media from your devices and to configure microphone inputs.",
-      "category": "audio_dac",
-      "docs_url": "https://esphome.io/components/audio_dac/es8388",
-      "image_url": "https://esphome.io/components/audio_dac/images/es8388.svg",
-      "dependencies": [],
-      "auto_load": [],
-      "multi_conf": false,
-      "config_entries": [
-        {
-          "key": "i2c_id",
-          "type": "unknown",
-          "label": "I2C Id",
-          "required": false,
-          "default_value": null,
-          "options": null,
-          "range": null,
-          "advanced": true
-        },
-        {
-          "key": "address",
-          "type": "float",
-          "label": "Address",
-          "required": false,
-          "default_value": 16,
-          "options": null,
-          "range": [
-            0,
-            255
-          ],
-          "advanced": true
-        }
-      ],
-      "sub_entities": []
-    },
-    {
       "id": "espnow",
       "name": "ESP-NOW Packet Transport Platform",
       "description": "Instructions for setting up an ESP-NOW packet transport platform on ESPHome",
@@ -11332,6 +11401,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -11446,6 +11516,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "can_id",
@@ -11562,6 +11633,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -11636,6 +11708,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -11753,6 +11826,9 @@
         "binary_sensor"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -11843,6 +11919,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -11890,6 +11967,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -11952,6 +12030,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "model",
@@ -12014,6 +12093,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -12094,6 +12174,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -12199,6 +12280,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "gdk101_id",
@@ -12254,6 +12336,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -12550,6 +12633,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -12587,6 +12671,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -12636,6 +12721,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -12725,6 +12811,7 @@
         "display_menu_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "active",
@@ -12832,6 +12919,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "gree_id",
@@ -13021,6 +13109,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -13091,6 +13180,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -13133,6 +13223,7 @@
         "sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "fingerprint_grow_id",
@@ -13188,6 +13279,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "protocol_version",
@@ -13284,6 +13376,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ble_client_id",
@@ -13351,6 +13444,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -13418,6 +13512,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -13520,6 +13615,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "haier_id",
@@ -13600,6 +13696,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -13723,6 +13820,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "warmup_time",
@@ -13773,6 +13871,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -13831,6 +13930,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -13889,6 +13989,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_mode",
@@ -13962,6 +14063,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -14066,6 +14168,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -14126,6 +14229,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -14186,6 +14290,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -14480,6 +14585,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -14780,6 +14886,7 @@
         "text_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "hlk_fm22x_id",
@@ -14820,6 +14927,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sel_pin",
@@ -14952,6 +15060,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "current_resistor",
@@ -15022,6 +15131,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "oversampling",
@@ -15110,6 +15220,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "entity_id",
@@ -15144,6 +15255,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15233,6 +15345,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15337,6 +15450,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15395,6 +15509,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -15419,6 +15534,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15477,6 +15593,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "model",
@@ -15554,6 +15671,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15612,6 +15730,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "dout_pin",
@@ -15666,6 +15785,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -15730,6 +15850,9 @@
         "improv_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [
         {
           "key": "authorizer",
@@ -15809,6 +15932,7 @@
         "improv_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "next_url",
@@ -15833,6 +15957,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "shunt_resistance",
@@ -15940,6 +16065,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "shunt_resistance",
@@ -16044,6 +16170,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -16091,6 +16218,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -16146,6 +16274,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sensor",
@@ -16220,6 +16349,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -16267,6 +16397,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "custom",
@@ -16349,6 +16480,7 @@
         "key_provider"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "source_id",
@@ -16373,6 +16505,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -16456,6 +16589,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "size",
@@ -16555,6 +16689,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -16651,6 +16786,7 @@
         "display_menu_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "active",
@@ -16770,6 +16906,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -16851,6 +16988,7 @@
         "ld24xx"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ld2410_id",
@@ -16910,6 +17048,7 @@
         "ld24xx"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ld2412_id",
@@ -17109,6 +17248,7 @@
         "ld24xx"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ld2450_id",
@@ -17149,6 +17289,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -17236,6 +17377,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -17359,6 +17501,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "read_pin",
@@ -17403,6 +17546,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "display",
@@ -17483,6 +17627,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -17530,6 +17675,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -17564,6 +17710,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -17626,6 +17773,7 @@
         "key_provider"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "widget",
@@ -17650,6 +17798,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -17700,6 +17849,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -17763,6 +17913,7 @@
         "watchdog"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -17827,6 +17978,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -17907,6 +18059,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mains_filter",
@@ -18010,6 +18163,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "reference_resistance",
@@ -18136,6 +18290,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mode",
@@ -18197,6 +18352,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -18273,6 +18429,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -18360,6 +18517,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -18480,6 +18638,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -18704,6 +18863,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "shunt_resistance",
@@ -18803,6 +18963,7 @@
         "mcp23x08_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "open_drain_interrupt",
@@ -18854,6 +19015,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -18895,6 +19057,7 @@
         "mcp23x17_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "open_drain_interrupt",
@@ -18946,6 +19109,7 @@
         "mcp23x08_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "deviceaddress",
@@ -19037,6 +19201,7 @@
         "mcp23x17_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "deviceaddress",
@@ -19124,6 +19289,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "can_id",
@@ -19276,6 +19442,7 @@
         "sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mcp3008_id",
@@ -19332,6 +19499,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mcp3204_id",
@@ -19389,6 +19557,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "reference_voltage",
@@ -19448,6 +19617,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -19584,6 +19754,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -19673,6 +19844,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -19803,6 +19975,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -19890,6 +20063,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "thermocouple_type",
@@ -19967,6 +20141,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -20014,6 +20189,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "automatic_baseline_calibration",
@@ -20091,6 +20267,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "micronova_id",
@@ -20356,6 +20533,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -20434,6 +20612,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -20738,6 +20917,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -21100,6 +21280,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -21158,6 +21339,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "auto_set_reset",
@@ -21236,6 +21418,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -21301,6 +21484,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "role",
@@ -21378,6 +21562,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -21483,6 +21668,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "show_sensors_without_sync",
@@ -21517,6 +21703,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -21635,6 +21822,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -21738,6 +21926,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -21803,6 +21992,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -21896,6 +22086,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -21979,6 +22170,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -22062,6 +22254,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mqtt_parent_id",
@@ -22096,6 +22289,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -22154,6 +22348,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -22229,6 +22424,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "msa3xx_id",
@@ -22285,6 +22481,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -22372,6 +22569,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "ldo_voltage",
@@ -22486,6 +22684,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -22780,6 +22979,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -22838,6 +23038,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sensor",
@@ -22872,6 +23073,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "opentherm_id",
@@ -23087,6 +23289,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -23134,6 +23337,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -23208,6 +23412,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -23249,6 +23454,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin_count",
@@ -23298,6 +23504,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -23389,6 +23596,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pcf8575",
@@ -23436,6 +23644,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -23491,6 +23700,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -23569,6 +23779,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -23641,6 +23852,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "reset",
@@ -23688,6 +23900,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "climate_id",
@@ -23741,6 +23954,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pipsolar_id",
@@ -23986,6 +24200,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "standard_units",
@@ -24089,6 +24304,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "type",
@@ -24217,6 +24433,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -24288,6 +24505,7 @@
         "nfc"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -24352,6 +24570,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -24406,6 +24625,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "flash_write_interval",
@@ -24432,6 +24652,7 @@
         "web_server_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "web_server_base_id",
@@ -24466,6 +24687,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -24529,6 +24751,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -24563,6 +24786,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -24625,6 +24849,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pylontech_id",
@@ -24708,6 +24933,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "iir_filter",
@@ -24823,6 +25049,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "esp32_ble_id",
@@ -24849,6 +25076,7 @@
         "binary_sensor"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -24917,6 +25145,7 @@
         "rc522"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -24983,6 +25212,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "rd03d_id",
@@ -25017,6 +25247,7 @@
         "binary_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -25084,6 +25315,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sensor",
@@ -25141,6 +25373,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -25203,6 +25436,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -25326,6 +25560,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -25471,6 +25706,9 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [
+        "rp2040"
+      ],
       "config_entries": [
         {
           "key": "enable_on_boot",
@@ -25495,6 +25733,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -25582,6 +25821,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "log_interval",
@@ -25608,6 +25848,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "esp32_ble_id",
@@ -25632,6 +25873,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -25722,6 +25964,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -25794,6 +26037,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "automatic_self_calibration",
@@ -25906,6 +26150,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "automatic_self_calibration",
@@ -26037,6 +26282,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -26346,6 +26592,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "measurement_mode",
@@ -26408,6 +26655,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mr24hpc1_id",
@@ -26470,6 +26718,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mr60bha2_id",
@@ -26515,6 +26764,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -26648,6 +26898,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -26695,6 +26946,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -26742,6 +26994,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "auto_cleaning_interval",
@@ -26877,6 +27130,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "type",
@@ -26985,6 +27239,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -27028,6 +27283,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "port_type",
@@ -27086,6 +27342,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "output",
@@ -27170,6 +27427,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -27233,6 +27491,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "store_baseline",
@@ -27311,6 +27570,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sensor",
@@ -27375,6 +27635,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -27583,6 +27844,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "heater_enabled",
@@ -27651,6 +27913,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "precision",
@@ -27763,6 +28026,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -27821,6 +28085,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -27883,6 +28148,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -28012,6 +28278,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -28101,6 +28368,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -28191,6 +28459,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -28281,6 +28550,7 @@
         "output"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -28370,6 +28640,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sml_id",
@@ -28414,6 +28685,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "dielectric_constant",
@@ -28484,6 +28756,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "data_pin",
@@ -28551,6 +28824,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -28690,6 +28964,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -28877,6 +29152,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bit_order",
@@ -28966,6 +29242,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -29139,6 +29416,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "auto_cleaning_interval",
@@ -29257,6 +29535,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -29405,6 +29684,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "host",
@@ -29482,6 +29762,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -29536,6 +29817,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -29583,6 +29865,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -29630,11 +29913,12 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
-          "key": "<function validate_substitution_key at 0x10eeb4b40>",
+          "key": "<function validate_substitution_key at 0x10eeba770>",
           "type": "unknown",
-          "label": "<Function Validate Substitution Key At 0X10Eeb4B40>",
+          "label": "<Function Validate Substitution Key At 0X10Eeba770>",
           "required": false,
           "default_value": null,
           "options": null,
@@ -29654,6 +29938,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sun_id",
@@ -29703,6 +29988,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -29809,6 +30095,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -29918,6 +30205,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -30000,6 +30288,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "sy6970_id",
@@ -30054,6 +30343,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "udp_id",
@@ -30134,6 +30424,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -30174,6 +30465,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -30223,6 +30515,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "channels",
@@ -30274,6 +30567,7 @@
         "gpio_expander"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -30311,6 +30605,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -30605,6 +30900,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "integration_time",
@@ -30741,6 +31037,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -30799,6 +31096,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -30846,6 +31144,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "teleinfo_id",
@@ -30880,6 +31179,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -30914,6 +31214,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -30974,6 +31275,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -31130,6 +31432,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -31217,6 +31520,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -31304,6 +31608,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "power_supply",
@@ -31391,6 +31696,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "lambda",
@@ -31465,6 +31771,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -31532,6 +31839,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -31599,6 +31907,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -31646,6 +31955,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "conversion_rate",
@@ -31708,6 +32018,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -31755,6 +32066,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -31869,6 +32181,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -32178,6 +32491,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "time_id",
@@ -32246,6 +32560,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "integration_time",
@@ -32326,6 +32641,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "integration_time",
@@ -32461,6 +32777,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -32530,6 +32847,7 @@
         "binary_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -32601,6 +32919,7 @@
         "binary_sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "zigbee_binary_sensor",
@@ -32670,6 +32989,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "tuya_id",
@@ -32707,6 +33027,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "pin",
@@ -32744,6 +33065,7 @@
         "socket"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -32826,6 +33148,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "temperature_sensor",
@@ -32894,6 +33217,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "temperature_sensor",
@@ -32985,6 +33309,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "max_speed",
@@ -33093,6 +33418,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "trigger_pin",
@@ -33159,6 +33485,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uponor_smatrix_id",
@@ -33217,6 +33544,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "digital_gain",
@@ -33338,6 +33666,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "hide_hash",
@@ -33372,6 +33701,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -33406,6 +33736,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -33713,6 +34044,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -34019,6 +34351,7 @@
         "key_provider"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "d0",
@@ -34053,6 +34386,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -34077,6 +34411,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "reset",
@@ -34111,6 +34446,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -34135,6 +34471,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34195,6 +34532,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34255,6 +34593,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34315,6 +34654,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34370,6 +34710,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34415,6 +34756,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34470,6 +34812,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34520,6 +34863,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34580,6 +34924,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34640,6 +34985,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34690,6 +35036,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34752,6 +35099,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "esp32_ble_id",
@@ -34776,6 +35124,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "mac_address",
@@ -34831,6 +35180,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "bindkey",
@@ -34893,6 +35243,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "i2c_id",
@@ -34933,6 +35284,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "uart_id",
@@ -34957,6 +35309,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "command_retain",
@@ -35251,6 +35604,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "update_interval",
@@ -35298,6 +35652,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [
         {
           "key": "clock_pin",
@@ -35358,6 +35713,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35373,6 +35729,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35386,6 +35743,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35399,6 +35757,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35412,6 +35771,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35425,6 +35785,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35440,6 +35801,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35455,6 +35817,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35468,6 +35831,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35485,6 +35849,7 @@
         "as3935"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35502,6 +35867,7 @@
         "as3935"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35515,6 +35881,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35532,6 +35899,7 @@
         "image"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35547,6 +35915,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35562,6 +35931,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": [
         {
@@ -35606,6 +35976,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35621,6 +35992,7 @@
         "audio"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35634,6 +36006,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35647,6 +36020,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35660,6 +36034,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35677,6 +36052,7 @@
         "esp32_ble_client"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35692,6 +36068,9 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35711,6 +36090,9 @@
         "esp32_ble_tracker"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35724,6 +36106,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35737,6 +36120,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35750,6 +36134,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35763,6 +36148,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35776,6 +36162,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35789,6 +36176,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35802,6 +36190,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35815,6 +36204,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35828,6 +36218,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35841,6 +36232,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35856,6 +36248,7 @@
         "camera"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35875,6 +36268,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35890,6 +36284,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35903,6 +36298,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35916,6 +36312,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35929,6 +36326,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35942,6 +36340,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35955,6 +36354,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35968,6 +36368,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35983,6 +36384,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -35996,6 +36398,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36009,6 +36412,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36022,6 +36426,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36035,6 +36440,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36050,6 +36456,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36065,6 +36472,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36080,6 +36488,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36093,6 +36502,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36108,6 +36518,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36121,6 +36532,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36134,6 +36546,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36147,6 +36560,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36160,6 +36574,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36173,6 +36588,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36186,6 +36602,21 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
+      "config_entries": [],
+      "sub_entities": []
+    },
+    {
+      "id": "es8388",
+      "name": "ES8388",
+      "description": "Instructions for using ESPHome's es8388 audio DAC platform to play media from your devices and to configure microphone inputs.",
+      "category": "select",
+      "docs_url": "https://esphome.io/components/select/es8388",
+      "image_url": "https://esphome.io/components/audio_dac/images/es8388.svg",
+      "dependencies": [],
+      "auto_load": [],
+      "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36203,6 +36634,9 @@
         "esp32_ble_tracker"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36220,6 +36654,9 @@
         "esp32_ble"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36233,6 +36670,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36246,6 +36684,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36259,6 +36698,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36276,6 +36716,9 @@
         "esp32_ble"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36294,6 +36737,9 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36311,6 +36757,7 @@
         "camera"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36324,6 +36771,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36337,6 +36785,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36350,6 +36799,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36363,6 +36813,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36376,6 +36827,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36389,6 +36841,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36402,13 +36855,14 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
     {
       "id": "ethernet",
       "name": "Ethernet Component",
-      "description": "Instructions for setting up the Ethernet configuration for your ESP32 node in ESPHome.",
+      "description": "Instructions for setting up the Ethernet configuration for your ESP32 or RP2040 node in ESPHome.",
       "category": "misc",
       "docs_url": "https://esphome.io/components/ethernet",
       "image_url": "https://esphome.io/components/images/ethernet.svg",
@@ -36419,6 +36873,9 @@
         "network"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36432,6 +36889,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": [
         {
@@ -36463,6 +36921,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36476,6 +36935,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36489,6 +36949,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36502,6 +36963,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36515,6 +36977,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36528,6 +36991,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36541,6 +37005,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36554,6 +37019,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36567,6 +37033,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36580,6 +37047,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36597,6 +37065,7 @@
         "sensor"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36613,6 +37082,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36626,6 +37096,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36641,6 +37112,7 @@
         "md5"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36656,6 +37128,7 @@
         "sha256"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36669,6 +37142,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36684,6 +37158,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36697,6 +37172,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36710,6 +37186,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36725,6 +37202,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36738,6 +37216,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36751,6 +37230,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36764,6 +37244,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36777,6 +37258,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36790,6 +37272,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36803,6 +37286,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36816,19 +37300,21 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
     {
       "id": "internal_temperature",
       "name": "Internal Temperature Sensor",
-      "description": "Instructions for setting up the integrated temperature sensor of the ESP32, RP2040 and BK72XX.",
+      "description": "Instructions for setting up the integrated temperature sensor of the ESP32, RP2040, BK72XX, nRF52 and LN882H.",
       "category": "sensor",
       "docs_url": "https://esphome.io/components/sensor/internal_temperature",
       "image_url": "https://esphome.io/components/sensor/images/internal_temperature-ui.png",
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36842,6 +37328,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36860,6 +37347,7 @@
         "remote_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36873,6 +37361,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36886,6 +37375,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36901,6 +37391,9 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36914,6 +37407,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36927,6 +37421,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36940,6 +37435,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36953,6 +37449,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36968,6 +37465,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36981,6 +37479,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -36994,6 +37493,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37007,6 +37507,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37020,6 +37521,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37035,6 +37537,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37048,6 +37551,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37063,6 +37567,7 @@
         "key_provider"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37078,6 +37583,7 @@
         "mcp23xxx_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37093,6 +37599,7 @@
         "mcp23xxx_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37108,6 +37615,7 @@
         "gpio_expander"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37121,6 +37629,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37136,6 +37645,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37153,6 +37663,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37166,6 +37677,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37179,6 +37691,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37192,6 +37705,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37205,6 +37719,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37218,6 +37733,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37231,6 +37747,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37244,6 +37761,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37257,6 +37775,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37272,6 +37791,7 @@
         "modbus"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37290,6 +37810,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37305,6 +37826,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37318,6 +37840,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37333,6 +37856,7 @@
         "mdns"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37346,6 +37870,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37359,6 +37884,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37375,6 +37901,7 @@
         "uart"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37388,6 +37915,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37407,6 +37935,7 @@
         "runtime_image"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37424,6 +37953,9 @@
         "network"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37437,6 +37969,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": [
         {
@@ -37591,6 +38124,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37604,6 +38138,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37617,6 +38152,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37630,6 +38166,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37643,6 +38180,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37660,6 +38198,7 @@
         "pn532"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37677,6 +38216,7 @@
         "pn532"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37693,6 +38233,7 @@
         "nfc"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37710,6 +38251,7 @@
         "pn7150"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37726,6 +38268,7 @@
         "nfc"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37743,6 +38286,7 @@
         "pn7160"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37760,6 +38304,7 @@
         "pn7160"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37775,6 +38320,9 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37788,6 +38336,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37801,6 +38350,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37816,6 +38366,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37829,6 +38380,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37842,6 +38394,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37855,6 +38408,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37868,6 +38422,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37885,6 +38440,7 @@
         "rc522"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37900,6 +38456,7 @@
         "binary_sensor"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37915,6 +38472,7 @@
         "remote_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37930,6 +38488,7 @@
         "remote_base"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37943,6 +38502,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37958,6 +38518,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37971,6 +38532,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37984,6 +38546,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -37997,6 +38560,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38012,6 +38576,9 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [
+        "rp2040"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38025,6 +38592,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38038,6 +38606,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38051,6 +38620,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38066,6 +38636,7 @@
         "image"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38079,6 +38650,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38092,6 +38664,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38105,6 +38678,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38120,6 +38694,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38133,6 +38708,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38146,6 +38722,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38159,6 +38736,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38172,6 +38750,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38185,6 +38764,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38200,6 +38780,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38213,6 +38794,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38226,6 +38808,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38239,6 +38822,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38252,6 +38836,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38265,6 +38850,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38278,6 +38864,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38291,6 +38878,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38304,6 +38892,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38317,6 +38906,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38333,6 +38923,7 @@
         "switch"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38346,6 +38937,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38359,6 +38951,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38372,6 +38965,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38385,6 +38979,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38398,6 +38993,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38411,6 +39007,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38424,6 +39021,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38437,6 +39035,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38450,6 +39049,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38463,6 +39063,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38476,6 +39077,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38489,6 +39091,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38502,6 +39105,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38515,6 +39119,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38528,6 +39133,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38541,6 +39147,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38554,6 +39161,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38567,6 +39175,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38580,6 +39189,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38593,6 +39203,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38606,6 +39217,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38621,6 +39233,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38634,6 +39247,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38647,6 +39261,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38660,6 +39275,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38673,6 +39289,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38686,6 +39303,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38703,6 +39321,7 @@
         "socket"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38716,6 +39335,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38733,6 +39353,7 @@
         "uart"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38751,6 +39372,9 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [
+        "esp32"
+      ],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38769,6 +39393,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38784,6 +39409,7 @@
       ],
       "auto_load": [],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38797,6 +39423,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38810,6 +39437,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38828,6 +39456,7 @@
         "socket"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38841,6 +39470,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38854,6 +39484,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38867,6 +39498,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38880,6 +39512,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38896,6 +39529,7 @@
         "web_server_base"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38913,6 +39547,7 @@
         "web_server_idf"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38928,6 +39563,7 @@
         "uart"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38941,6 +39577,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38954,6 +39591,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38969,6 +39607,7 @@
         "network"
       ],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -38982,6 +39621,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": [
         {
@@ -39033,6 +39673,7 @@
       ],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39051,6 +39692,7 @@
         "weikai_i2c"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39069,6 +39711,7 @@
         "weikai_spi"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39087,6 +39730,7 @@
         "weikai_i2c"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39105,6 +39749,7 @@
         "weikai_spi"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39123,6 +39768,7 @@
         "weikai_i2c"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39141,6 +39787,7 @@
         "weikai_spi"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39159,6 +39806,7 @@
         "weikai_i2c"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39177,6 +39825,7 @@
         "weikai_spi"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39190,6 +39839,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39203,6 +39853,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39216,6 +39867,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39229,6 +39881,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39242,6 +39895,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39255,6 +39909,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39272,6 +39927,7 @@
         "xiaomi_ble"
       ],
       "multi_conf": true,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": [
         {
@@ -39291,6 +39947,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39304,6 +39961,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39317,6 +39975,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39330,6 +39989,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39343,6 +40003,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39356,6 +40017,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     },
@@ -39369,6 +40031,7 @@
       "dependencies": [],
       "auto_load": [],
       "multi_conf": false,
+      "supported_platforms": [],
       "config_entries": [],
       "sub_entities": []
     }

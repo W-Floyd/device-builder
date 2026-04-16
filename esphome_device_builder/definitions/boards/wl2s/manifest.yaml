@@ -1,0 +1,14 @@
+id: wl2s
+name: WL2S Wi-Fi/BLE Module
+description: WL2S Wi-Fi/BLE Module (LN882X board).
+manufacturer: ''
+esphome:
+  platform: ln882x
+  board: wl2s
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

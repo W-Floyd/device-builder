@@ -1,0 +1,14 @@
+id: generic-rtl8720cf-2mb-992k
+name: Generic - RTL8720CF (2M/992k)
+description: Generic - RTL8720CF (2M/992k) (RTL87XX board).
+manufacturer: ''
+esphome:
+  platform: rtl87xx
+  board: generic-rtl8720cf-2mb-992k
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

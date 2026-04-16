@@ -57,6 +57,8 @@ class Platform(StrEnum):
     BK72XX = "bk72xx"
     RTL87XX = "rtl87xx"
     LN882X = "ln882x"
+    NRF52 = "nrf52"
+    HOST = "host"
 
 
 class Esp32Variant(StrEnum):

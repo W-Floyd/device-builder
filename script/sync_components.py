@@ -753,6 +753,21 @@ def _sync_component(
             auto_load_val = []
     auto_load = list(auto_load_val) if auto_load_val else []
 
+    # Determine platform compatibility from dependencies
+    # If a component depends on a target platform, it only works on that platform
+    target_platforms = {
+        "esp32",
+        "esp8266",
+        "rp2040",
+        "bk72xx",
+        "rtl87xx",
+        "ln882x",
+        "nrf52",
+        "host",
+    }
+    supported_platforms = [d for d in dependencies if str(d) in target_platforms]
+    # Empty = works on all platforms
+
     return {
         "id": component_id,
         "name": name,
@@ -763,6 +778,7 @@ def _sync_component(
         "dependencies": dependencies,
         "auto_load": auto_load,
         "multi_conf": bool(manifest.multi_conf),
+        "supported_platforms": supported_platforms,
         "config_entries": config_entries,
         "sub_entities": sub_entities,
     }

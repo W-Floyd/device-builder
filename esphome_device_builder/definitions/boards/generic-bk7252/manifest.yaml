@@ -1,0 +1,14 @@
+id: generic-bk7252
+name: Generic - BK7252
+description: Generic - BK7252 (BK72XX board).
+manufacturer: ''
+esphome:
+  platform: bk72xx
+  board: generic-bk7252
+  framework: arduino
+hardware:
+  connectivity:
+  - wifi
+tags: []
+docs_url: https://esphome.io/components/libretiny.html
+pins: []

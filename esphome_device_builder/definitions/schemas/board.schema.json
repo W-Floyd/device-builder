@@ -33,7 +33,7 @@
         "platform": {
           "type": "string",
           "description": "ESPHome platform.",
-          "enum": ["esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x"]
+          "enum": ["esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x", "nrf52", "host"]
         },
         "board": {
           "type": "string",
@@ -47,7 +47,7 @@
         "framework": {
           "type": ["string", "null"],
           "description": "Build framework override. Omit or null for platform default.",
-          "enum": ["arduino", "esp-idf", null]
+          "enum": ["arduino", "esp-idf", "zephyr", null]
         }
       }
     },
