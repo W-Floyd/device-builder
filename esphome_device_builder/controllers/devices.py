@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
+import secrets
 import sys
 import threading
 from pathlib import Path
@@ -94,10 +96,11 @@ def _generate_device_yaml(
     lines.append("logger:")
     lines.append("")
 
-    # Home Assistant API
+    # Home Assistant API — unique encryption key per device
+    api_key = base64.b64encode(secrets.token_bytes(32)).decode()
     lines.append("api:")
     lines.append("  encryption:")
-    lines.append("    key: !secret api_encryption_key")
+    lines.append(f'    key: "{api_key}"')
     lines.append("")
 
     # OTA
