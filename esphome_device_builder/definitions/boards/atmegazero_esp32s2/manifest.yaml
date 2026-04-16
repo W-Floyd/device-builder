@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: atmegazero_esp32s2
   variant: esp32s2
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

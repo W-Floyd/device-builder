@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: adafruit_qualia_s3_rgb666
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

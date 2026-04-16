@@ -7,11 +7,13 @@ esphome:
   platform: esp32
   board: esp32-s3-devkitc-1
   variant: esp32s3
-  framework: null
+  framework: esp-idf
 hardware:
-  flash_size: "8MB"
-  cpu_frequency: "240MHz"
-  connectivity: [wifi, bluetooth]
+  flash_size: 8MB
+  cpu_frequency: 240MHz
+  connectivity:
+  - wifi
+  - bluetooth
 tags:
 - starter-kit
 - usb-c

@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: 4d_systems_esp32s3_gen4_r8n16
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

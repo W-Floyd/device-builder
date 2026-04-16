@@ -7,6 +7,7 @@ esphome:
   platform: esp32
   board: deneyapkart1Av2
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 4MB
   ram_size: 327680

@@ -8,7 +8,7 @@ esphome:
   platform: esp32
   board: esp32-h2-devkitm-1
   variant: esp32h2
-  framework: null
+  framework: esp-idf
 tags: []
 docs_url: https://esphome.io/components/esp32.html
 pins:

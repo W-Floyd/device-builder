@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: waveshare_esp32s3_touch_lcd_128
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

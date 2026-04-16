@@ -10,11 +10,12 @@ esphome:
   platform: esp32
   board: esp32-p4-evboard
   variant: esp32p4
-  framework: null
+  framework: esp-idf
 hardware:
-  flash_size: "16MB"
-  cpu_frequency: "400MHz"
-  connectivity: [openthread]
+  flash_size: 16MB
+  cpu_frequency: 400MHz
+  connectivity:
+  - openthread
 tags: []
 docs_url: https://esphome.io/components/esp32.html
 pins:

@@ -7,6 +7,7 @@ esphome:
   platform: esp32
   board: sparkfun_esp32c6_thing_plus
   variant: esp32c6
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

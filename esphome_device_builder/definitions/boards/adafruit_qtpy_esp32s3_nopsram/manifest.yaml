@@ -8,6 +8,7 @@ esphome:
   platform: esp32
   board: adafruit_qtpy_esp32s3_nopsram
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 8MB
   ram_size: 327680

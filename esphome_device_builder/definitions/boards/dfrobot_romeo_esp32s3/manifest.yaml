@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: dfrobot_romeo_esp32s3
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

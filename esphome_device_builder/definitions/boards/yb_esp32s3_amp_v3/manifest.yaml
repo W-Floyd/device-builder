@@ -7,6 +7,7 @@ esphome:
   platform: esp32
   board: yb_esp32s3_amp_v3
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 8MB
   ram_size: 327680

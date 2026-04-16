@@ -7,11 +7,13 @@ esphome:
   platform: esp32
   board: seeed_xiao_esp32c3
   variant: esp32c3
-  framework: null
+  framework: esp-idf
 hardware:
-  flash_size: "4MB"
-  cpu_frequency: "160MHz"
-  connectivity: [wifi, bluetooth]
+  flash_size: 4MB
+  cpu_frequency: 160MHz
+  connectivity:
+  - wifi
+  - bluetooth
 tags:
 - compact
 docs_url: https://esphome.io/components/esp32.html

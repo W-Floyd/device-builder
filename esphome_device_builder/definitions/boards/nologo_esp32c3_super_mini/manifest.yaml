@@ -8,6 +8,7 @@ esphome:
   platform: esp32
   board: nologo_esp32c3_super_mini
   variant: esp32c3
+  framework: esp-idf
 hardware:
   flash_size: 4MB
   ram_size: 327680

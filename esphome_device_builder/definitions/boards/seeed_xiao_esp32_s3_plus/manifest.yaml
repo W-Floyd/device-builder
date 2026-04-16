@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: seeed_xiao_esp32_s3_plus
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 16MB
   ram_size: 327680

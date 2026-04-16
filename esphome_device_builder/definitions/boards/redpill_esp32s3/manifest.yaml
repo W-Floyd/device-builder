@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: redpill_esp32s3
   variant: esp32s3
+  framework: esp-idf
 hardware:
   flash_size: 8MB
   ram_size: 327680

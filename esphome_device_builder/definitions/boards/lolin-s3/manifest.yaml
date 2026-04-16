@@ -7,11 +7,13 @@ esphome:
   platform: esp32
   board: lolin_s3
   variant: esp32s3
-  framework: null
+  framework: esp-idf
 hardware:
-  flash_size: "16MB"
-  cpu_frequency: "240MHz"
-  connectivity: [wifi, bluetooth]
+  flash_size: 16MB
+  cpu_frequency: 240MHz
+  connectivity:
+  - wifi
+  - bluetooth
 tags:
 - dev-kit
 - usb-c

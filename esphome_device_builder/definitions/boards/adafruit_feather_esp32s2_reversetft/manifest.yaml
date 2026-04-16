@@ -6,6 +6,7 @@ esphome:
   platform: esp32
   board: adafruit_feather_esp32s2_reversetft
   variant: esp32s2
+  framework: esp-idf
 hardware:
   flash_size: 4MB
   ram_size: 327680
