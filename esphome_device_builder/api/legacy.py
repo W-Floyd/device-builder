@@ -74,7 +74,7 @@ def create_legacy_routes() -> web.RouteTableDef:
         """Legacy GET /devices — returns configured + importable devices."""
         db = request.app["device_builder"]
         devices_ctrl = db.devices
-        await devices_ctrl._request_scan_devices()
+        await devices_ctrl._request_scan()
 
         configured = [d.to_dict() for d in devices_ctrl.get_devices()]
 

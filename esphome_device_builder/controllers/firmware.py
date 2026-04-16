@@ -344,6 +344,7 @@ class FirmwareController:
 
         # Subscribe to new output for this specific job
         done = asyncio.Event()
+        pending_tasks: set[asyncio.Task] = set()
 
         def _on_event(event: Any) -> None:
             if event.event_type == EventType.JOB_OUTPUT:
@@ -351,7 +352,8 @@ class FirmwareController:
                     task = asyncio.create_task(
                         client.send_event(message_id, "output", event.data["line"])
                     )
-                    _ = task
+                    pending_tasks.add(task)
+                    task.add_done_callback(pending_tasks.discard)
             elif event.event_type in (EventType.JOB_COMPLETED, EventType.JOB_FAILED):
                 ev_job = event.data.get("job")
                 if ev_job and getattr(ev_job, "job_id", None) == job_id:
@@ -367,7 +369,8 @@ class FirmwareController:
                             },
                         )
                     )
-                    _ = task
+                    pending_tasks.add(task)
+                    task.add_done_callback(pending_tasks.discard)
                     done.set()
 
         unsub_output = self._db.bus.add_listener(EventType.JOB_OUTPUT, _on_event)

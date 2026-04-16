@@ -112,7 +112,11 @@ class ComponentCatalog:
 
     @property
     def categories(self) -> list[dict[str, str | int]]:
-        """Return category list with counts."""
+        """
+        Get all component categories with their counts.
+
+        Returns a sorted list of {id, name, count} dicts, highest count first.
+        """
         counts: dict[str, int] = {}
         for comp in self._components:
             counts[comp.category] = counts.get(comp.category, 0) + 1

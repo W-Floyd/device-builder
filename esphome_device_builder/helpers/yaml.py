@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .models import ComponentCatalogEntry
+    from ..models import ComponentCatalogEntry
 
 
 def _fill_template(template: str, fields: dict[str, Any]) -> str:

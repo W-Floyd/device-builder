@@ -6,6 +6,7 @@ what components are configured in a device.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -226,9 +227,6 @@ class AutomationsController:
         """
         # Read the device config to find which component types are in use
         config_path = self._db.settings.rel_path(configuration)
-
-        import asyncio
-
         loop = asyncio.get_running_loop()
         content = await loop.run_in_executor(None, config_path.read_text, "utf-8")
 

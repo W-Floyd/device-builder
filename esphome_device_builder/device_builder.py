@@ -136,32 +136,32 @@ class DeviceBuilder:
     async def _cmd_subscribe_events(
         self, *, client: Any = None, message_id: str = "", **kwargs: Any
     ) -> None:
-        """Subscribe a connected WS client to real-time events.
-
-        Registers a listener on the event bus that pushes EventMessages
-        to the client for the lifetime of the connection. The client
-        receives an immediate result confirming the subscription, then
-        ongoing events as they happen.
         """
-        import asyncio as _asyncio
+        Subscribe a connected WS client to real-time events.
 
+        The client receives an initial device list, then ongoing events
+        as devices change. Subscription is active for the connection lifetime.
+        """
         from .helpers.event_bus import Event
         from .models import EventType
 
         if client is None:
             return
 
+        # Track pending tasks to prevent garbage collection
+        pending_tasks: set[asyncio.Task] = set()
+
         def _on_event(event: Event) -> None:
             """Forward bus event to the WS client."""
-            # Serialize the event data — Device models need to_dict()
             data = event.data
             serialized: dict[str, Any] = {}
             for key, value in data.items():
                 serialized[key] = value.to_dict() if hasattr(value, "to_dict") else value
-            task = _asyncio.create_task(
+            task = asyncio.create_task(
                 client.send_event(message_id, event.event_type.value, serialized)
             )
-            _ = task  # prevent GC
+            pending_tasks.add(task)
+            task.add_done_callback(pending_tasks.discard)
 
         # Subscribe to all event types
         unsubscribers = []
