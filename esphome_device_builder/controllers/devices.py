@@ -372,12 +372,11 @@ class DevicesController:
         await proc.wait()
         await self._request_scan()
 
-    @api_command("devices/delete")
-    async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
-        """Delete a device and all associated files."""
+    async def _delete_single(self, configuration: str) -> None:
+        """Delete a single device and all associated files."""
         config_path = self._db.settings.rel_path(configuration)
         if not config_path.exists():
-            msg = "File not found"
+            msg = f"File not found: {configuration}"
             raise FileNotFoundError(msg)
 
         loop = asyncio.get_running_loop()
@@ -397,7 +396,36 @@ class DevicesController:
                 _LOGGER.warning("Could not remove metadata for %s", configuration)
 
         await loop.run_in_executor(None, _delete_all)
+
+    @api_command("devices/delete")
+    async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
+        """Delete a device and all associated files."""
+        await self._delete_single(configuration)
         await self._request_scan()
+
+    @api_command("devices/delete_bulk")
+    async def delete_bulk(
+        self, *, configurations: list[str], **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        """Delete multiple devices at once.
+
+        Returns a result per device: {configuration, success, error?}.
+        """
+        results: list[dict[str, Any]] = []
+        for configuration in configurations:
+            try:
+                await self._delete_single(configuration)
+                results.append({"configuration": configuration, "success": True})
+            except Exception as exc:
+                results.append(
+                    {
+                        "configuration": configuration,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
+        await self._request_scan()
+        return results
 
     @api_command("devices/get_config")
     async def get_config(self, *, configuration: str, **kwargs: Any) -> str:
