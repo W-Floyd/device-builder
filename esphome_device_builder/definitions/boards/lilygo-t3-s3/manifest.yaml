@@ -1,9 +1,6 @@
 id: lilygo-t3-s3
 name: LilyGo T3-S3
-description: ⚠️Cautions⚠️When using the "SX1280 2.4G With PA [H658]", it is recommended
-  that the software control 1280 chip output 2 to 5 dbm, so that the entire module
-  will output 20 dbm of power; When the output of the 1280 chip is higher than 2 dbm,
-  the output power of the entire module is only 20 dbm; When...
+description: LilyGo T3-S3 development board with ESP32-S3 and SX1280 2.4 GHz LoRa radio.
 manufacturer: LilyGo
 esphome:
   platform: esp32

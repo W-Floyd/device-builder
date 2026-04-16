@@ -1,7 +1,6 @@
 id: alksesp32
 name: ALKS ESP32
-description: 🛝 Starter learning kit for Arudino Nano / Uno and ESP32 DevKitC by RoboticsBrno.
-  - RoboticsBrno/ArduinoLearningKitStarter.
+description: Starter learning kit for Arduino Nano / Uno and ESP32 DevKitC by RoboticsBrno.
 manufacturer: RoboticsBrno
 esphome:
   platform: esp32

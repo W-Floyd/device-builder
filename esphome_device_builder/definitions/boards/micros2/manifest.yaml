@@ -1,6 +1,6 @@
 id: micros2
 name: microS2
-description: An esp32-s2 based development board in a tiny form factor 🚀 - microdev1/microS2.
+description: An ESP32-S2 based development board in a tiny form factor.
 manufacturer: microS2
 esphome:
   platform: esp32
