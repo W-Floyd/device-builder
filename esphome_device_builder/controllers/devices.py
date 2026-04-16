@@ -77,12 +77,14 @@ def _generate_device_yaml(
     lines.append(f"  friendly_name: {friendly_name}")
     lines.append("")
 
-    # Platform config
+    # Platform config — only the parameters ESPHome needs, no PlatformIO board ID
     platform = esphome_cfg.platform
+    hardware = board.hardware
     lines.append(f"{platform}:")
     if esphome_cfg.variant:
         lines.append(f"  variant: {esphome_cfg.variant}")
-    lines.append(f"  board: {esphome_cfg.board}")
+    if hardware.flash_size:
+        lines.append(f"  flash_size: {hardware.flash_size}")
     if esphome_cfg.framework:
         lines.append("  framework:")
         lines.append(f"    type: {esphome_cfg.framework}")
