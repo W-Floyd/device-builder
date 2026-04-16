@@ -3,6 +3,8 @@ name: Unexpected Maker TinyPICO
 description: ESP32-based board with 4MB flash, 240MHz featuring Wi-Fi, Bluetooth,
   Ethernet, CAN bus.
 manufacturer: Unexpected Maker
+images:
+- https://www.tinypico.com/images/tinypico-v2.jpg
 esphome:
   platform: esp32
   board: tinypico

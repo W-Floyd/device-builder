@@ -3,6 +3,8 @@ name: Espressif ESP32-PICO-DevKitM-2
 description: ESP32-based board by Espressif Systems with 8MB flash, 240MHz featuring
   Wi-Fi, Bluetooth, Ethernet, CAN bus.
 manufacturer: Espressif Systems
+images:
+- https://docs.espressif.com/projects/esp-dev-kits/en/latest/_images/esp32-pico-devkitm-2-isometric.png
 esphome:
   platform: esp32
   board: esp32-pico-devkitm-2

@@ -2,6 +2,8 @@ id: esp32-c3-devkitc-02
 name: Espressif ESP32-C3-DevKitC-02
 description: ESP32-C3-based board with 4MB flash, 160MHz featuring Wi-Fi, Bluetooth.
 manufacturer: Espressif
+images:
+- https://docs.espressif.com/projects/esp-dev-kits/en/latest/_images/esp32-c3-devkitc-02-v1-isometric.png
 esphome:
   platform: esp32
   board: esp32-c3-devkitc-02

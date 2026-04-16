@@ -2,6 +2,8 @@ id: esp32-c3-devkitm-1
 name: ESP32-C3 DevKitM-1
 description: Espressif's low-cost RISC-V ESP32-C3 development board.
 manufacturer: Espressif
+images:
+- https://docs.espressif.com/projects/esp-dev-kits/en/latest/_images/esp32-c3-devkitm-1-v1-isometric.png
 esphome:
   platform: esp32
   board: esp32-c3-devkitm-1

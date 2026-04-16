@@ -208,6 +208,11 @@ class DeviceBuilder:
 
         app.router.add_routes(create_legacy_routes())
 
+        # Static file serving for board images
+        boards_dir = Path(__file__).parent / "definitions" / "boards"
+        if boards_dir.is_dir():
+            app.router.add_static("/boards/images", boards_dir)
+
         # Frontend serving
         frontend_dir = self._get_frontend_dir()
         if frontend_dir and frontend_dir.is_dir():

@@ -3,6 +3,8 @@ name: M5Stack AtomS3
 description: Compact ESP32-S3 board with a 0.85" LCD screen, button, and Grove connector
   in the ATOM form factor.
 manufacturer: M5Stack
+images:
+- https://static-cdn.m5stack.com/resource/docs/products/core/AtomS3/img-210e24b3-c3fe-45cf-a37c-2a8acdf5844e.webp
 esphome:
   platform: esp32
   board: m5stack-atoms3

@@ -3,6 +3,8 @@ name: OLIMEX ESP32-EVB
 description: ESP32-EVB development board with WiFi BLE Ethernet micro SD card UEXT
   and GPIO.
 manufacturer: OLIMEX
+images:
+- https://raw.githubusercontent.com/OLIMEX/ESP32-EVB/master/IMAGES/ESP32-EVB.jpg
 esphome:
   platform: esp32
   board: esp32-evb

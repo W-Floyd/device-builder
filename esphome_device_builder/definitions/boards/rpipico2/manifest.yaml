@@ -2,6 +2,8 @@ id: rpipico2
 name: Pico 2
 description: Board by Raspberry Pi with 4MB flash, 150MHz.
 manufacturer: Raspberry Pi
+images:
+- https://www.raspberrypi.com/documentation/microcontrollers/images/pico2.png
 esphome:
   platform: rp2040
   board: rpipico2

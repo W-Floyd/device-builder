@@ -4,6 +4,8 @@ description: The reference docs for M5Stack products. Quick start, get the detai
   information or instructions such as IDE,UIFLOW,Arduino. The tutorials for M5Burner,
   Firmware, Burning, programming. ESP32,M5StickC,StickV, StickT,M5ATOM.
 manufacturer: M5Stack
+images:
+- https://static-cdn.m5stack.com/resource/docs/products/core/StampS3/img-4d64c96e-2be9-4127-b15d-b9282fb08091.webp
 esphome:
   platform: esp32
   board: m5stack-stamps3

@@ -3,6 +3,8 @@ name: WEMOS LOLIN D32 PRO
 description: ESP32-based board with 4MB flash, 240MHz featuring Wi-Fi, Bluetooth,
   Ethernet, CAN bus.
 manufacturer: WEMOS
+images:
+- https://www.wemos.cc/en/latest/_images/d32_pro_v2.0.0_1_16x16.jpg
 esphome:
   platform: esp32
   board: lolin_d32_pro

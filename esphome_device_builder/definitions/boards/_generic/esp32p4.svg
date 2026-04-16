@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1a1a2e"/>
+      <stop offset="100%" stop-color="#16213e"/>
+    </linearGradient>
+    <linearGradient id="chip" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#155282"/>
+      <stop offset="100%" stop-color="#2F72A2"/>
+    </linearGradient>
+  </defs>
+  <!-- Background -->
+  <rect width="400" height="300" rx="16" fill="url(#bg)"/>
+  <!-- Pins -->
+    <rect x="86" y="80" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="98" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="116" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="134" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="152" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="170" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="188" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="86" y="206" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="80" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="98" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="116" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="134" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="152" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="170" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="188" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="296" y="206" width="18" height="6" rx="1" fill="#B0BEC5"/>
+    <rect x="130" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="158" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="186" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="214" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="242" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="270" y="52" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="130" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="158" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="186" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="214" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="242" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+    <rect x="270" y="230" width="6" height="18" rx="1" fill="#B0BEC5"/>
+
+  <!-- Chip body -->
+  <rect x="104" y="68" width="192" height="164" rx="8" fill="url(#chip)" stroke="#ffffff20" stroke-width="1.5"/>
+  <!-- Chip dot -->
+  <circle cx="124" cy="88" r="6" fill="#ffffff30"/>
+  <!-- Platform label -->
+  <text x="200" y="148" text-anchor="middle" dominant-baseline="middle" fill="white" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="bold">ESP32-P4</text>
+  <!-- Subtitle -->
+  <text x="200" y="175" text-anchor="middle" fill="#ffffff80" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">Generic Board Image</text>
+  <!-- Bottom label -->
+  <text x="200" y="278" text-anchor="middle" fill="#ffffff40" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11">ESPHome Device Builder</text>
+</svg>

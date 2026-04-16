@@ -44,6 +44,7 @@ _DEFINITIONS_DIR = Path(__file__).parent
 _BOARDS_DIR = _DEFINITIONS_DIR / "boards"
 
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".webp")
+_GENERIC_DIR = _BOARDS_DIR / "_generic"
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +52,32 @@ _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".webp")
 # ---------------------------------------------------------------------------
 
 
+def _local_to_url(local_path: Path) -> str:
+    """Convert a local image path to a relative URL served by /boards/images."""
+    rel = local_path.relative_to(_BOARDS_DIR)
+    return f"/boards/images/{rel}"
+
+
+def _generic_image_url(platform: str, variant: str | None) -> str:
+    """Return the URL for a generic chip image based on platform/variant."""
+    # For ESP32, prefer variant-specific image (esp32s3.svg) over generic esp32.svg
+    if variant:
+        variant_svg = _GENERIC_DIR / f"{variant}.svg"
+        if variant_svg.exists():
+            return _local_to_url(variant_svg)
+    platform_svg = _GENERIC_DIR / f"{platform}.svg"
+    if platform_svg.exists():
+        return _local_to_url(platform_svg)
+    return ""
+
+
 def _resolve_images(board_dir: Path, manifest_images: list[str] | None) -> list[str]:
-    """Build the images list from manifest entries and local files."""
+    """Build the images list from manifest entries and local files.
+
+    Local images are converted to relative URLs served by the
+    /boards/images static route (e.g. /boards/images/esp32-devkit-v1/images/photo.png).
+    External URLs are kept as-is.
+    """
     images: list[str] = []
 
     # First: explicit entries from manifest (URLs or relative paths)
@@ -63,15 +88,15 @@ def _resolve_images(board_dir: Path, manifest_images: list[str] | None) -> list[
             # Resolve relative path against board directory
             local = board_dir / entry
             if local.exists():
-                images.append(str(local))
+                images.append(_local_to_url(local))
 
     # Then: auto-discover images in an images/ subfolder (not already listed)
     images_dir = board_dir / "images"
     if images_dir.is_dir():
-        known = {Path(p).name for p in images}
+        known = {p.rsplit("/", 1)[-1] for p in images}
         for img in sorted(images_dir.iterdir()):
             if img.suffix.lower() in _IMAGE_EXTENSIONS and img.name not in known:
-                images.append(str(img))
+                images.append(_local_to_url(img))
 
     return images
 
@@ -159,15 +184,27 @@ def load_board_catalog() -> BoardCatalogResponse:
             board_dir = manifest.parent
             board_id = board_dir.name
 
+            esphome_cfg = _load_esphome_config(data["esphome"], board_id)
+            images = _resolve_images(board_dir, data.get("images"))
+
+            # Fall back to generic chip image when no specific image exists
+            if not images:
+                generic = _generic_image_url(
+                    esphome_cfg.platform.value,
+                    esphome_cfg.variant.value if esphome_cfg.variant else None,
+                )
+                if generic:
+                    images = [generic]
+
             boards.append(
                 BoardCatalogEntry(
                     id=data["id"],
                     name=data["name"],
                     description=data["description"],
                     manufacturer=data.get("manufacturer", ""),
-                    esphome=_load_esphome_config(data["esphome"], board_id),
+                    esphome=esphome_cfg,
                     hardware=_load_hardware(data.get("hardware"), board_id),
-                    images=_resolve_images(board_dir, data.get("images")),
+                    images=images,
                     tags=_parse_tags(data.get("tags", []), board_id),
                     pins=[_load_pin(p, board_id) for p in data.get("pins", [])],
                     docs_url=data.get("docs_url", ""),

@@ -1,0 +1,89 @@
+id: apollo-esk-1
+name: Apollo ESK-1 ESPHome Starter Kit
+description: >
+  Official ESPHome Starter Kit by Apollo Automation. Plug-and-play kit with
+  an ESP32-C6-MINI-1 module, two 14-pin FPC expansion ports, onboard RGB LED,
+  and USB-C power. Comes with three swappable sensor modules: PIR motion
+  (MH-SR602, 0-3.5 m range), AHT20F temperature and humidity sensor, and
+  an RGB LED strip with piezo buzzer. Any two modules can be used
+  simultaneously to build a multisensor. No soldering or coding required.
+manufacturer: Apollo Automation
+images:
+- https://cdn.shopify.com/s/files/1/0792/0959/5187/files/eskboard.jpg?v=1775723467
+- https://cdn.shopify.com/s/files/1/0792/0959/5187/files/ESK-1_PCB.png?v=1775723467
+- https://cdn.shopify.com/s/files/1/0792/0959/5187/files/20260408_121431.jpg?v=1775723467
+esphome:
+  platform: esp32
+  board: esp32-c6-devkitm-1
+  variant: esp32c6
+  framework: esp-idf
+hardware:
+  flash_size: 8MB
+  connectivity:
+  - wifi
+  - bluetooth
+  - zigbee
+  - thread
+tags:
+- starter-kit
+- rgb-led
+- usb-c
+docs_url: https://wiki.apolloautomation.com/products/esk1/buttongettingstarted/
+product_url: https://apolloautomation.com/products/esk-1-esphome-starter-kit
+featured: true
+pins:
+- gpio: 0
+  label: I2C_SCL
+  features:
+  - i2c_scl
+  - adc
+  available: true
+  notes: I2C clock line for sensor modules
+- gpio: 1
+  label: I2C_SDA
+  features:
+  - i2c_sda
+  - adc
+  available: true
+  notes: I2C data line for sensor modules
+- gpio: 2
+  label: GPIO2
+  features:
+  - adc
+  available: true
+- gpio: 3
+  label: RGB_LED
+  features:
+  - rgb_led
+  available: false
+  occupied_by: Onboard WS2812 RGB LED
+  notes: WS2812 addressable LED, active by default
+- gpio: 4
+  label: GPIO4
+  features:
+  - adc
+  available: true
+  notes: Available on FPC connector
+- gpio: 5
+  label: GPIO5
+  features:
+  - adc
+  available: true
+  notes: Available on FPC connector
+- gpio: 9
+  label: BUTTON
+  features:
+  - boot_button
+  available: false
+  occupied_by: Physical button
+  notes: Active-low with internal pull-up, directly usable
+- gpio: 30
+  label: RX
+  features:
+  - uart_rx
+  available: true
+- gpio: 31
+  label: TX
+  features:
+  - uart_tx
+  available: true

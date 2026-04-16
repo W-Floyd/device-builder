@@ -3,6 +3,8 @@ name: SparkFun ESP32-S2 Thing Plus
 description: The SparkFun ESP32-S2 WROOM Thing Plus is a highly-integrated, Feather
   form-factor development board equipped with the 2.4 GHz WiFi SoC.
 manufacturer: SparkFun
+images:
+- https://cdn.sparkfun.com/r/600-600/assets/parts/1/7/6/2/8/17743-SparkFun_Thing_Plus_-_ESP32-S2_WROOM-02.jpg
 esphome:
   platform: esp32
   board: sparkfun_esp32s2_thing_plus

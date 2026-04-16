@@ -4,6 +4,8 @@ description: Open-source modular toolkits for IoT devices based on ESP32-updated
   of ESP8266. With stackable modules, user-friendly IDE, enabling rapid and high-quality
   prototyping, STEM education, engineering and mechanical use.
 manufacturer: M5Stack
+images:
+- https://static-cdn.m5stack.com/resource/docs/products/core/coreink/coreink_01.webp
 esphome:
   platform: esp32
   board: m5stack-coreink

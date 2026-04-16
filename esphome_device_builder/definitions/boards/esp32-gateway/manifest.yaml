@@ -3,6 +3,8 @@ name: OLIMEX ESP32-GATEWAY
 description: ESP32-GATEWAY development board with WiFi BLE, Ethernet, micro SD card,
   and GPIO.
 manufacturer: OLIMEX
+images:
+- https://raw.githubusercontent.com/OLIMEX/ESP32-GATEWAY/master/IMAGES/ESP32-GATEWAY.jpg
 esphome:
   platform: esp32
   board: esp32-gateway

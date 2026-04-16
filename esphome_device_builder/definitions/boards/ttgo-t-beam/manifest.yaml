@@ -3,6 +3,8 @@ name: TTGO T-Beam
 description: Contribute to LilyGO/TTGO-T-Beam development by creating an account on
   GitHub.
 manufacturer: TTGO
+images:
+- https://www.lilygo.cc/cdn/shop/products/T-Beam_1_540x.jpg
 esphome:
   platform: esp32
   board: ttgo-t-beam

@@ -2,6 +2,8 @@ id: esp32-c6-devkitm-1
 name: Espressif ESP32-C6-DevKitM-1
 description: ESP32-C6-based board with 4MB flash, 160MHz featuring Wi-Fi.
 manufacturer: Espressif
+images:
+- https://docs.espressif.com/projects/esp-dev-kits/en/latest/_images/esp32-c6-devkitm-1-isometric.png
 esphome:
   platform: esp32
   board: esp32-c6-devkitm-1

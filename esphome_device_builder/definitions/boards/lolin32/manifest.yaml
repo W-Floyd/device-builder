@@ -3,6 +3,8 @@ name: WEMOS LOLIN32
 description: ESP32-based board with 4MB flash, 240MHz featuring Wi-Fi, Bluetooth,
   Ethernet, CAN bus.
 manufacturer: WEMOS
+images:
+- https://www.wemos.cc/en/latest/_images/lolin32_v1.0.0_1_16x16.jpg
 esphome:
   platform: esp32
   board: lolin32

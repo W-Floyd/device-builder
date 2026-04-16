@@ -2,6 +2,8 @@ id: esp32-s3-devkitc1-n4r2
 name: Espressif ESP32-S3-DevKitC-1-N4R2 (4 MB Flash Quad, 2 MB PSRAM Quad)
 description: ESP32-S3-based board with 4MB flash, 240MHz featuring Wi-Fi, Bluetooth.
 manufacturer: Espressif
+images:
+- https://docs.espressif.com/projects/esp-dev-kits/en/latest/_images/esp32-s3-devkitc-1-v1.1-isometric.png
 esphome:
   platform: esp32
   board: esp32-s3-devkitc1-n4r2
