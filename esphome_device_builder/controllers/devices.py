@@ -251,6 +251,7 @@ class DevicesController:
         """
         device = self._find_device_by_name(name)
         if device is None:
+            _LOGGER.debug("Device %s not found in loaded devices — ignoring state update", name)
             return
         # mDNS always wins — ping cannot override mDNS
         current_source = self._state_source.get(name, "unknown")
@@ -258,9 +259,10 @@ class DevicesController:
             return
         if device.state == state:
             return
+        old_state = device.state
         device.state = state
         self._state_source[name] = source
-        _LOGGER.debug("Device %s: %s (via %s)", name, state, source)
+        _LOGGER.info("Device %s: %s → %s (via %s)", name, old_state, state, source)
         self._db.bus.fire(EventType.DEVICE_STATE_CHANGED, {"device": device})
 
     # ------------------------------------------------------------------
@@ -275,6 +277,8 @@ class DevicesController:
 
             self._zeroconf = AsyncEsphomeZeroconf()
 
+            loop = asyncio.get_running_loop()
+
             def _on_service_state_change(
                 zeroconf: Any, service_type: str, name: str, state_change: ServiceStateChange
             ) -> None:
@@ -283,10 +287,16 @@ class DevicesController:
                 device_name = name.split(".")[0].replace("-", "_")
                 _LOGGER.debug("mDNS: %s %s (raw: %s)", state_change, device_name, name)
 
+                # zeroconf callbacks run on a different thread —
+                # schedule state updates on the event loop
                 if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated):
-                    self._set_device_state(device_name, DeviceState.ONLINE, "mdns")
+                    loop.call_soon_threadsafe(
+                        self._set_device_state, device_name, DeviceState.ONLINE, "mdns"
+                    )
                 elif state_change == ServiceStateChange.Removed:
-                    self._set_device_state(device_name, DeviceState.OFFLINE, "mdns")
+                    loop.call_soon_threadsafe(
+                        self._set_device_state, device_name, DeviceState.OFFLINE, "mdns"
+                    )
                     self._state_source.pop(device_name, None)
 
             self._mdns_browser = AsyncServiceBrowser(
