@@ -11,6 +11,11 @@ esphome:
   board: esp32dev
   variant: esp32
 
+hardware:
+  flash_size: "4MB"
+  cpu_frequency: "240MHz"
+  connectivity: [wifi, bluetooth]
+
 tags: [dev-kit]
 docs_url: "https://esphome.io/components/esp32.html"
 

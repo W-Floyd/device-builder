@@ -8,6 +8,10 @@ esphome:
   board: m5stack-atoms3
   variant: esp32s3
   framework: null
+hardware:
+  flash_size: "8MB"
+  cpu_frequency: "240MHz"
+  connectivity: [wifi, bluetooth]
 tags:
 - compact
 - display

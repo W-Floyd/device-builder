@@ -8,6 +8,10 @@ esphome:
   board: lolin_s2_mini
   variant: esp32s2
   framework: null
+hardware:
+  flash_size: "4MB"
+  cpu_frequency: "240MHz"
+  connectivity: [wifi]
 tags:
 - compact
 - usb-c

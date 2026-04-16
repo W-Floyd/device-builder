@@ -8,6 +8,11 @@ esphome:
   board: esp01_1m
   framework: null
 
+hardware:
+  flash_size: "1MB"
+  cpu_frequency: "80MHz"
+  connectivity: [wifi]
+
 tags: [relay, sonoff]
 docs_url: "https://esphome.io/components/esp8266.html"
 

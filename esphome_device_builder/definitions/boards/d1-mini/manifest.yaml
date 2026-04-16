@@ -8,6 +8,11 @@ esphome:
   board: d1_mini
   framework: null
 
+hardware:
+  flash_size: "4MB"
+  cpu_frequency: "80MHz"
+  connectivity: [wifi]
+
 tags: [compact]
 docs_url: "https://esphome.io/components/esp8266.html"
 

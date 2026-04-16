@@ -8,6 +8,10 @@ esphome:
   board: esp32-s3-devkitc-1
   variant: esp32s3
   framework: null
+hardware:
+  flash_size: "8MB"
+  cpu_frequency: "240MHz"
+  connectivity: [wifi, bluetooth]
 tags:
 - dev-kit
 docs_url: https://esphome.io/components/esp32.html

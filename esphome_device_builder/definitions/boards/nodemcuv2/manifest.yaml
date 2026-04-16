@@ -8,6 +8,11 @@ esphome:
   board: nodemcuv2
   framework: null
 
+hardware:
+  flash_size: "4MB"
+  cpu_frequency: "80MHz"
+  connectivity: [wifi]
+
 tags: [dev-kit]
 docs_url: "https://esphome.io/components/esp8266.html"
 

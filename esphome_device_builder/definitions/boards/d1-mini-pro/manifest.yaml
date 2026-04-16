@@ -8,6 +8,11 @@ esphome:
   board: d1_mini_pro
   framework: null
 
+hardware:
+  flash_size: "16MB"
+  cpu_frequency: "80MHz"
+  connectivity: [wifi]
+
 tags: [compact, external-antenna]
 docs_url: "https://esphome.io/components/esp8266.html"
 

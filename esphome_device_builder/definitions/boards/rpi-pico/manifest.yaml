@@ -8,6 +8,11 @@ esphome:
   board: rpipicow
   framework: null
 
+hardware:
+  flash_size: "2MB"
+  cpu_frequency: "133MHz"
+  connectivity: [wifi]
+
 tags: [dev-kit]
 docs_url: "https://esphome.io/components/rp2040.html"
 
