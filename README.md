@@ -72,12 +72,15 @@ DeviceBuilder (singleton)
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full architecture and [docs/API.md](docs/API.md) for the complete API reference with all 43 commands.
 
-### Sync scripts
+### Scripts
+
+The board catalog is a curated set of ~80 popular boards with rich metadata.
+To add a new board, create a subfolder under `esphome_device_builder/definitions/boards/`
+with a `manifest.yaml`. See [definitions/README.md](esphome_device_builder/definitions/README.md).
 
 ```bash
-python script/sync_boards.py          # Sync boards from PlatformIO (currently 559)
-python script/sync_components.py      # Sync 655 components from ESPHome
-python script/prefill_pins.py         # Prefill pin data from chip variants
+python script/sync_components.py      # Sync components from ESPHome source
+python script/validate_definitions.py # Validate all manifests
 ```
 
 ## Board Definitions
