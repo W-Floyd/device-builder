@@ -22,7 +22,7 @@ from esphome.dashboard.util.text import friendly_name_slugify
 from esphome.storage_json import StorageJSON, ext_storage_path, ignored_devices_storage_path
 
 from ..helpers.api import api_command
-from ..helpers.yaml import generate_component_yaml
+from ..helpers.yaml import generate_component_yaml, rewrite_esphome_name
 from ..models import (
     AddComponentResponse,
     AdoptableDevice,
@@ -630,8 +630,14 @@ class DevicesController:
         configuration: str,
         new_name: str,
         **kwargs: Any,
-    ) -> None:
-        """Rename a device via esphome CLI."""
+    ) -> dict[str, str]:
+        """Rename a device.
+
+        Tries the ESPHome CLI first (authoritative for validated configs), and
+        falls back to a file-level rename when the CLI refuses because the
+        config doesn't validate yet (e.g. a freshly created empty config).
+        Returns the new configuration filename.
+        """
         config_path = str(self._db.settings.rel_path(configuration))
         cmd = [*_ESPHOME_CMD, "rename", config_path, new_name]
 
@@ -641,13 +647,82 @@ class DevicesController:
             stderr=asyncio.subprocess.STDOUT,
             stdin=asyncio.subprocess.PIPE,
         )
-        # ESPHome rename prompts for confirmation — send 'y'
-        if proc.stdin:
-            proc.stdin.write(b"y\n")
-            await proc.stdin.drain()
-            proc.stdin.close()
-        await proc.wait()
+        stdout, _ = await proc.communicate(input=b"y\n")
+        exit_code = proc.returncode
+        output = stdout.decode("utf-8", errors="replace")
+
+        new_filename = f"{new_name}.yaml"
+        if exit_code != 0:
+            _LOGGER.info(
+                "esphome rename failed (%s); falling back to manual rename",
+                exit_code,
+            )
+            loop = asyncio.get_running_loop()
+            try:
+                await loop.run_in_executor(None, self._manual_rename, configuration, new_name)
+            except FileExistsError as exc:
+                msg = f"A device named {new_filename} already exists"
+                raise RuntimeError(msg) from exc
+            except Exception as exc:
+                _LOGGER.warning("Manual rename failed: %s", exc)
+                tail = output.strip()[-500:]
+                msg = f"Rename failed (exit {exit_code}): {tail}"
+                raise RuntimeError(msg) from exc
+
         await self._request_scan()
+        return {"configuration": new_filename}
+
+    def _manual_rename(self, configuration: str, new_name: str) -> None:
+        """File-level rename. Used when the ESPHome CLI refuses (invalid config)."""
+        config_dir = self._db.settings.config_dir
+        old_path = config_dir / configuration
+        new_filename = f"{new_name}.yaml"
+        new_path = config_dir / new_filename
+
+        if not old_path.exists():
+            msg = f"File not found: {configuration}"
+            raise FileNotFoundError(msg)
+        if new_path.exists():
+            raise FileExistsError(new_filename)
+
+        old_name = configuration.removesuffix(".yaml").removesuffix(".yml")
+        content = old_path.read_text(encoding="utf-8")
+        new_content = rewrite_esphome_name(content, old_name, new_name)
+        new_path.write_text(new_content, encoding="utf-8")
+        old_path.unlink()
+
+        # Move StorageJSON alongside the YAML rename
+        try:
+            old_storage = ext_storage_path(configuration)
+            new_storage = ext_storage_path(new_filename)
+            if old_storage.exists():
+                storage = StorageJSON.load(old_storage)
+                if storage:
+                    storage.name = new_name
+                    if storage.friendly_name == old_name:
+                        storage.friendly_name = new_name
+                    storage.address = f"{new_name}.local"
+                    new_storage.parent.mkdir(parents=True, exist_ok=True)
+                    storage.save(new_storage)
+                old_storage.unlink(missing_ok=True)
+        except Exception:
+            _LOGGER.warning("Could not update storage for %s", new_filename)
+
+        # Move the sidecar metadata entry to the new filename
+        try:
+            old_meta = get_device_metadata(config_dir, configuration)
+            if old_meta:
+                meta_friendly = old_meta.get("friendly_name")
+                set_device_metadata(
+                    config_dir,
+                    new_filename,
+                    board_id=old_meta.get("board_id"),
+                    friendly_name=(new_name if meta_friendly == old_name else meta_friendly),
+                    comment=old_meta.get("comment"),
+                )
+                remove_device_metadata(config_dir, configuration)
+        except Exception:
+            _LOGGER.warning("Could not move metadata for %s", new_filename)
 
     async def _delete_single(self, configuration: str) -> None:
         """Delete a single device and all associated files."""

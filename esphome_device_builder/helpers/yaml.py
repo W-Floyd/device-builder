@@ -10,6 +10,43 @@ if TYPE_CHECKING:
     from ..models import ComponentCatalogEntry
 
 
+def rewrite_esphome_name(yaml: str, old_name: str, new_name: str) -> str:
+    """Replace `name:` under the top-level `esphome:` block.
+
+    Only changes lines inside the `esphome:` section whose value equals
+    *old_name* (with optional surrounding quotes). Leaves indentation and
+    trailing comments intact. Returns the original text unchanged when
+    nothing matches so callers can detect a no-op.
+    """
+    lines = yaml.splitlines(keepends=True)
+    in_esphome = False
+    changed = False
+    for i, line in enumerate(lines):
+        stripped = line.rstrip("\n\r")
+        # Enter `esphome:` block
+        if re.match(r"^esphome:\s*(#.*)?$", stripped):
+            in_esphome = True
+            continue
+        # A new top-level key (col 0, starts with letter) closes the block
+        if stripped and stripped[0].isalpha():
+            in_esphome = False
+            continue
+        if not in_esphome:
+            continue
+        m = re.match(r"^(\s+)name:\s*(.+?)(\s*#.*)?$", stripped)
+        if not m:
+            continue
+        value = m.group(2).strip().strip('"').strip("'")
+        if value != old_name:
+            continue
+        indent, _, comment = m.groups()
+        ending = "\n" if line.endswith("\n") else ""
+        lines[i] = f"{indent}name: {new_name}{comment or ''}{ending}"
+        changed = True
+        break
+    return "".join(lines) if changed else yaml
+
+
 def _fill_template(template: str, fields: dict[str, Any]) -> str:
     """Replace {key} placeholders in a YAML template with field values."""
     result = template
