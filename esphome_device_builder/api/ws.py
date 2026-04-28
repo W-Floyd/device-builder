@@ -80,8 +80,8 @@ class WebSocketClient:
 
         try:
             result = await handler(client=self, message_id=cmd.message_id, **cmd.args)
-            if result is not None:
-                await self.send_result(cmd.message_id, result)
+
+            await self.send_result(cmd.message_id, result)
         except Exception:
             _LOGGER.exception("Error handling command %s", cmd.command)
             await self.send_error(
