@@ -504,7 +504,7 @@ class DevicesController:
         self,
         *,
         name: str,
-        board_id: str,
+        board_id: str = "",
         config_type: str = "basic",
         ssid: str = "",
         psk: str = "",
@@ -513,10 +513,11 @@ class DevicesController:
     ) -> WizardResponse:
         """Create a new device configuration.
 
-        Looks up the board definition to generate proper ESPHome platform
-        config with sane defaults. The board_id is stored in metadata for
-        future reference but does NOT appear in the device YAML — ESPHome
-        only cares about platform/variant/board settings.
+        For config_type="basic", a board_id is required — the board definition
+        is used to generate proper ESPHome platform config with sane defaults.
+        For config_type="empty" (user writes YAML manually) or "upload" (user
+        provides file_content), board_id is optional. The board_id, when given,
+        is stored in metadata but does NOT appear in the device YAML.
         """
         name = name.strip()
         if not name:
@@ -530,12 +531,16 @@ class DevicesController:
             msg = "File already exists"
             raise FileExistsError(msg)
 
-        # Look up board definition
+        # board_id is only required for "basic" config generation
         board = None
-        if self._db.boards:
-            board = await self._db.boards.get_board(board_id=board_id)
-        if board is None:
-            msg = f"Unknown board: {board_id}"
+        if board_id:
+            if self._db.boards:
+                board = await self._db.boards.get_board(board_id=board_id)
+            if board is None:
+                msg = f"Unknown board: {board_id}"
+                raise ValueError(msg)
+        elif config_type == "basic":
+            msg = "board_id is required for basic config generation"
             raise ValueError(msg)
 
         loop = asyncio.get_running_loop()
@@ -552,6 +557,8 @@ class DevicesController:
                 config_path.write_text(yaml, encoding="utf-8")
                 return
 
+            # config_type == "basic" — board is guaranteed non-None here
+            assert board is not None  # type narrowing for mypy
             yaml = _generate_device_yaml(name, friendly, board, ssid, psk)
             config_path.write_text(yaml, encoding="utf-8")
 
@@ -581,7 +588,7 @@ class DevicesController:
             storage_path.parent.mkdir(parents=True, exist_ok=True)
             storage.save(storage_path)
 
-            # Store board_id in metadata
+            # Store board_id in metadata (empty string when not provided)
             set_device_metadata(self._db.settings.config_dir, filename, board_id=board_id)
 
         await loop.run_in_executor(None, _init_storage)
