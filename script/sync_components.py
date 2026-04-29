@@ -248,7 +248,10 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
     for mdx_file in components_dir.glob("*.mdx"):
         metadata[mdx_file.stem] = _build_doc_meta(mdx_file, "")
 
-    # Category subdirectories
+    # Category subdirectories. A component's own docs (top-level
+    # `<id>.mdx`) take precedence — `ota/esphome.mdx` documents the
+    # ESPHome OTA platform, not the `esphome` core component, so we
+    # must not overwrite a top-level entry of the same name.
     for cat_dir in sorted(components_dir.iterdir()):
         if not cat_dir.is_dir() or cat_dir.name == "images":
             continue
@@ -261,6 +264,8 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
             # (e.g. ota/index.mdx → ota). Use the directory name in that
             # case so we can resolve docs for unified entries like ota/time.
             comp_id = cat_name if mdx_file.stem == "index" else mdx_file.stem
+            if comp_id in metadata:
+                continue
             metadata[comp_id] = _build_doc_meta(mdx_file, cat_name)
 
     print(f"  Total: {len(metadata)} component docs found")
@@ -1141,11 +1146,23 @@ def _sync_component(
     else:
         docs_url = f"https://esphome.io/components/{component_id}"
 
-    # Parse config schema
+    # Parse config schema. A component's own schema (manifest.config_schema)
+    # takes precedence over any platform schema it provides — a single
+    # component can be both a top-level config block (e.g. `esphome:`,
+    # `web_server:`, `http_request:`) AND a provider of one or more
+    # platforms (e.g. `web_server` also implements an OTA platform).
+    # The user-facing config block uses the component's own schema; the
+    # platform schemas are surfaced via the unified platform components
+    # (see _build_unified_platform_component).
     config_entries: list[dict] = []
     sub_entries: list[dict] = []
 
-    if platforms:
+    if manifest.config_schema:
+        try:
+            config_entries, sub_entries = _parse_schema(manifest.config_schema, component_id)
+        except Exception as exc:
+            _LOGGER.warning("Failed to parse schema for %s: %s", component_id, exc)
+    elif platforms:
         primary_platform = platforms[0]
         for pref in ("sensor", "binary_sensor", "switch", "light", "fan", "cover"):
             if pref in platforms:
@@ -1161,11 +1178,6 @@ def _sync_component(
             _LOGGER.warning(
                 "Failed to parse schema for %s/%s: %s", primary_platform, component_id, exc
             )
-    elif manifest.config_schema:
-        try:
-            config_entries, sub_entries = _parse_schema(manifest.config_schema, component_id)
-        except Exception as exc:
-            _LOGGER.warning("Failed to parse schema for %s: %s", component_id, exc)
 
     dependencies = list(manifest.dependencies) if manifest.dependencies else []
 
