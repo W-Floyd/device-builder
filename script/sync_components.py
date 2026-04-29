@@ -838,6 +838,13 @@ def _identify_validator(validator: Any) -> dict[str, Any]:
     if "templatable" in qualname.lower() and getattr(validator, "__closure__", None):
         return _unwrap_templatable(validator)
 
+    # cv.ensure_list(inner) accepts a single value or a list of them.
+    # The wrapper's qualname is `ensure_list.<locals>.validator` and
+    # the inner validator lives in its closure. Surface as multi_value
+    # so the frontend renders an add/remove list.
+    if qualname.startswith("ensure_list.") and getattr(validator, "__closure__", None):
+        return _unwrap_ensure_list(validator)
+
     # cv.use_id(SomeClass) produces a wrapper whose qualname is
     # `use_id.<locals>.validator` and whose closure carries a
     # MockObjClass for the referenced ESPHome type. Extract the
@@ -935,6 +942,28 @@ def _identify_validator(validator: Any) -> dict[str, Any]:
         return {"type": "string"}
 
     return {"type": "unknown"}
+
+
+def _unwrap_ensure_list(validator: Any) -> dict[str, Any]:
+    """
+    Identify a ``cv.ensure_list``-wrapped validator.
+
+    Returns the inner validator's identification with ``multi_value``
+    set to True. Falls back to a multi-value string when the inner
+    validator can't be identified.
+    """
+    for cell in validator.__closure__:
+        try:
+            inner = cell.cell_contents
+        except (ValueError, TypeError):
+            continue
+        if callable(inner) and inner is not validator:
+            inner_result = _identify_validator(inner)
+            if inner_result["type"] == "unknown":
+                continue
+            inner_result["multi_value"] = True
+            return inner_result
+    return {"type": "string", "multi_value": True}
 
 
 def _extract_use_id_reference(validator: Any) -> str | None:
@@ -1200,6 +1229,9 @@ def _build_entry(key: Any, validator: Any) -> dict | None:
 
     if info.get("templatable"):
         entry["templatable"] = True
+
+    if info.get("multi_value"):
+        entry["multi_value"] = True
 
     component_dependency = _FIELD_COMPONENT_DEPENDENCY.get(key_name)
     if component_dependency:

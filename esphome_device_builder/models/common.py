@@ -297,10 +297,3 @@ class ConfigEntry(DataClassORJSONMixin):
     # Substitution params for the translation string (e.g.
     # `{"min": 0, "max": 100}` for a range message).
     translation_params: dict[str, Any] | None = None
-
-    # === runtime ===
-
-    # Current value when this entry is reused at runtime to describe an
-    # existing config (e.g. when reading a device's YAML back into a
-    # form). None when the entry only describes a schema.
-    value: ConfigPrimitive | list[ConfigPrimitive] | None = None

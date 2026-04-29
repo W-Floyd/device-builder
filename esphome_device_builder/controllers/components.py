@@ -224,7 +224,6 @@ def _materialise_entry(entry: ConfigEntry, target_platform: str | None) -> Confi
         help_link=entry.help_link,
         translation_key=entry.translation_key,
         translation_params=entry.translation_params,
-        value=entry.value,
     )
 
 
