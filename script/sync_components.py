@@ -64,6 +64,120 @@ def _parse_mdx_frontmatter(mdx_content: str) -> dict[str, str]:
     return result
 
 
+# Markdown / MDX line patterns we strip during body extraction.
+_BODY_SKIP_LINE = re_module.compile(
+    r"^\s*("
+    r"import\s"  # ES module imports — `import { x } from`, `import x from`
+    r"|export\s"  # ES module re-exports
+    r"|<[A-Za-z]"  # MDX/HTML tags <Image .../>, <span ...>, <Figure ...>
+    r"|#{1,6}\s"  # markdown headings
+    r"|```"  # fenced code blocks
+    r"|:::"  # directive blocks (warning, info, ...)
+    r"|\$"  # dollar-style template lines
+    r")"
+)
+_MD_LINK = re_module.compile(r"\[([^\]]+)\]\([^)]+\)")
+_MD_INLINE_CODE = re_module.compile(r"`([^`]+)`")
+_MD_BOLD_ITALIC = re_module.compile(r"(\*\*|__|\*|_)([^*_\n]+)\1")
+_HTML_TAG = re_module.compile(r"<[^>]+>")
+
+
+def _build_doc_meta(mdx_file: Path, category: str) -> dict[str, str]:
+    """
+    Read a single MDX file and produce its docs-metadata entry.
+
+    Combines frontmatter (title, description) with a body-prose
+    fallback when the frontmatter description is empty or just
+    boilerplate.
+    """
+    content = mdx_file.read_text(errors="ignore")
+    fm = _parse_mdx_frontmatter(content)
+    image = _parse_first_image(content) or ""
+
+    description = fm.get("description", "").strip()
+    body_intro = _extract_body_intro(content)
+    # Prefer the body intro when frontmatter is empty / boilerplate-only.
+    if not description or description.lower().startswith("instructions for "):
+        description = body_intro or description
+
+    return {
+        "title": fm.get("title", ""),
+        "description": description,
+        "image_file": image,
+        "category": category,
+    }
+
+
+_MAX_INTRO_CHARS = 400
+
+
+def _extract_body_intro(mdx_content: str) -> str:
+    """
+    Extract the first prose paragraph from an MDX file body.
+
+    Skips imports, MDX components, headings, code blocks and directive
+    blocks. Markdown links and emphasis are flattened. When the first
+    paragraph ends mid-sentence (typical when followed by a bullet
+    list) we concatenate subsequent prose paragraphs until a sentence
+    terminator is found or the result exceeds ~400 chars.
+
+    Returns an empty string when no prose paragraph is found.
+    """
+    body = re_module.sub(
+        r"^---\s*\n.*?\n---\s*\n", "", mdx_content, count=1, flags=re_module.DOTALL
+    )
+
+    paragraphs: list[list[str]] = [[]]
+    in_code = False
+    for line in body.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if not stripped:
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        # Bullet list items break the paragraph but we don't include them
+        # in the prose — they typically enumerate supported parts/devices.
+        if stripped.startswith(("-", "*", "+")) and len(stripped) > 1 and stripped[1] == " ":
+            if paragraphs[-1]:
+                paragraphs.append([])
+            continue
+        if _BODY_SKIP_LINE.match(line):
+            continue
+        paragraphs[-1].append(stripped)
+
+    collected = ""
+    for lines in paragraphs:
+        if not lines:
+            continue
+        chunk = _flatten_markdown(" ".join(lines))
+        if not chunk:
+            continue
+        if not collected:
+            collected = chunk
+        else:
+            collected = f"{collected} {chunk}"
+        if len(collected) >= _MAX_INTRO_CHARS or collected.rstrip()[-1:] in ".!?":
+            break
+
+    if len(collected) >= 30:
+        return collected[:_MAX_INTRO_CHARS].rstrip()
+    return ""
+
+
+def _flatten_markdown(text: str) -> str:
+    """Strip markdown links / emphasis / inline code / HTML to plain prose."""
+    text = _MD_LINK.sub(r"\1", text)
+    text = _MD_INLINE_CODE.sub(r"\1", text)
+    text = _MD_BOLD_ITALIC.sub(r"\2", text)
+    text = _HTML_TAG.sub("", text)
+    return re_module.sub(r"\s+", " ", text).strip()
+
+
 def _parse_first_image(mdx_content: str) -> str | None:
     """Extract the first image filename from MDX content."""
     # Pattern 1: ES module import — import x from './images/foo.jpg';
@@ -132,16 +246,7 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
 
     # Top-level .mdx files (core components)
     for mdx_file in components_dir.glob("*.mdx"):
-        comp_id = mdx_file.stem
-        content = mdx_file.read_text(errors="ignore")
-        fm = _parse_mdx_frontmatter(content)
-        img = _parse_first_image(content)
-        metadata[comp_id] = {
-            "title": fm.get("title", ""),
-            "description": fm.get("description", ""),
-            "image_file": img or "",
-            "category": "",
-        }
+        metadata[mdx_file.stem] = _build_doc_meta(mdx_file, "")
 
     # Category subdirectories
     for cat_dir in sorted(components_dir.iterdir()):
@@ -156,15 +261,7 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
             # (e.g. ota/index.mdx → ota). Use the directory name in that
             # case so we can resolve docs for unified entries like ota/time.
             comp_id = cat_name if mdx_file.stem == "index" else mdx_file.stem
-            content = mdx_file.read_text(errors="ignore")
-            fm = _parse_mdx_frontmatter(content)
-            img = _parse_first_image(content)
-            metadata[comp_id] = {
-                "title": fm.get("title", ""),
-                "description": fm.get("description", ""),
-                "image_file": img or "",
-                "category": cat_name,
-            }
+            metadata[comp_id] = _build_doc_meta(mdx_file, cat_name)
 
     print(f"  Total: {len(metadata)} component docs found")
 
