@@ -249,6 +249,17 @@ def _extract_field_descriptions(mdx_content: str) -> dict[str, str]:
             current_key = None
             current_parts = []
             continue
+        # Markdown sub-headings (`### switch.toggle Action`, etc.) mark
+        # the end of the variable list within the section and the start
+        # of unrelated prose (action / trigger reference, etc.). Stop
+        # appending to the current field — without this, every line
+        # under the sub-heading would be glued onto the last field's
+        # description.
+        if stripped.startswith("#"):
+            _commit()
+            current_key = None
+            current_parts = []
+            continue
         # Sub-bullets describe sub-fields and would clutter the tooltip.
         if stripped.startswith(("- ", "* ", "+ ")):
             continue
