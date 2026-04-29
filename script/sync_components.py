@@ -18,6 +18,7 @@ import json
 import logging
 import os
 import re as re_module
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -465,13 +466,12 @@ CATEGORY_OVERRIDES: dict[str, str] = {
 }
 
 # Schema keys that are pure plumbing — never user-facing.
+# Both ``mqtt_id`` and ``zigbee_id`` are auto-generated ids voluptuous
+# uses to bind an entity to its MQTT / Zigbee component instance.
+# The user can't and shouldn't set these.
 SKIP_KEYS: set[str] = {
     "mqtt_id",
-    "web_server",
-    "setup_priority",
-    "type_id",
-    "device_id",  # MQTT internal
-    "zigbee_id",  # Zigbee internal
+    "zigbee_id",
 }
 
 # Schema keys that are automation triggers (skip)
@@ -486,6 +486,7 @@ ADVANCED_BASE_KEYS: set[str] = {
     "state_class",
     "accuracy_decimals",
     "force_update",
+    "setup_priority",
     "expire_after",
     "filters",
     "interlock",
@@ -775,7 +776,7 @@ _NAME_TYPE_MAP: tuple[tuple[tuple[str, ...], dict[str, Any]], ...] = (
     (("validate_bytes", "validate_buffer_size"), {"type": "integer"}),
     (("frequency",), {"type": "float"}),
     # Hardware references
-    (("use_id", "declare_id"), {"type": "id"}),
+    (("use_id", "declare_id", "sub_device_id"), {"type": "id"}),
     # Lambda variants
     (("returning_lambda", "lambda_"), {"type": "lambda"}),
     # Color helpers
@@ -866,10 +867,24 @@ def _identify_validator(validator: Any) -> dict[str, Any]:
     if "address" in name_lower:
         return {"type": "integer"}
 
-    # Fallback: any function defined in esphome.config_validation that
-    # we couldn't otherwise classify is overwhelmingly a string-shaped
-    # validator (custom string formats — domain names, area names, ...).
-    if vmod == "esphome.config_validation" and callable(validator):
+    # Late nested-schema check: some component-private wrappers (e.g.
+    # api._encryption_schema) are bare functions that delegate to a
+    # module-level Schema constant. _unwrap_schema follows that chain
+    # via _find_module_schema. If it resolves, mark as sub_schema so
+    # the caller emits it as a nested config group rather than letting
+    # the catch-all fallback below misclassify it as a string.
+    if callable(validator) and _unwrap_schema(validator) is not None:
+        return {"type": "sub_schema", "schema": validator}
+
+    # Fallback: any function defined in esphome.config_validation or
+    # esphome.components.* that we couldn't otherwise classify is
+    # overwhelmingly a string-shaped validator (custom string formats —
+    # domain names, area names, encryption keys, MAC addresses, ...).
+    # Component-private validators (validate_encryption_key,
+    # validate_password, ...) get picked up here too.
+    if callable(validator) and (
+        vmod == "esphome.config_validation" or vmod.startswith("esphome.components.")
+    ):
         return {"type": "string"}
 
     return {"type": "unknown"}
@@ -1072,12 +1087,18 @@ def _build_entry(key: Any, validator: Any) -> dict | None:
     required = _is_required(key)
     default = _get_default(key)
 
-    # Promote generic strings to secure_string for fields whose key names
-    # imply credentials. Catches cases where the validator is e.g. a
-    # deprecated `cv.invalid(...)` wrapper that doesn't carry "password"
-    # in its function name but the YAML key clearly does.
+    # Promote generic strings to secure_string for fields whose key
+    # name OR validator name implies credentials. Picks up cases like
+    # api.encryption.key (key is generic but the validator is
+    # ``validate_encryption_key``) and deprecated cv.invalid()
+    # wrappers where the YAML key alone (``password``) is the signal.
     entry_type = info["type"]
-    if entry_type == "string" and any(frag in key_name.lower() for frag in _SECRET_KEY_FRAGMENTS):
+    validator_name = (getattr(validator, "__name__", "") or "").lower()
+    if entry_type == "string" and (
+        any(frag in key_name.lower() for frag in _SECRET_KEY_FRAGMENTS)
+        or any(frag in validator_name for frag in _SECRET_KEY_FRAGMENTS)
+        or "encryption_key" in validator_name
+    ):
         entry_type = "secure_string"
 
     range_val: list[Any] | None = None
@@ -1189,6 +1210,11 @@ def _unwrap_schema(schema: Any) -> dict | None:
     ESPHome wraps many CONFIG_SCHEMAs in ``cv.All(...)`` for chained
     validation (version checks, post-processing). The actual
     key-validator mapping lives inside one of the wrapped validators.
+
+    Some components also wrap nested schemas in tiny pre-validators
+    (``def _encryption_schema(config): ... return ENCRYPTION_SCHEMA(config)``).
+    Those are opaque functions, so we look up a matching ``*_SCHEMA``
+    constant in the function's module as a fallback.
     """
     if isinstance(schema, dict):
         return schema
@@ -1200,6 +1226,44 @@ def _unwrap_schema(schema: Any) -> dict | None:
             unwrapped = _unwrap_schema(v)
             if unwrapped is not None:
                 return unwrapped
+    if callable(schema):
+        related = _find_module_schema(schema)
+        if related is not None and related is not schema:
+            return _unwrap_schema(related)
+    return None
+
+
+def _find_module_schema(validator: Any) -> Any:
+    """
+    Look up a ``*_SCHEMA`` constant in the validator's module by name.
+
+    Handles wrappers like ``_encryption_schema`` → ``ENCRYPTION_SCHEMA``
+    and ``validate_foo`` → ``FOO_SCHEMA``. Returns the matching constant
+    or None when no candidate exists.
+    """
+    name = getattr(validator, "__name__", "") or ""
+    if not name:
+        return None
+    module = sys.modules.get(getattr(validator, "__module__", "") or "")
+    if module is None:
+        return None
+    base = name.lstrip("_")
+    if base.startswith("validate_"):
+        base = base[len("validate_") :]
+    if base.endswith("_schema"):
+        base = base[: -len("_schema")]
+    base = base.strip("_")
+    candidates = (
+        f"{base.upper()}_SCHEMA",
+        f"{name.upper().lstrip('_')}",
+        f"{base.upper()}",
+    )
+    for candidate in candidates:
+        related = getattr(module, candidate, None)
+        if related is None:
+            continue
+        if isinstance(related, dict) or hasattr(related, "schema") or isinstance(related, vol.All):
+            return related
     return None
 
 
@@ -1289,6 +1353,16 @@ def _parse_schema(
         if entry is not None:
             _attach_description(entry, field_descriptions)
             entries.append(entry)
+            continue
+
+        # Nested config group — a dict-shaped sub-schema that's not an
+        # entity sub-entry and didn't resolve to a primitive type. Emit
+        # it as a sub-entry without a platform_type so the frontend
+        # renders it as a collapsible nested group rather than dropping
+        # the whole nested block (e.g. esp32_ble_tracker.scan_parameters).
+        nested = _unwrap_schema(validator)
+        if nested is not None:
+            sub_entries.append(_build_nested_group(key_name, nested, field_descriptions))
 
     return _sort_entries(entries), sub_entries
 
@@ -1423,6 +1497,44 @@ def _build_sub_entry(
     return {
         "key": key_name,
         "platform_type": platform_type,
+        "config_entries": _sort_entries(inner_entries),
+    }
+
+
+def _build_nested_group(
+    key_name: str,
+    nested_schema: dict,
+    field_descriptions: dict[str, str] | None = None,
+) -> dict:
+    """
+    Build a sub-entry from an opaque nested config dict.
+
+    Used for blocks like ``esp32_ble_tracker.scan_parameters`` that
+    bundle related settings without representing entities. The
+    resulting sub-entry has no ``platform_type`` (None) so the
+    frontend renders it as a plain collapsible nested group.
+    """
+    field_descriptions = field_descriptions or {}
+    inner_entries: list[dict] = []
+    for sk, sv in nested_schema.items():
+        sk_name = _key_name(sk)
+        if sk_name in SKIP_KEYS:
+            continue
+        if any(sk_name.startswith(p) for p in AUTOMATION_KEY_PREFIXES):
+            continue
+        if _is_generate_id(sk):
+            entry = _build_id_entry(sk_name, sk)
+            _attach_description(entry, field_descriptions)
+            inner_entries.append(entry)
+            continue
+        entry = _build_entry(sk, sv)
+        if entry is not None:
+            _attach_description(entry, field_descriptions)
+            inner_entries.append(entry)
+
+    return {
+        "key": key_name,
+        "platform_type": None,
         "config_entries": _sort_entries(inner_entries),
     }
 

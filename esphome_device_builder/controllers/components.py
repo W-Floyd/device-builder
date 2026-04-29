@@ -215,7 +215,7 @@ def _load_sub_entry(data: dict) -> ComponentSubEntry:
     """Load a ComponentSubEntry from its JSON representation."""
     return ComponentSubEntry(
         key=data["key"],
-        platform_type=data["platform_type"],
+        platform_type=data.get("platform_type") or None,
         config_entries=[_load_config_entry(e) for e in data.get("config_entries", [])],
     )
 

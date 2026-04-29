@@ -47,22 +47,30 @@ class ComponentCategory(StrEnum):
 
 @dataclass
 class ComponentSubEntry(DataClassORJSONMixin):
-    """A nested sub-configuration inside a parent component.
+    """
+    A nested sub-configuration inside a parent component.
 
-    Used by platform components that report multiple readings or expose
-    multiple inner instances. For example, a DHT sensor block has a
-    single platform config but produces both a temperature and a
-    humidity reading — each rendered as a sub-entry with its own key
-    and config_entries.
+    Two shapes share this dataclass:
+
+    - **Entity sub-entries** — platform components that produce
+      multiple readings or instances. A DHT sensor block produces both
+      a temperature and a humidity entity; ``platform_type`` is set
+      ("sensor") so the frontend knows to apply platform-default
+      fields like name / device_class.
+    - **Nested config groups** — opaque sub-dicts in the schema like
+      ``esp32_ble_tracker.scan_parameters`` that just bundle related
+      settings without representing entities. ``platform_type`` is
+      None so the frontend renders them as a plain collapsible group.
     """
 
-    # YAML key under the parent component (e.g. "temperature", "humidity").
+    # YAML key under the parent component (e.g. "temperature",
+    # "scan_parameters").
     key: str
 
-    # ESPHome platform type the sub-entry represents (e.g. "sensor",
-    # "binary_sensor"). Used by the frontend to apply platform-default
-    # config entries (name, device_class, etc.) on top of `config_entries`.
-    platform_type: str
+    # Platform type the sub-entry represents (e.g. "sensor",
+    # "binary_sensor"). None when the sub-entry is just a nested
+    # config group rather than an entity definition.
+    platform_type: str | None = None
 
     # Sub-entry-specific config fields beyond the platform defaults.
     config_entries: list[ConfigEntry] = field(default_factory=list)
