@@ -514,18 +514,24 @@ ADVANCED_BASE_KEYS: set[str] = {
     "zigbee_text_sensor",
 }
 
-# Fields important enough to always show without an "Advanced" toggle
-# even when they happen to be optional in the schema. Order matters
-# here — it drives the sort order in the rendered form.
+# Order in which entries appear in the rendered form. Both the
+# non-advanced and advanced sections sort by this priority — the
+# bucket (advanced vs. not) is decided separately by
+# _classify_advanced. Earlier in this tuple = sorted earlier.
 IMPORTANT_KEY_ORDER: tuple[str, ...] = (
     # Discriminators come first — they decide which other fields render.
     "platform",
     "type",
     # Identification
-    "id",
     "name",
+    "friendly_name",
     "icon",
-    # Hardware / connection
+    # Credentials / connection (Wi-Fi, MQTT, OTA, API, ...)
+    "ssid",
+    "password",
+    "broker",
+    "username",
+    # Hardware
     "pin",
     "address",
     "i2c_id",
@@ -536,8 +542,21 @@ IMPORTANT_KEY_ORDER: tuple[str, ...] = (
     "unit_of_measurement",
     "restore_mode",
     "update_interval",
+    "model",
+    "variant",
+    "inverted",
+    # Important fields that stay flagged advanced — sort first within
+    # the advanced section. Listed at the end so they appear after the
+    # prominent fields above.
+    "id",
+    "comment",
+    "area",
 )
 IMPORTANT_KEYS: set[str] = set(IMPORTANT_KEY_ORDER)
+
+# Subset of IMPORTANT_KEYS that stays flagged as advanced. They keep
+# their sort priority but render under the form's "Advanced" section.
+ADVANCED_IMPORTANT_KEYS: set[str] = {"id", "comment", "area"}
 
 # Friendly names for well-known components
 COMPONENT_NAMES: dict[str, str] = {
@@ -995,7 +1014,13 @@ def _is_generate_id(key: Any) -> bool:
 
 
 def _build_id_entry(key_name: str, key: Any) -> dict:
-    """Build the config entry for an auto-generated component ID."""
+    """
+    Build the config entry for an auto-generated component ID.
+
+    Always flagged advanced — most users let ESPHome derive the id —
+    but sorted first within the advanced section so it's easy to find
+    when a user does want to set it explicitly.
+    """
     return {
         "key": key_name,
         "type": "id",
@@ -1004,7 +1029,7 @@ def _build_id_entry(key_name: str, key: Any) -> dict:
         "default_value": None,
         "options": None,
         "range": None,
-        "advanced": False,  # important: users may want to set this
+        "advanced": True,
         "translation_key": f"component.config.{key_name}",
     }
 
@@ -1113,12 +1138,20 @@ def _classify_advanced(key_name: str, required: bool) -> bool:
     """
     Decide whether a config entry should be hidden under "Advanced".
 
-    Required fields and those in IMPORTANT_KEYS always render at the
-    top level. ADVANCED_BASE_KEYS always render as advanced. Anything
-    else falls back to "advanced when optional".
+    Order of precedence:
+
+    1. Required fields are never advanced.
+    2. ADVANCED_IMPORTANT_KEYS (id, comment, area) are advanced even
+       though they're "important" — they keep their sort priority but
+       render under "Advanced".
+    3. IMPORTANT_KEYS are not advanced.
+    4. ADVANCED_BASE_KEYS are always advanced.
+    5. Anything else falls back to "advanced when optional".
     """
     if required:
         return False
+    if key_name in ADVANCED_IMPORTANT_KEYS:
+        return True
     if key_name in IMPORTANT_KEYS:
         return False
     if key_name in ADVANCED_BASE_KEYS:
