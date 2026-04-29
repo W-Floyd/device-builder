@@ -248,10 +248,13 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
     for mdx_file in components_dir.glob("*.mdx"):
         metadata[mdx_file.stem] = _build_doc_meta(mdx_file, "")
 
-    # Category subdirectories. A component's own docs (top-level
-    # `<id>.mdx`) take precedence — `ota/esphome.mdx` documents the
-    # ESPHome OTA platform, not the `esphome` core component, so we
-    # must not overwrite a top-level entry of the same name.
+    # Category subdirectories. We always store per-domain entries under
+    # the qualified key `<domain>.<id>` (e.g. ``sensor.template``) so
+    # multi-platform components like ``template`` get distinct docs per
+    # domain. We also populate the unqualified key `<id>` with the FIRST
+    # encountered entry — for components that exist in only one domain
+    # (most of them) the short key keeps lookups simple. Top-level
+    # `<id>.mdx` always wins over per-category docs of the same stem.
     for cat_dir in sorted(components_dir.iterdir()):
         if not cat_dir.is_dir() or cat_dir.name == "images":
             continue
@@ -263,10 +266,12 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
             # `<dir>/index.mdx` documents the platform-component itself
             # (e.g. ota/index.mdx → ota). Use the directory name in that
             # case so we can resolve docs for unified entries like ota/time.
-            comp_id = cat_name if mdx_file.stem == "index" else mdx_file.stem
-            if comp_id in metadata:
-                continue
-            metadata[comp_id] = _build_doc_meta(mdx_file, cat_name)
+            stem = cat_name if mdx_file.stem == "index" else mdx_file.stem
+            doc_meta = _build_doc_meta(mdx_file, cat_name)
+            qualified_key = f"{cat_name}.{stem}"
+            metadata[qualified_key] = doc_meta
+            if stem not in metadata:
+                metadata[stem] = doc_meta
 
     print(f"  Total: {len(metadata)} component docs found")
 
@@ -1184,127 +1189,235 @@ def _build_unified_platform_component(
     }
 
 
+_TARGET_PLATFORMS = frozenset(
+    {"esp32", "esp8266", "rp2040", "bk72xx", "rtl87xx", "ln882x", "nrf52", "host"}
+)
+
+
 def _sync_component(
     component_id: str,
     platform_types: set[str],
     docs_meta: dict[str, dict[str, str]] | None = None,
-) -> dict | None:
-    """Sync a single component. Returns a dict or None on failure."""
+) -> list[dict]:
+    """
+    Sync a single component directory.
+
+    Returns a list of catalog entries — most components produce a
+    single entry, but components that provide multiple platforms (like
+    ``template``, ``gpio``, ``ble_client``) yield one entry per
+    platform with a domain-qualified id (``<domain>.<component_id>``).
+    Hub-style components that ALSO have their own top-level schema
+    (``ble_client``, ``daly_bms``, ...) produce both the parent entry
+    and the per-platform entries.
+    """
     try:
         manifest = get_component(component_id)
     except Exception as exc:
         _LOGGER.warning("Failed to load component %s: %s", component_id, exc)
-        return None
+        return []
 
-    if manifest is None:
-        return None
+    if manifest is None or manifest.is_platform_component:
+        # Platform-component aggregators (sensor, binary_sensor, ...) are
+        # surfaced as unified entries elsewhere; target platforms
+        # (esp32, esp8266, ...) ARE included because users configure
+        # them directly and they pass the is_platform_component check.
+        return []
 
-    # Skip platform-component aggregators (sensor, binary_sensor, switch, ...)
-    # — these are the parents of platform-providing components, not user-facing
-    # entries themselves. Target platforms (esp32, esp8266, ...) ARE included
-    # because users configure them directly.
-    if manifest.is_platform_component:
-        return None
-
-    # Find which platforms this component provides
     platforms = _get_component_platforms(component_id, platform_types)
-    category = _determine_category(component_id, platforms)
+    docs = docs_meta or {}
+    dependencies = list(manifest.dependencies) if manifest.dependencies else []
+    supported = [d for d in dependencies if str(d) in _TARGET_PLATFORMS]
+    if manifest.is_target_platform:
+        supported = [component_id]
 
-    # Get docs metadata — try exact match first, then strip bus suffixes
-    all_docs = docs_meta or {}
-    comp_docs = all_docs.get(component_id, {})
-    if not comp_docs:
-        # Try stripping _i2c, _spi, _uart, _base suffixes
-        for suffix in ("_i2c", "_spi", "_uart", "_base"):
-            if component_id.endswith(suffix):
-                base_id = component_id.removesuffix(suffix)
-                comp_docs = all_docs.get(base_id, {})
-                if comp_docs:
-                    break
+    entries: list[dict] = []
+
+    # Generate the parent / hub entry under the unqualified id when
+    # there's something meaningful to put in it:
+    #   - has own schema (any number of platforms — includes hubs like
+    #     ble_client, daly_bms, and core components like wifi)
+    #   - exactly one platform and no own schema (single-platform
+    #     providers like dht — keeps the short id `dht`)
+    # Components with 2+ platforms and no own schema (template, gpio,
+    # copy, ...) skip the parent and produce only per-platform entries.
+    if manifest.config_schema is not None or len(platforms) < 2:
+        entries.append(
+            _build_component_entry(
+                component_id=component_id,
+                manifest=manifest,
+                platforms=platforms,
+                schema=manifest.config_schema,
+                docs=docs,
+                dependencies=dependencies,
+                supported_platforms=supported,
+            )
+        )
+
+    # Per-platform entries when the component provides multiple
+    # platforms (template/gpio/copy/ble_client/...). Single-platform
+    # components without their own schema already got their entry
+    # above with the platform schema.
+    if len(platforms) >= 2:
+        for platform_name in platforms:
+            entry = _build_platform_entry(
+                component_id=component_id,
+                platform_name=platform_name,
+                manifest=manifest,
+                docs=docs,
+                dependencies=dependencies,
+                supported_platforms=supported,
+            )
+            if entry is not None:
+                entries.append(entry)
+
+    return entries
+
+
+def _build_component_entry(
+    *,
+    component_id: str,
+    manifest: Any,
+    platforms: list[str],
+    schema: Any,
+    docs: dict[str, dict[str, str]],
+    dependencies: list[str],
+    supported_platforms: list[str],
+) -> dict:
+    """Build the parent / hub entry for a component."""
+    category = _determine_category(component_id, platforms)
+    comp_docs = _resolve_docs(component_id, docs)
     name = _generate_name(component_id, category, comp_docs)
     description = _clean_description(comp_docs.get("description", ""))
 
-    # Build image URL from docs image file
-    image_url = ""
-    image_file = comp_docs.get("image_file", "")
-    if image_file:
-        doc_cat = comp_docs.get("category") or category
-        if doc_cat and doc_cat not in ("core", "bus", "automation", "misc"):
-            image_url = f"https://esphome.io/components/{doc_cat}/images/{image_file}"
-        else:
-            image_url = f"https://esphome.io/components/images/{image_file}"
-
-    # Build docs URL
-    if category not in ("core", "bus", "automation", "misc"):
-        docs_url = f"https://esphome.io/components/{category}/{component_id}"
-    else:
-        docs_url = f"https://esphome.io/components/{component_id}"
-
-    # Parse config schema. A component's own schema (manifest.config_schema)
-    # takes precedence over any platform schema it provides — a single
-    # component can be both a top-level config block (e.g. `esphome:`,
-    # `web_server:`, `http_request:`) AND a provider of one or more
-    # platforms (e.g. `web_server` also implements an OTA platform).
-    # The user-facing config block uses the component's own schema; the
-    # platform schemas are surfaced via the unified platform components
-    # (see _build_unified_platform_component).
     config_entries: list[dict] = []
     sub_entries: list[dict] = []
-
-    if manifest.config_schema:
+    if schema is not None:
         try:
-            config_entries, sub_entries = _parse_schema(manifest.config_schema, component_id)
+            config_entries, sub_entries = _parse_schema(schema, component_id)
         except Exception as exc:
             _LOGGER.warning("Failed to parse schema for %s: %s", component_id, exc)
     elif platforms:
-        primary_platform = platforms[0]
-        for pref in ("sensor", "binary_sensor", "switch", "light", "fan", "cover"):
-            if pref in platforms:
-                primary_platform = pref
-                break
+        # Single-platform component with no own schema — surface its
+        # platform schema under the short id (e.g. dht as `dht`).
+        primary = _primary_platform(platforms)
         try:
-            platform_manifest = get_platform(primary_platform, component_id)
+            platform_manifest = get_platform(primary, component_id)
             if platform_manifest and platform_manifest.config_schema:
                 config_entries, sub_entries = _parse_schema(
                     platform_manifest.config_schema, component_id
                 )
         except Exception as exc:
-            _LOGGER.warning(
-                "Failed to parse schema for %s/%s: %s", primary_platform, component_id, exc
-            )
-
-    dependencies = list(manifest.dependencies) if manifest.dependencies else []
-
-    # Determine platform compatibility from dependencies. If a component
-    # depends on a target platform, it only works on that platform.
-    target_platforms = {
-        "esp32",
-        "esp8266",
-        "rp2040",
-        "bk72xx",
-        "rtl87xx",
-        "ln882x",
-        "nrf52",
-        "host",
-    }
-    supported_platforms = [d for d in dependencies if str(d) in target_platforms]
-    # The target-platform components themselves only support themselves.
-    if manifest.is_target_platform:
-        supported_platforms = [component_id]
+            _LOGGER.warning("Failed to parse schema for %s/%s: %s", primary, component_id, exc)
 
     return {
         "id": component_id,
         "name": name,
         "description": description,
         "category": category,
-        "docs_url": docs_url,
-        "image_url": image_url,
+        "docs_url": _build_docs_url(component_id, category),
+        "image_url": _build_image_url(comp_docs, category),
         "dependencies": dependencies,
         "multi_conf": bool(manifest.multi_conf),
         "supported_platforms": supported_platforms,
         "config_entries": config_entries,
         "sub_entries": sub_entries,
     }
+
+
+def _build_platform_entry(
+    *,
+    component_id: str,
+    platform_name: str,
+    manifest: Any,
+    docs: dict[str, dict[str, str]],
+    dependencies: list[str],
+    supported_platforms: list[str],
+) -> dict | None:
+    """
+    Build a per-platform entry for a multi-platform component.
+
+    Used when a single component implements several platforms — e.g.
+    ``template`` shows up as ``sensor.template``, ``switch.template``,
+    ``binary_sensor.template`` etc. Each entry uses the qualified id
+    so the catalog presents them as distinct user-facing options.
+    """
+    try:
+        platform_manifest = get_platform(platform_name, component_id)
+    except Exception:
+        return None
+    if platform_manifest is None or platform_manifest.config_schema is None:
+        return None
+
+    qualified_id = f"{platform_name}.{component_id}"
+    qualified_docs = docs.get(qualified_id) or _resolve_docs(component_id, docs)
+    domain_label = platform_name.replace("_", " ").title()
+    title = qualified_docs.get("title", "")
+    if title:
+        name = title
+    else:
+        short_name = _generate_name(component_id, platform_name, qualified_docs)
+        name = f"{short_name} {domain_label}"
+    description = _clean_description(qualified_docs.get("description", ""))
+
+    try:
+        config_entries, sub_entries = _parse_schema(platform_manifest.config_schema, component_id)
+    except Exception as exc:
+        _LOGGER.warning("Failed to parse %s.%s schema: %s", platform_name, component_id, exc)
+        return None
+
+    return {
+        "id": qualified_id,
+        "name": name,
+        "description": description,
+        "category": platform_name,
+        "docs_url": f"https://esphome.io/components/{platform_name}/{component_id}",
+        "image_url": _build_image_url(qualified_docs, platform_name),
+        "dependencies": dependencies,
+        "multi_conf": bool(manifest.multi_conf),
+        "supported_platforms": supported_platforms,
+        "config_entries": config_entries,
+        "sub_entries": sub_entries,
+    }
+
+
+def _primary_platform(platforms: list[str]) -> str:
+    """Pick the primary platform for category / schema selection."""
+    for pref in ("sensor", "binary_sensor", "switch", "light", "fan", "cover"):
+        if pref in platforms:
+            return pref
+    return platforms[0]
+
+
+def _resolve_docs(component_id: str, docs: dict[str, dict[str, str]]) -> dict[str, str]:
+    """Find docs metadata for *component_id*, trying common bus suffixes."""
+    comp_docs = docs.get(component_id, {})
+    if comp_docs:
+        return comp_docs
+    for suffix in ("_i2c", "_spi", "_uart", "_base"):
+        if component_id.endswith(suffix):
+            base_id = component_id.removesuffix(suffix)
+            comp_docs = docs.get(base_id, {})
+            if comp_docs:
+                return comp_docs
+    return {}
+
+
+def _build_docs_url(component_id: str, category: str) -> str:
+    """Build the canonical esphome.io docs URL for a component."""
+    if category not in ("core", "bus", "automation", "misc"):
+        return f"https://esphome.io/components/{category}/{component_id}"
+    return f"https://esphome.io/components/{component_id}"
+
+
+def _build_image_url(comp_docs: dict[str, str], category: str) -> str:
+    """Build the docs-image URL for a component (empty when no image)."""
+    image_file = comp_docs.get("image_file", "")
+    if not image_file:
+        return ""
+    doc_cat = comp_docs.get("category") or category
+    if doc_cat and doc_cat not in ("core", "bus", "automation", "misc"):
+        return f"https://esphome.io/components/{doc_cat}/images/{image_file}"
+    return f"https://esphome.io/components/images/{image_file}"
 
 
 def sync(dry_run: bool = False) -> None:
@@ -1331,10 +1444,7 @@ def sync(dry_run: bool = False) -> None:
     failed = 0
 
     for comp_id in component_dirs:
-        result = _sync_component(comp_id, PLATFORM_TYPES, docs_meta)
-        if result is None:
-            continue
-        components.append(result)
+        components.extend(_sync_component(comp_id, PLATFORM_TYPES, docs_meta))
 
     # Synthesize unified entries for platform components (OTA, time, ...)
     # — these are aggregator components; the user-facing model is one
