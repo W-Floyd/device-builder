@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import logging
 import os
@@ -151,7 +152,10 @@ def fetch_docs_metadata() -> dict[str, dict[str, str]]:
         if mdx_files:
             print(f"  {cat_name}: {len(mdx_files)} docs")
         for mdx_file in mdx_files:
-            comp_id = mdx_file.stem
+            # `<dir>/index.mdx` documents the platform-component itself
+            # (e.g. ota/index.mdx → ota). Use the directory name in that
+            # case so we can resolve docs for unified entries like ota/time.
+            comp_id = cat_name if mdx_file.stem == "index" else mdx_file.stem
             content = mdx_file.read_text(errors="ignore")
             fm = _parse_mdx_frontmatter(content)
             img = _parse_first_image(content)
@@ -315,36 +319,55 @@ COMPONENT_NAMES: dict[str, str] = {
 # ---------------------------------------------------------------------------
 
 
+# Leading boilerplate phrases stripped from descriptions. These add no
+# value to a UI tooltip — the rest of the sentence is the actual content.
+_DESC_LEAD_PHRASES = (
+    "instructions for setting up the ",
+    "instructions for setting up ",
+    "instructions for using the ",
+    "instructions for using ",
+)
+
+# Phrases that signal the rest of the text is not user-facing prose
+# (config-variable lists, ref links, etc.). When found we cut here.
 _DESC_STOP_PHRASES = (
-    "instructions for setting up",
-    "instructions for using",
     "configuration variables:",
-    "configuration variables",
+    "configuration variables ",
     "see the configuration variables",
     "see :ref:",
 )
 
 
 def _clean_description(raw: str) -> str:
-    """Trim ESPHome doc descriptions to the user-facing intro paragraph.
+    """
+    Trim ESPHome doc descriptions to the user-facing intro paragraph.
 
-    Some component docs prefix their description with boilerplate like
-    "Instructions for setting up...". This drops everything from such a
-    phrase onwards so the catalog only shows the actual explanation.
+    Strips leading boilerplate ("Instructions for setting up the ...")
+    and capitalises the new first word so the sentence still reads
+    naturally. Any trailing config-variables list or sphinx :ref:
+    directive is cut.
     """
     if not raw:
         return ""
+
     cleaned = raw.strip()
     lower = cleaned.lower()
+    for phrase in _DESC_LEAD_PHRASES:
+        if lower.startswith(phrase):
+            cleaned = cleaned[len(phrase) :]
+            cleaned = cleaned[:1].upper() + cleaned[1:] if cleaned else cleaned
+            lower = cleaned.lower()
+            break
+
     cut = len(cleaned)
     for phrase in _DESC_STOP_PHRASES:
         idx = lower.find(phrase)
         if idx != -1 and idx < cut:
             cut = idx
-    cleaned = cleaned[:cut].strip()
-    # Drop a trailing sentence like "...see the docs for details." once the
-    # boilerplate is gone — common after stripping.
-    return cleaned.rstrip(".:- \n\t") + ("." if cleaned and cleaned[-1] not in ".!?" else "")
+    cleaned = cleaned[:cut].strip().rstrip(".:- \n\t")
+    if cleaned and cleaned[-1] not in ".!?":
+        cleaned += "."
+    return cleaned
 
 
 def _key_name(key: Any) -> str:
@@ -367,17 +390,25 @@ def _is_required(key: Any) -> bool:
 
 
 def _get_default(key: Any) -> Any:
-    """Extract default value from a voluptuous key."""
-    if not hasattr(key, "default") or key.default is vol.UNDEFINED:
+    """
+    Return the default value of a voluptuous key.
+
+    Returns None when there is no default or accessing it raises. Some
+    ESPHome defaults are descriptors that look up CORE.data, which
+    isn't always populated during sync — KeyError is the common
+    failure mode there.
+    """
+    try:
+        default = getattr(key, "default", vol.UNDEFINED)
+    except Exception:
         return None
-    default = key.default
-    # If it's a factory function, try to call it
+    if default is vol.UNDEFINED:
+        return None
     if callable(default):
         try:
             default = default()
         except Exception:
             return None
-    # Convert ESPHome types to plain values
     if hasattr(default, "total_seconds"):
         return f"{int(default.total_seconds())}s"
     if hasattr(default, "total_milliseconds"):
@@ -391,186 +422,246 @@ _LAMBDA_VALIDATORS: tuple[Any, ...] = tuple(
     v for v in (getattr(cv, n, None) for n in ("returning_lambda", "lambda_")) if v is not None
 )
 
+# Identity-mapping of cv-singletons to the type they represent. Tuples
+# group validators that share a type. Order doesn't matter — the first
+# match wins.
+_CV_TYPE_BY_IDENTITY: tuple[tuple[tuple[Any, ...], dict[str, Any]], ...] = tuple(
+    (tuple(filter(None, validators)), result)
+    for validators, result in (
+        ((getattr(cv, "boolean", None),), {"type": "boolean"}),
+        ((getattr(cv, "string", None), getattr(cv, "string_strict", None)), {"type": "string"}),
+        (
+            (
+                getattr(cv, "int_", None),
+                getattr(cv, "positive_int", None),
+                getattr(cv, "positive_not_null_int", None),
+            ),
+            {"type": "integer"},
+        ),
+        ((getattr(cv, "float_", None), getattr(cv, "positive_float", None)), {"type": "float"}),
+        ((getattr(cv, "icon", None),), {"type": "icon"}),
+        ((getattr(cv, "port", None),), {"type": "integer", "range_min": 1, "range_max": 65535}),
+        ((getattr(cv, "mac_address", None),), {"type": "mac_address"}),
+        ((getattr(cv, "hex_int", None),), {"type": "integer"}),
+    )
+)
+
+# Validator-name → type fallback table. Used after identity checks fail —
+# many ESPHome custom validators are recognisable by name alone.
+_NAME_TYPE_MAP: tuple[tuple[tuple[str, ...], dict[str, Any]], ...] = (
+    # Secure strings — passwords, encryption keys, OTA passwords
+    (("validate_password", "password", "passcode", "encryption_key"), {"type": "secure_string"}),
+    # Generic string-shaped validators
+    (
+        (
+            "ssid",
+            "domain_name",
+            "hostname",
+            "validate_area_config",
+            "validate_includes",
+            "include",
+            "string_strict",
+        ),
+        {"type": "string"},
+    ),
+    # Byte-count / numeric helpers
+    (("validate_bytes", "validate_buffer_size"), {"type": "integer"}),
+    (("frequency",), {"type": "float"}),
+    # Hardware references
+    (("use_id", "declare_id"), {"type": "id"}),
+    # Lambda variants
+    (("returning_lambda", "lambda_"), {"type": "lambda"}),
+    # Color helpers
+    (("rgb_color", "color"), {"type": "color"}),
+)
+
 
 def _identify_validator(validator: Any) -> dict[str, Any]:
-    """Identify the type and constraints of a voluptuous validator.
-
-    Returns a dict with: type, options, range_min, range_max, templatable.
     """
-    result: dict[str, Any] = {"type": "unknown"}
+    Map a voluptuous validator to a config-entry type description.
 
-    # cv.templatable wraps another validator and accepts !lambda OR a literal.
-    # The wrapped function is named `validator` but its `__qualname__` is
-    # `templatable.<locals>.validator` — that's the reliable signature.
+    The returned dict always carries a ``type`` key plus optional
+    ``options``, ``range_min``, ``range_max`` and ``templatable``
+    keys. Falls back to ``{"type": "unknown"}`` when no rule matches.
+    """
     name = getattr(validator, "__name__", "") or ""
     qualname = getattr(validator, "__qualname__", "") or ""
     name_lower = name.lower()
+    vmod = getattr(validator, "__module__", "") or ""
+
+    # cv.templatable wraps another validator and accepts !lambda OR a literal.
+    # The wrapped function is named `validator` but its qualname carries
+    # `templatable.<locals>.validator` — that's the reliable signature.
     if "templatable" in qualname.lower() and getattr(validator, "__closure__", None):
-        for cell in validator.__closure__:
-            try:
-                inner = cell.cell_contents
-            except (ValueError, TypeError):
-                continue
-            if callable(inner) and inner is not validator:
-                inner_result = _identify_validator(inner)
-                inner_result["templatable"] = True
-                return inner_result
-        # Couldn't unwrap — at least mark it as templatable string
-        return {"type": "string", "templatable": True}
+        return _unwrap_templatable(validator)
 
-    # Identity checks against known cv validators
-    if validator is cv.boolean:
-        return {"type": "boolean"}
-    if validator is cv.string or validator is cv.string_strict:
-        return {"type": "string"}
-    if (
-        validator is cv.int_
-        or validator is cv.positive_int
-        or validator is cv.positive_not_null_int
-    ):
-        return {"type": "integer"}
-    if validator is cv.float_ or validator is cv.positive_float:
-        return {"type": "float"}
-    if validator is cv.icon:
-        return {"type": "icon"}
-    if validator is cv.port:
-        return {"type": "integer", "range_min": 1, "range_max": 65535}
-
-    # Lambda: returning_lambda / lambda_ accept ONLY a !lambda block.
-    # Use identity-equality (`is`) because the parsing chain can recurse
-    # into voluptuous _Schema instances which are unhashable.
     if any(validator is v for v in _LAMBDA_VALIDATORS):
         return {"type": "lambda"}
 
-    # Color
-    if any(getattr(cv, n, None) is validator for n in ("hex_int", "rgb_color", "color")):
-        # hex_int is integer-typed but rgb_color/color are color pickers
-        if name_lower in ("rgb_color", "color"):
-            return {"type": "color"}
+    for validators, result in _CV_TYPE_BY_IDENTITY:
+        if any(validator is v for v in validators):
+            return dict(result)
 
-    # MAC address — cv.mac_address returns a MACAddress instance
-    if getattr(cv, "mac_address", None) is validator:
-        return {"type": "mac_address"}
-
-    # Check module — esphome.pins validators are pin types
-    vmod = getattr(validator, "__module__", "")
-    if vmod == "esphome.pins":
+    # esphome.pins.<anything> validators all describe GPIO pins
+    if vmod == "esphome.pins" or ("pin" in name_lower and "spin" not in name_lower):
         return {"type": "pin"}
 
-    if "pin" in name_lower and "spin" not in name_lower:
-        return {"type": "pin"}
+    # Time periods (cv.time_period_*, cv.update_interval, ...)
     if "time_period" in name_lower or name == "update_interval":
         return {"type": "time_period"}
-    if name_lower == "boolean":
-        return {"type": "boolean"}
-    if name == "use_id" or "declare_id" in name:
-        return {"type": "id"}
-    if "mac_address" in name_lower:
-        return {"type": "mac_address"}
-    if name_lower in ("rgb_color", "color"):
-        return {"type": "color"}
-    if name_lower == "returning_lambda" or name_lower == "lambda_":
-        return {"type": "lambda"}
 
-    # Check for enum/one_of via closure inspection.
-    # An enum-like validator wraps a {label: value} mapping in a closure;
-    # we surface the keys as `options` and keep the value type primitive
-    # (string by default — drop-down vs free-text is a UI concern).
-    if hasattr(validator, "__closure__") and validator.__closure__:
-        for cell in validator.__closure__:
-            try:
-                val = cell.cell_contents
-                if isinstance(val, dict) and len(val) > 0 and all(isinstance(k, str) for k in val):
-                    return {"type": "string", "options": list(val.keys())}
-            except (ValueError, TypeError):
-                pass
+    # Name-based lookup table
+    for names, result in _NAME_TYPE_MAP:
+        if name_lower in names or name in names:
+            return dict(result)
 
-    # Check for int_range/float_range via closure
-    if "int_range" in name_lower or "float_range" in name_lower:
-        range_min = None
-        range_max = None
-        if hasattr(validator, "__closure__") and validator.__closure__:
-            for cell in validator.__closure__:
-                try:
-                    val = cell.cell_contents
-                    if isinstance(val, (int, float)):
-                        if range_min is None:
-                            range_min = val
-                        else:
-                            range_max = val
-                except (ValueError, TypeError):
-                    pass
-        base_type = "integer" if "int" in name_lower else "float"
-        return {"type": base_type, "range_min": range_min, "range_max": range_max}
-
-    # Check for sub-schema (sensor_schema, etc.)
-    if hasattr(validator, "schema") and isinstance(validator.schema, dict):
-        return {"type": "sub_schema", "schema": validator}
-
-    # Check for Coerce
+    # vol.Coerce(int|float)
     if isinstance(validator, vol.Coerce):
         if validator.type is int:
             return {"type": "integer"}
         if validator.type is float:
             return {"type": "float"}
 
-    # Check for Range
+    # vol.Range — bare range constraint, default to float
     if isinstance(validator, vol.Range):
-        return {
-            "type": "float",
-            "range_min": validator.min,
-            "range_max": validator.max,
-        }
+        return {"type": "float", "range_min": validator.min, "range_max": validator.max}
 
-    # Check for vol.Any (union types — often has string options)
+    # vol.Any — union of validators; first identifiable wins
     if isinstance(validator, vol.Any):
         for inner in validator.validators:
             inner_result = _identify_validator(inner)
             if inner_result["type"] != "unknown":
                 return inner_result
 
-    # Unwrap vol.All (chain of validators) — check all inner validators
+    # vol.All — chained validation; gather range constraints and
+    # identify the primary type from inner validators (last to first).
     if isinstance(validator, vol.All):
-        # First pass: look for Range to extract constraints
-        range_info: dict[str, Any] = {}
-        for inner in validator.validators:
-            if isinstance(inner, vol.Range):
-                range_info = {"range_min": inner.min, "range_max": inner.max}
-            elif isinstance(inner, vol.Coerce):
-                if inner.type is int:
-                    range_info.setdefault("type", "integer")
-                elif inner.type is float:
-                    range_info.setdefault("type", "float")
+        return _identify_vol_all(validator)
 
-        # Second pass: identify the primary type
-        for inner in reversed(validator.validators):
-            inner_result = _identify_validator(inner)
-            if inner_result["type"] != "unknown":
-                # Merge range info if we found it
-                inner_result.update(
-                    {
-                        k: v
-                        for k, v in range_info.items()
-                        if k not in inner_result or k.startswith("range")
-                    }
-                )
-                return inner_result
+    # Closure-based detection: enum mappings, int/float ranges
+    closure_result = _identify_from_closure(validator, name_lower)
+    if closure_result is not None:
+        return closure_result
 
-        # If we only found range info, return that
-        if range_info.get("type"):
-            return range_info
+    # Sub-schemas (anything carrying a dict .schema attribute that doesn't
+    # look like a primitive) — caller decides whether to recurse into them.
+    if hasattr(validator, "schema") and isinstance(validator.schema, dict):
+        return {"type": "sub_schema", "schema": validator}
 
-    # Last resort: check if the function name hints at the type
-    if "string" in name_lower or "mac_address" in name_lower or "bind_key" in name_lower:
+    # Last-resort name hints for fields whose validator name still
+    # carries a type clue.
+    if "mac_address" in name_lower or "bind_key" in name_lower:
+        return {"type": "mac_address" if "mac" in name_lower else "string"}
+    if "string" in name_lower:
         return {"type": "string"}
-    if "hex_int" in name_lower or "hex" in name_lower:
+    if "hex" in name_lower:
         return {"type": "integer"}
-    if "frequency" in name_lower:
-        return {"type": "float"}
     if "address" in name_lower:
         return {"type": "integer"}
 
-    return result
+    # Fallback: any function defined in esphome.config_validation that
+    # we couldn't otherwise classify is overwhelmingly a string-shaped
+    # validator (custom string formats — domain names, area names, ...).
+    if vmod == "esphome.config_validation" and callable(validator):
+        return {"type": "string"}
+
+    return {"type": "unknown"}
+
+
+def _unwrap_templatable(validator: Any) -> dict[str, Any]:
+    """
+    Identify a ``cv.templatable``-wrapped validator.
+
+    Returns the identified inner type with ``templatable=True`` attached.
+    Falls back to a templatable string if the inner validator can't be
+    identified.
+    """
+    for cell in validator.__closure__:
+        try:
+            inner = cell.cell_contents
+        except (ValueError, TypeError):
+            continue
+        if callable(inner) and inner is not validator:
+            inner_result = _identify_validator(inner)
+            inner_result["templatable"] = True
+            return inner_result
+    return {"type": "string", "templatable": True}
+
+
+def _identify_vol_all(validator: vol.All) -> dict[str, Any]:
+    """
+    Identify the effective type of a ``vol.All`` chain.
+
+    Range bounds from ``vol.Range`` are merged onto whichever inner
+    validator wins type identification. When no validator matches but
+    a Range is present, the range alone is returned.
+    """
+    range_info: dict[str, Any] = {}
+    for inner in validator.validators:
+        if isinstance(inner, vol.Range):
+            range_info = {"range_min": inner.min, "range_max": inner.max}
+        elif isinstance(inner, vol.Coerce):
+            if inner.type is int:
+                range_info.setdefault("type", "integer")
+            elif inner.type is float:
+                range_info.setdefault("type", "float")
+
+    for inner in reversed(validator.validators):
+        inner_result = _identify_validator(inner)
+        if inner_result["type"] != "unknown":
+            inner_result.update(
+                {
+                    k: v
+                    for k, v in range_info.items()
+                    if k not in inner_result or k.startswith("range")
+                }
+            )
+            return inner_result
+
+    if range_info.get("type"):
+        return range_info
+    return {"type": "unknown"}
+
+
+def _identify_from_closure(validator: Any, name_lower: str) -> dict[str, Any] | None:
+    """
+    Identify a validator from its closure cells.
+
+    Looks for an enum dict (becomes ``options``) or a numeric range
+    (int_range / float_range). Returns None when the closure carries
+    no recognisable signal.
+    """
+    closure = getattr(validator, "__closure__", None)
+    if not closure:
+        return None
+
+    # Enum mapping {label: value} → drop-down with primitive value type
+    for cell in closure:
+        try:
+            val = cell.cell_contents
+        except (ValueError, TypeError):
+            continue
+        if isinstance(val, dict) and val and all(isinstance(k, str) for k in val):
+            return {"type": "string", "options": list(val.keys())}
+
+    # Numeric range
+    if "int_range" in name_lower or "float_range" in name_lower:
+        range_min = None
+        range_max = None
+        for cell in closure:
+            try:
+                val = cell.cell_contents
+            except (ValueError, TypeError):
+                continue
+            if isinstance(val, (int, float)):
+                if range_min is None:
+                    range_min = val
+                else:
+                    range_max = val
+        base_type = "integer" if "int" in name_lower else "float"
+        return {"type": base_type, "range_min": range_min, "range_max": range_max}
+
+    return None
 
 
 def _is_sub_entity_schema(validator: Any) -> bool:
@@ -589,10 +680,18 @@ def _is_sub_entity_schema(validator: Any) -> bool:
     return len(schema_keys & entity_keys) >= 2
 
 
-def _build_entry(key: Any, validator: Any) -> dict | None:
-    """Build a single config-entry dict from a voluptuous (key, validator) pair.
+# Key-name fragments that imply the value is sensitive — when the validator
+# resolves to a generic STRING we upgrade these to SECURE_STRING so the
+# frontend masks them.
+_SECRET_KEY_FRAGMENTS = ("password", "passcode", "secret", "token", "api_key", "apikey")
 
-    Returns None when the validator is unrecognised or describes a nested schema.
+
+def _build_entry(key: Any, validator: Any) -> dict | None:
+    """
+    Build a single config-entry dict.
+
+    Returns None when the validator is unrecognised or describes a
+    nested schema — the caller decides how to handle those cases.
     """
     info = _identify_validator(validator)
     if info["type"] in ("unknown", "sub_schema"):
@@ -602,24 +701,30 @@ def _build_entry(key: Any, validator: Any) -> dict | None:
     required = _is_required(key)
     default = _get_default(key)
 
+    # Promote generic strings to secure_string for fields whose key names
+    # imply credentials. Catches cases where the validator is e.g. a
+    # deprecated `cv.invalid(...)` wrapper that doesn't carry "password"
+    # in its function name but the YAML key clearly does.
+    entry_type = info["type"]
+    if entry_type == "string" and any(frag in key_name.lower() for frag in _SECRET_KEY_FRAGMENTS):
+        entry_type = "secure_string"
+
     range_val: list[Any] | None = None
     if info.get("range_min") is not None or info.get("range_max") is not None:
         range_val = [info.get("range_min"), info.get("range_max")]
 
     entry: dict[str, Any] = {
         "key": key_name,
-        "type": info["type"],
+        "type": entry_type,
         "label": _key_to_label(key_name),
         "required": required,
         "default_value": default if not callable(default) else None,
         "options": info.get("options"),
         "range": range_val,
         "advanced": not required,
-        # Auto-generated translation key — frontend i18n can override.
         "translation_key": f"component.config.{key_name}",
     }
 
-    # Templatable flag set by _identify_validator when cv.templatable() is detected.
     if info.get("templatable"):
         entry["templatable"] = True
 
@@ -769,6 +874,120 @@ def _generate_name(component_id: str, category: str, docs_meta: dict | None = No
     return name
 
 
+# Platform components whose sub-platforms should be folded into a single
+# multi-conf entry with a `platform` discriminator. The user-facing model
+# in YAML for these is `<id>: [- platform: X, ...]` — they belong together
+# in the catalog rather than being scattered across their providers.
+_UNIFIED_PLATFORM_COMPONENTS: tuple[str, ...] = ("ota", "time", "audio_dac", "audio_adc")
+
+
+def _build_unified_platform_component(
+    platform_id: str,
+    component_dirs: list[str],
+    docs_meta: dict[str, dict[str, str]] | None,
+) -> dict | None:
+    """
+    Build a unified catalog entry for a platform component.
+
+    Discovers all components that register a sub-platform under
+    ``platform_id``, gathers each sub-platform's CONFIG_SCHEMA, and
+    folds them into a single entry with:
+
+      - a ``platform`` SELECT field listing every available sub-platform
+      - the parent's ``BASE_<ID>_SCHEMA`` fields (common to all platforms)
+      - per-platform fields gated by ``depends_on=platform`` so the form
+        only shows fields relevant to the chosen platform
+    """
+    providers: list[tuple[str, Any]] = []
+    for cid in component_dirs:
+        try:
+            pm = get_platform(platform_id, cid)
+        except Exception:  # noqa: S112 — many components don't provide this platform
+            continue
+        if pm and pm.config_schema:
+            providers.append((cid, pm.config_schema))
+
+    if not providers:
+        return None
+
+    # Common base schema (BASE_OTA_SCHEMA, BASE_TIME_SCHEMA, ...)
+    common_entries: list[dict] = []
+    seen_keys: set[str] = set()
+    try:
+        parent_module = importlib.import_module(f"esphome.components.{platform_id}")
+    except Exception:
+        parent_module = None
+    if parent_module is not None:
+        base_schema = getattr(parent_module, f"BASE_{platform_id.upper()}_SCHEMA", None)
+        if base_schema is not None:
+            base_dict = _unwrap_schema(base_schema)
+            if base_dict:
+                for key, validator in base_dict.items():
+                    key_name = _key_name(key)
+                    if key_name in SKIP_KEYS or any(
+                        key_name.startswith(p) for p in AUTOMATION_KEY_PREFIXES
+                    ):
+                        continue
+                    entry = _build_entry(key, validator)
+                    if entry is not None:
+                        common_entries.append(entry)
+                        seen_keys.add(key_name)
+
+    platform_options = sorted(p for p, _ in providers)
+    config_entries: list[dict] = [
+        {
+            "key": "platform",
+            "type": "string",
+            "label": "Platform",
+            "required": True,
+            "default_value": None,
+            "options": platform_options,
+            "range": None,
+            "advanced": False,
+            "translation_key": "component.config.platform",
+        }
+    ]
+    config_entries.extend(common_entries)
+
+    # Per-platform fields, gated by the discriminator
+    for platform_name, schema in providers:
+        platform_dict = _unwrap_schema(schema)
+        if not platform_dict:
+            continue
+        for key, validator in platform_dict.items():
+            key_name = _key_name(key)
+            if key_name in SKIP_KEYS or any(
+                key_name.startswith(p) for p in AUTOMATION_KEY_PREFIXES
+            ):
+                continue
+            if key_name in seen_keys:
+                continue  # already covered by base schema or platform itself
+            entry = _build_entry(key, validator)
+            if entry is None:
+                continue
+            entry["depends_on"] = "platform"
+            entry["depends_on_value"] = platform_name
+            config_entries.append(entry)
+
+    docs = (docs_meta or {}).get(platform_id, {})
+    name = docs.get("title") or _generate_name(platform_id, "core", docs)
+    description = _clean_description(docs.get("description", ""))
+
+    return {
+        "id": platform_id,
+        "name": name,
+        "description": description,
+        "category": "core",
+        "docs_url": f"https://esphome.io/components/{platform_id}",
+        "image_url": "",
+        "dependencies": [],
+        "multi_conf": True,
+        "supported_platforms": [],
+        "config_entries": config_entries,
+        "sub_entries": [],
+    }
+
+
 def _sync_component(
     component_id: str,
     platform_types: set[str],
@@ -913,6 +1132,17 @@ def sync(dry_run: bool = False) -> None:
         if result is None:
             continue
         components.append(result)
+
+    # Synthesize unified entries for platform components (OTA, time, ...)
+    # — these are aggregator components; the user-facing model is one
+    # entry with a `platform` discriminator rather than separate per-
+    # provider components.
+    for platform_id in _UNIFIED_PLATFORM_COMPONENTS:
+        if platform_id not in PLATFORM_TYPES:
+            continue
+        unified = _build_unified_platform_component(platform_id, component_dirs, docs_meta)
+        if unified is not None:
+            components.append(unified)
 
     # Sort: components with config entries first, then alphabetical
     components.sort(key=lambda c: (not c["config_entries"], c["name"].lower()))
