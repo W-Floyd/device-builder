@@ -1344,6 +1344,11 @@ _ENTITY_CATEGORIES: list[str] = _load_entity_categories()
 _UNITS_OF_MEASUREMENT: list[str] = _load_units_of_measurement()
 
 
+# Fields where the injected ``options`` are autocomplete suggestions
+# rather than a closed enum — frontend should allow custom input.
+_SUGGESTION_FIELDS: frozenset[str] = frozenset({"unit_of_measurement"})
+
+
 def _inject_enum_options(entries: list[dict], platform: str | None) -> None:
     """
     Populate ``options`` for entity-base fields that lack them.
@@ -1352,6 +1357,10 @@ def _inject_enum_options(entries: list[dict], platform: str | None) -> None:
     constants; ``entity_category`` is universal; ``unit_of_measurement``
     is sourced from the ``UNIT_*`` constants in esphome.const (acting
     as autocomplete suggestions — ESPHome itself accepts any string).
+    Fields listed in :data:`_SUGGESTION_FIELDS` get
+    ``allow_custom_value=True`` so the frontend renders a combobox
+    instead of a strict dropdown.
+
     Only fills in options when the entry doesn't already have any —
     domain-specific enums picked up by the schema introspection win.
     """
@@ -1367,8 +1376,11 @@ def _inject_enum_options(entries: list[dict], platform: str | None) -> None:
             values = _ENTITY_CATEGORIES
         elif key == "unit_of_measurement":
             values = _UNITS_OF_MEASUREMENT
-        if values:
-            entry["options"] = [_make_option(v) for v in values]
+        if not values:
+            continue
+        entry["options"] = [_make_option(v) for v in values]
+        if key in _SUGGESTION_FIELDS:
+            entry["allow_custom_value"] = True
 
 
 def _make_option(value: str) -> dict[str, str]:

@@ -222,6 +222,14 @@ class ConfigEntry(DataClassORJSONMixin):
     # underlying value type (`type`) is unchanged.
     options: list[ConfigValueOption] | None = None
 
+    # When True, ``options`` are treated as suggestions rather than a
+    # closed enum: the frontend should render an autocomplete /
+    # combobox that allows typing arbitrary values in addition to
+    # picking from the list. Used for fields like
+    # ``unit_of_measurement`` where ESPHome ships canonical unit
+    # symbols but accepts any string.
+    allow_custom_value: bool = False
+
     # Min/max bounds for INTEGER / FLOAT entries. None = unbounded.
     range: tuple[int | float, int | float] | None = None
 
