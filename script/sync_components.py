@@ -1783,14 +1783,21 @@ def _build_docs_url(component_id: str, category: str) -> str:
 
 
 def _build_image_url(comp_docs: dict[str, str], category: str) -> str:
-    """Build the docs-image URL for a component (empty when no image)."""
+    """Build the docs-image URL for a component (empty when no image).
+
+    The esphome.io site (Astro-based since 2026) serves all component
+    images from a flat ``/images/`` directory, regardless of the source
+    docs category. The legacy ``-full`` suffix used by some Sphinx-era
+    images was also dropped.
+    """
     image_file = comp_docs.get("image_file", "")
     if not image_file:
         return ""
-    doc_cat = comp_docs.get("category") or category
-    if doc_cat and doc_cat not in ("core", "bus", "automation", "misc"):
-        return f"https://esphome.io/components/{doc_cat}/images/{image_file}"
-    return f"https://esphome.io/components/images/{image_file}"
+    # Strip the legacy "-full" suffix that no longer exists on the new site.
+    base, _, ext = image_file.rpartition(".")
+    if base.endswith("-full"):
+        image_file = f"{base[: -len('-full')]}.{ext}"
+    return f"https://esphome.io/images/{image_file}"
 
 
 def sync(dry_run: bool = False) -> None:
