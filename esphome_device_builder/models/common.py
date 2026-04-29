@@ -243,6 +243,14 @@ class ConfigEntry(DataClassORJSONMixin):
     # equal this. Ignored if `depends_on` is None.
     depends_on_value_not: ConfigPrimitive | None = None
 
+    # Hide this entry unless the named component is configured on the
+    # same device. Used for cross-cutting fields that are only
+    # meaningful when a specific transport / gateway is configured —
+    # e.g. ``qos`` / ``retain`` are only relevant when the device has
+    # an ``mqtt:`` block; ``zigbee_*`` fields require a ``zigbee:``
+    # block. None = always visible (the default).
+    depends_on_component: str | None = None
+
     # === pin selection (only meaningful when type == PIN) ===
 
     # Pin capabilities required for this field. Frontend filters the

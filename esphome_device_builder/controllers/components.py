@@ -200,6 +200,7 @@ def _load_config_entry(data: dict) -> ConfigEntry:
         depends_on=data.get("depends_on"),
         depends_on_value=data.get("depends_on_value"),
         depends_on_value_not=data.get("depends_on_value_not"),
+        depends_on_component=data.get("depends_on_component"),
         pin_features=_load_pin_features(data.get("pin_features")),
         pin_mode=_safe_enum(PinMode, data.get("pin_mode")),
         advanced=bool(data.get("advanced", False)),

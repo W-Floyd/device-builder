@@ -943,6 +943,37 @@ def _is_sub_entity_schema(validator: Any) -> bool:
 # frontend masks them.
 _SECRET_KEY_FRAGMENTS = ("password", "passcode", "secret", "token", "api_key", "apikey")
 
+# Inherited base-entity fields whose presence on the device only
+# matters when a specific transport / gateway component is also
+# configured. Frontend hides these unless the named component is
+# present in the device's YAML, so a switch on a Wi-Fi-only device
+# doesn't show qos/retain/state_topic etc. (which are MQTT-only).
+_FIELD_COMPONENT_DEPENDENCY: dict[str, str] = {
+    # MQTT entity options
+    "qos": "mqtt",
+    "retain": "mqtt",
+    "discovery": "mqtt",
+    "subscribe_qos": "mqtt",
+    "state_topic": "mqtt",
+    "command_topic": "mqtt",
+    "command_retain": "mqtt",
+    "availability": "mqtt",
+    # Zigbee entity options
+    "zigbee_sensor": "zigbee",
+    "zigbee_switch": "zigbee",
+    "zigbee_binary_sensor": "zigbee",
+    "zigbee_button": "zigbee",
+    "zigbee_cover": "zigbee",
+    "zigbee_climate": "zigbee",
+    "zigbee_fan": "zigbee",
+    "zigbee_light": "zigbee",
+    "zigbee_lock": "zigbee",
+    "zigbee_number": "zigbee",
+    "zigbee_select": "zigbee",
+    "zigbee_text": "zigbee",
+    "zigbee_text_sensor": "zigbee",
+}
+
 
 def _is_generate_id(key: Any) -> bool:
     """
@@ -1011,6 +1042,10 @@ def _build_entry(key: Any, validator: Any) -> dict | None:
 
     if info.get("templatable"):
         entry["templatable"] = True
+
+    component_dependency = _FIELD_COMPONENT_DEPENDENCY.get(key_name)
+    if component_dependency:
+        entry["depends_on_component"] = component_dependency
 
     return entry
 
