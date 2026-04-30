@@ -1190,6 +1190,7 @@ _ACRONYM_NORMALISATIONS: dict[str, str] = {
     "Rc522": "RC522",
     "Esp32": "ESP32",
     "Esp8266": "ESP8266",
+    "Esphome": "ESPHome",
     "Rp2040": "RP2040",
     "Esp32C3": "ESP32-C3",
     "Esp32S2": "ESP32-S2",
