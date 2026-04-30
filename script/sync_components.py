@@ -171,6 +171,25 @@ _SECRET_KEY_FRAGMENTS = ("password", "passcode", "secret", "token", "api_key", "
 # Schema-time keys we don't expose to the user (build-system / preload).
 _SKIP_KEYS: frozenset[str] = frozenset({"mqtt_id", "zigbee_id", "then"})
 
+# Per-component fields we don't surface in the catalog because they're
+# deprecated and the dashboard handles the underlying concern itself.
+# Keyed by ``(component_id, field_key)``.
+#
+# - ``esp32.board`` / ``esp8266.board``: the dashboard drives the
+#   PlatformIO board ID from the user's board pick (the board catalog
+#   is the source of truth). Internally we feed esphome with the
+#   ``variant`` only, never ``board``.
+_DEPRECATED_FIELDS: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("esp32", "board"),
+        ("esp8266", "board"),
+        ("rp2040", "board"),
+        ("bk72xx", "board"),
+        ("rtl87xx", "board"),
+        ("ln882x", "board"),
+    }
+)
+
 # Key-name prefixes for automation triggers (``on_press``, ``on_value``,
 # ``on_state_change``, ...). These are config-variables in YAML but the
 # frontend's form editor isn't where users wire automations — the
@@ -249,6 +268,7 @@ _IMPORTANT_KEY_ORDER: tuple[str, ...] = (
     # Discriminators first — they decide which other fields render.
     "platform",
     "type",
+    "framework",  # esp32 / esp8266 framework selector (arduino vs esp-idf)
     # Identification
     "name",
     "friendly_name",
@@ -849,7 +869,11 @@ def build_component_entry(
         category = _infer_misc_category(top_key)
         component_id = top_key
 
-    config_entries = _extract_config_entries(section, schema_dir=schema_dir)
+    config_entries = _extract_config_entries(
+        section,
+        schema_dir=schema_dir,
+        component_id=component_id,
+    )
 
     meta = _lookup_index_meta(component_id, top_key, index)
     docs = clean_docs(meta.get("docs"))
@@ -890,22 +914,30 @@ def _extract_config_entries(
     section: dict,
     *,
     schema_dir: Path,
+    component_id: str = "",
 ) -> list[dict]:
     """Walk ``schemas.CONFIG_SCHEMA`` and produce our ConfigEntry list.
 
     Resolves ``extends`` references inline so the entry list reflects
     the merged schema the user will see (e.g. ``dht.sensor.humidity``
-    inherits the base ``sensor._SENSOR_SCHEMA`` fields).
+    inherits the base ``sensor._SENSOR_SCHEMA`` fields). The
+    ``component_id`` is used to filter ``_DEPRECATED_FIELDS`` at the
+    top level only — nested fields with the same name are unaffected.
     """
     schemas = section.get("schemas") or {}
     config_schema = schemas.get("CONFIG_SCHEMA") or {}
     schema = config_schema.get("schema") or {}
     if not schema:
         return []
-    return _convert_config_vars(schema, schema_dir)
+    return _convert_config_vars(schema, schema_dir, component_id=component_id)
 
 
-def _convert_config_vars(schema_node: dict, schema_dir: Path) -> list[dict]:
+def _convert_config_vars(
+    schema_node: dict,
+    schema_dir: Path,
+    *,
+    component_id: str = "",
+) -> list[dict]:
     """Convert a ``schema`` node (config_vars + extends) to a list of entries."""
     config_vars = dict(schema_node.get("config_vars") or {})
 
@@ -919,6 +951,8 @@ def _convert_config_vars(schema_node: dict, schema_dir: Path) -> list[dict]:
     out: list[dict] = []
     for key, raw in merged.items():
         if key in _SKIP_KEYS:
+            continue
+        if (component_id, key) in _DEPRECATED_FIELDS:
             continue
         if any(key.startswith(p) for p in _AUTOMATION_KEY_PREFIXES):
             continue
@@ -1086,19 +1120,59 @@ def _convert_field(key: str, raw: dict, schema_dir: Path) -> dict | None:
         "platform_type": None,
     }
 
+    # Detect user-keyed maps (``key_type`` set in the raw entry).
+    # ``logger.logs``, ``substitutions:`` and similar enumerate every
+    # possible *valid* key as a separate config_var with the same
+    # value-shape — that's a representation of "any string key,
+    # uniform value type", not hundreds of distinct sub-fields.
+    # Collapse to a single value template so the frontend can render a
+    # dynamic ``add row`` editor instead of a wall of cloned forms.
+    if "key_type" in raw and isinstance(inner_schema, dict):
+        entry["type"] = "map"
+        entry["config_entries"] = _build_map_value_template(inner_schema, schema_dir)
+        return entry
+
     # Recurse into nested schemas for type=nested.
     if entry_type == "nested" and isinstance(inner_schema, dict):
         inner = _convert_config_vars(inner_schema, schema_dir)
         entry["config_entries"] = inner or None
         entry["platform_type"] = _detect_platform_type(inner_schema)
-        # Hide a NESTED parent under "Advanced" when every child would
-        # already be hidden — there's nothing user-facing to render.
+        # When every child would render as advanced anyway, hide the
+        # parent's expand affordance under "Advanced" too — no point
+        # surfacing an empty group on the main form. We don't pull the
+        # parent BACK to non-advanced based on a visible child:
+        # required sub-fields like ``framework.components.name`` are
+        # only meaningful when the user has chosen to use that group,
+        # so leaving the parent's classification to ``_classify_advanced``
+        # avoids accidentally exposing deeply technical groups.
         if inner and _all_inner_advanced(inner):
             entry["advanced"] = True
     else:
         entry["config_entries"] = None
 
     return entry
+
+
+def _build_map_value_template(
+    inner_schema: dict,
+    schema_dir: Path,
+) -> list[dict] | None:
+    """Build a single-entry list describing the value type of a map field.
+
+    The schema's ``key_type`` pattern enumerates every accepted key as
+    a config_var carrying the value's shape. Take the first one as a
+    template (they're all identical for true maps; any inconsistency
+    is upstream noise we can safely flatten). The entry is keyed
+    ``"value"`` so the frontend has a stable binding name.
+    """
+    config_vars = inner_schema.get("config_vars") or {}
+    if not config_vars:
+        return None
+    sample_raw = next(iter(config_vars.values()))
+    if not isinstance(sample_raw, dict):
+        return None
+    template = _convert_field("value", sample_raw, schema_dir)
+    return [template] if template else None
 
 
 def _build_id_entry(key: str, raw: dict, *, required: bool = False) -> dict:

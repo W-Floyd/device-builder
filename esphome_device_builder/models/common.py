@@ -154,6 +154,14 @@ class ConfigEntryType(StrEnum):
     # ``esp32_ble_tracker.scan_parameters``) and entity sub-readings
     # (e.g. ``dht.temperature`` and ``dht.humidity``).
     NESTED = "nested"
+    # User-keyed mapping: the value is a YAML dict whose keys are
+    # supplied by the user (component names, substitution names, ...)
+    # and whose values all follow the same template schema. The single
+    # entry inside ``config_entries`` describes that value template.
+    # Frontend renders this as a dynamic list of (key, value) rows
+    # with an "Add entry" button. Used for ``logger.logs`` (per-
+    # component log levels), ``substitutions:``, ``globals:`` etc.
+    MAP = "map"
 
     # Layout / decoration entries (no value, used to structure the form)
     LABEL = "label"
