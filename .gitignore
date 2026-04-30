@@ -30,3 +30,4 @@ configs/
 .cache/
 /__pycache__
 *.lock
+/.claude
