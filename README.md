@@ -66,7 +66,7 @@ DeviceBuilder (singleton)
 - **A device** = a YAML config file on disk. Has `state` (online/offline/unknown via mDNS + ping), `has_pending_changes` (config changed since compile), and `update_available` (ESPHome version mismatch)
 - **Device discovery** = mDNS browser for instant online/offline detection, ping sweep every 60s as fallback
 - **Board definitions** = YAML manifests in `definitions/boards/`, synced from PlatformIO. 559 boards across 7 platforms (esp32, esp8266, rp2040, bk72xx, rtl87xx, ln882x, nrf52) with pin maps, hardware specs, images
-- **Component catalog** = `definitions/components.json`, synced from ESPHome source + docs. 655 components with config entries
+- **Component catalog** = `definitions/components.json`, synced from ESPHome's pre-built schema bundle (with narrow live introspection for `multi_conf` / `platform_defaults` / `supported_platforms` and per-field MDX descriptions). ~895 components with config entries. Refreshed nightly by `.github/workflows/sync-component-catalog.yml`
 - **Firmware jobs** = persistent queue, one at a time. Compile/install/upload. Survive page refresh and server restart
 - **Real-time events** = subscribe once, get instant updates. No polling
 
@@ -79,9 +79,16 @@ To add a new board, create a subfolder under `esphome_device_builder/definitions
 with a `manifest.yaml`. See [definitions/README.md](esphome_device_builder/definitions/README.md).
 
 ```bash
-python script/sync_components.py      # Sync components from ESPHome source
-python script/validate_definitions.py # Validate all manifests
+python script/sync_components.py                    # Sync components against the latest ESPHome schema release
+python script/sync_components.py --version 2026.4.3 # ...or pin to a specific schema version
+python script/validate_definitions.py               # Validate all manifests
 ```
+
+The same sync runs in CI nightly (and on manual dispatch with an
+optional `version` input) — see
+[`.github/workflows/sync-component-catalog.yml`](.github/workflows/sync-component-catalog.yml).
+When the rebuild produces a diff it opens a PR against `main` for
+human review.
 
 ## Board Definitions
 
