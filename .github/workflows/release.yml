@@ -11,11 +11,12 @@ name: Publish release
 #   1. validates the tag matches the prerelease checkbox
 #   2. rewrites ``pyproject.toml``'s placeholder version with the tag
 #   3. builds an sdist + wheel
-#   4. attaches both to the GitHub release as downloadable assets
-#   5. publishes to PyPI when a ``PYPI_TOKEN`` secret is configured
-#      — skipped gracefully otherwise so this works before PyPI is
-#      set up. README documents the "grab the wheel from the release"
-#      install path that always works.
+#   4. publishes to PyPI (org-level ``PYPI_TOKEN`` secret)
+#   5. attaches both artifacts to the GitHub release as a fallback
+#      install path
+#
+# Pre-releases land on PyPI with the ``b`` suffix; users opt in via
+# ``pip install --pre esphome-device-builder``.
 
 on:
   release:
@@ -91,29 +92,18 @@ jobs:
       - name: Build sdist + wheel
         run: python -m build
 
-      - name: Attach artifacts to GitHub release
-        # Always runs, even when PyPI publishing is skipped — this is
-        # the install path users follow until PyPI creds are set up.
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ steps.vars.outputs.tag }}" dist/*
-
       - name: Publish to PyPI
-        if: ${{ env.PYPI_TOKEN != '' }}
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b  # release/v1
         with:
           user: __token__
-          password: ${{ env.PYPI_TOKEN }}
-        env:
-          # Only attempts to publish when the secret is set. Until
-          # then this step is a no-op and the release wheel attached
-          # above is the install path.
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+          # Org-level secret, granted to this repo. If the publish
+          # ever 401s, check Settings → Secrets and variables →
+          # Actions to confirm the token is still scoped here.
+          password: ${{ secrets.PYPI_TOKEN }}
 
-      - name: Note when PyPI publish is skipped
-        if: ${{ env.PYPI_TOKEN == '' }}
+      - name: Attach artifacts to GitHub release
+        # Fallback install path for users who want a specific build
+        # without going through PyPI (e.g. air-gapped environments).
         env:
-          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
-        run: |
-          echo "::notice::PYPI_TOKEN secret is not configured — wheel attached to GitHub release only."
-          echo "::notice::Set the PYPI_TOKEN repo secret to enable PyPI publishing."
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ steps.vars.outputs.tag }}" dist/*
