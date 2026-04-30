@@ -1,4 +1,4 @@
-# ESPHome Device Builder
+# ESPHome Device Builder Dashboard
 
 > **Status:** in active development. Roughly alpha, closing on beta. Issues
 > and feedback welcome — please check existing issues / the
