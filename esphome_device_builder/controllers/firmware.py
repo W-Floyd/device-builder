@@ -389,8 +389,20 @@ class FirmwareController:
             cmd = self._build_command(job.job_type, config_path, job.port)
             _LOGGER.debug("Running: %s", " ".join(cmd))
 
-            # Force ANSI color output even though stdout is piped
-            env = {**os.environ, "PLATFORMIO_FORCE_ANSI": "true"}
+            # Force ANSI color output even though stdout isn't a TTY.
+            # `PLATFORMIO_FORCE_ANSI` covers PlatformIO's own output;
+            # `FORCE_COLOR` / `CLICOLOR_FORCE` cover everything that
+            # uses click for output (esphome itself, esptool, etc.);
+            # `PYTHONUNBUFFERED` keeps Python subprocesses flushing
+            # progress lines (especially `\r`-terminated ones) instead
+            # of buffering them until a `\n` arrives.
+            env = {
+                **os.environ,
+                "PLATFORMIO_FORCE_ANSI": "true",
+                "FORCE_COLOR": "1",
+                "CLICOLOR_FORCE": "1",
+                "PYTHONUNBUFFERED": "1",
+            }
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -401,18 +413,60 @@ class FirmwareController:
 
             has_error_in_output = False
             assert proc.stdout is not None  # type narrowing
-            async for line_bytes in proc.stdout:
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
-                job.output.append(line)
-                self._db.bus.fire(
-                    EventType.JOB_OUTPUT,
-                    {"job_id": job.job_id, "line": line},
-                )
-                if not has_error_in_output:
-                    for pattern in _ERROR_PATTERNS:
-                        if pattern in line:
-                            has_error_in_output = True
-                            break
+
+            def _check_error(text: str) -> None:
+                nonlocal has_error_in_output
+                if has_error_in_output:
+                    return
+                for pattern in _ERROR_PATTERNS:
+                    if pattern in text:
+                        has_error_in_output = True
+                        return
+
+            # Stream stdout in chunks delimited by `\n` _or_ `\r` so
+            # carriage-return-based in-place updates (esptool's
+            # `Writing at 0x... (5%)\r`, PlatformIO's progress bars)
+            # survive the pipe instead of getting buffered until the
+            # next newline. Each emitted chunk keeps its trailing
+            # terminator so the frontend can decide whether to append
+            # a new line or overwrite the last one.
+            buf = b""
+            while True:
+                data = await proc.stdout.read(4096)
+                if not data:
+                    # EOF — flush any trailing bytes that didn't end
+                    # with a terminator (rare but possible).
+                    if buf:
+                        line = buf.decode("utf-8", errors="replace")
+                        job.output.append(line)
+                        self._db.bus.fire(
+                            EventType.JOB_OUTPUT,
+                            {"job_id": job.job_id, "line": line},
+                        )
+                        _check_error(line)
+                        buf = b""
+                    break
+                buf += data
+                while buf:
+                    nl = buf.find(b"\n")
+                    cr = buf.find(b"\r")
+                    if nl == -1 and cr == -1:
+                        break  # need more bytes before we can split
+                    if nl == -1:
+                        idx = cr
+                    elif cr == -1:
+                        idx = nl
+                    else:
+                        idx = min(nl, cr)
+                    chunk = buf[: idx + 1]
+                    buf = buf[idx + 1 :]
+                    line = chunk.decode("utf-8", errors="replace")
+                    job.output.append(line)
+                    self._db.bus.fire(
+                        EventType.JOB_OUTPUT,
+                        {"job_id": job.job_id, "line": line},
+                    )
+                    _check_error(line)
 
             exit_code = await proc.wait()
             job.exit_code = exit_code
