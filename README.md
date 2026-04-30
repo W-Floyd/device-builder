@@ -1,4 +1,4 @@
-# ESPHome Device Builder — Backend
+# ESPHome Device Builder
 
 > **Status:** in active development. Roughly alpha, closing on beta. Issues
 > and feedback welcome — please check existing issues / the
@@ -8,10 +8,7 @@
 
 A new dashboard for [ESPHome](https://github.com/esphome/esphome) — a guided
 interface for composing device configs, exploring components and boards,
-managing automations, and pushing firmware updates. This repo is the **backend
-API server**; the frontend lives at
-[esphome/device-builder-dashboard-frontend](https://github.com/esphome/device-builder-dashboard-frontend)
-and a prebuilt copy ships with every release.
+managing automations, and pushing firmware updates.
 
 ## Try it
 
