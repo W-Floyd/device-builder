@@ -82,7 +82,7 @@ jobs:
             echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
             echo "source=manual dispatch" >> "$GITHUB_OUTPUT"
           else
-            INSTALLED=$(python -c "import esphome; print(esphome.__version__)")
+            INSTALLED=$(python -c "from esphome.const import __version__; print(__version__)")
             echo "version=$INSTALLED" >> "$GITHUB_OUTPUT"
             echo "source=installed esphome" >> "$GITHUB_OUTPUT"
           fi
