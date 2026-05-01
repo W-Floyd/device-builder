@@ -21,14 +21,15 @@ from collections.abc import Callable
 from typing import Any
 
 from esphome.zeroconf import AsyncEsphomeZeroconf
-from zeroconf import IPVersion
-from zeroconf.asyncio import AsyncServiceInfo
+from zeroconf import AddressResolver, IPVersion, ServiceStateChange
+from zeroconf.asyncio import AsyncServiceBrowser, AsyncServiceInfo
 
 try:
     from icmplib import async_ping as icmp_ping
 except ImportError:  # pragma: no cover — icmplib is optional
     icmp_ping = None  # type: ignore[assignment]
 
+from ..helpers.hostname import is_local_hostname, normalize_hostname
 from ..models import Device, DeviceState
 from ._dns_cache import DNSCache
 
@@ -250,7 +251,12 @@ class DeviceStateMonitor:
 
     def get_cached_addresses(self, host_name: str) -> list[str] | None:
         """
-        Return zeroconf-cached IPs for *host_name* without issuing a query.
+        Return all zeroconf-cached IPs for *host_name* without issuing a query.
+
+        Both IPv4 and IPv6 (scoped) entries are included — the OTA
+        address-cache CLI args need every IP we know so the runtime
+        can try them in turn. Callers that want a single best target
+        for, say, ICMP should pick IPv4 first themselves.
 
         Returns ``None`` when zeroconf isn't running, the cache misses,
         or the entry has expired. mDNS-only — see
@@ -258,12 +264,8 @@ class DeviceStateMonitor:
         """
         if self._zeroconf is None:
             return None
-        try:
-            from zeroconf import AddressResolver, IPVersion
-        except ImportError:
-            return None
 
-        normalized = host_name.rstrip(".").lower()
+        normalized = normalize_hostname(host_name)
         base_name = normalized.partition(".")[0]
         resolver_name = f"{base_name}.local."
         info = AddressResolver(resolver_name)
@@ -292,13 +294,6 @@ class DeviceStateMonitor:
         return None
 
     async def _start_mdns_browser(self) -> None:
-        try:
-            from zeroconf import ServiceStateChange
-            from zeroconf.asyncio import AsyncServiceBrowser
-        except ImportError:
-            _LOGGER.warning("zeroconf not available — mDNS device discovery disabled")
-            return
-
         try:
             self._zeroconf = AsyncEsphomeZeroconf()
         except Exception:
@@ -395,20 +390,44 @@ class DeviceStateMonitor:
         if icmp_ping is None:
             return
 
-        # Skip devices already owned by a higher-priority source — pinging
-        # them just to confirm what we already know wastes work and would
-        # be ignored by ``apply()`` anyway.
-        ping_priority = _SOURCE_PRIORITY["ping"]
-        devices_to_ping = [
-            d
-            for d in self._get_devices()
-            if d.address
-            and _SOURCE_PRIORITY.get(self._state_source.get(d.name, "unknown"), 0) <= ping_priority
-        ]
+        # Match the upstream dashboard: only ping devices that aren't
+        # already ONLINE from a higher-priority source. ``OFFLINE`` and
+        # ``UNKNOWN`` devices still get pinged so off-network hosts (no
+        # mDNS reachability) can transition online via DNS + ICMP.
+        devices_to_ping: list[Device] = []
+        for device in self._get_devices():
+            if not device.address or not self._should_ping(device):
+                continue
+            # Zeroconf's cache is authoritative for ``.local`` — if it
+            # has an entry, the device announced via mDNS even when the
+            # ``AsyncServiceBrowser`` ``Added`` callback didn't fire for
+            # us (multicast packet drops, startup race). Claim it as
+            # mDNS-online and skip ping; otherwise the bare-hostname DNS
+            # fallback can resolve to an unreachable IP on a different
+            # subnet and we'd report a phantom OFFLINE for a device
+            # that's actually right there.
+            if is_local_hostname(device.address) and (
+                cached := self.get_cached_addresses(device.address)
+            ):
+                self.apply(device.name, DeviceState.ONLINE, "mdns", claim=True)
+                # ``apply_ip`` only carries one IP; prefer V4 so the
+                # device-list display and any ad-hoc ICMP probe both get
+                # the cross-subnet-friendly entry. The CLI cache args
+                # built in ``_build_address_cache_args`` consume every
+                # cached IP separately, so we don't lose V6 reachability
+                # by picking V4 here.
+                self.apply_ip(device.name, _pick_ipv4(cached))
+                continue
+            devices_to_ping.append(device)
         if not devices_to_ping:
             return
 
-        _LOGGER.debug("Pinging %d devices", len(devices_to_ping))
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            _LOGGER.debug(
+                "Pinging %d devices: %s",
+                len(devices_to_ping),
+                ", ".join(f"{d.name} ({d.address})" for d in devices_to_ping),
+            )
 
         for i in range(0, len(devices_to_ping), _PING_BATCH_SIZE):
             batch = devices_to_ping[i : i + _PING_BATCH_SIZE]
@@ -428,13 +447,28 @@ class DeviceStateMonitor:
                     # mDNS owns IP tracking for ``.local`` hosts; only
                     # backfill from DNS for non-mDNS hosts so a stale
                     # DNS result can't clobber the live mDNS value.
-                    if not device.address.rstrip(".").lower().endswith(".local"):
+                    if not is_local_hostname(device.address):
                         self.apply_ip(device.name, target)
                 ping_targets.append((device, target))
             await asyncio.gather(
                 *(self._ping_device(device, target) for device, target in ping_targets),
                 return_exceptions=True,
             )
+
+    def _should_ping(self, device: Device) -> bool:
+        """
+        Decide whether *device* needs an ICMP probe this sweep.
+
+        Mirrors the upstream dashboard's rule: skip the device only when
+        it's already ONLINE *and* a higher-priority source (mDNS / MQTT)
+        owns it. We still ping devices that are OFFLINE or UNKNOWN so an
+        off-network host — one mDNS can't reach because it's on a
+        different subnet — has a path to come online via DNS + ping.
+        """
+        if device.state != DeviceState.ONLINE:
+            return True
+        source = self._state_source.get(device.name, "unknown")
+        return _SOURCE_PRIORITY.get(source, 0) <= _SOURCE_PRIORITY["ping"]
 
     async def _ping_device(self, device: Device, target: str) -> None:
         try:
@@ -443,3 +477,19 @@ class DeviceStateMonitor:
             return
         new_state = DeviceState.ONLINE if result.is_alive else DeviceState.OFFLINE
         self.apply(device.name, new_state, "ping")
+
+
+def _pick_ipv4(addresses: list[str]) -> str:
+    """
+    Return the first IPv4 address in *addresses*, or the first entry overall.
+
+    ``Device.ip`` only carries one IP, so when a host has both V4 and V6
+    we lock onto the V4 entry — it's friendlier for ICMP across subnets
+    and avoids the IPv6 scope-ID gymnastics that ``apply_ip`` consumers
+    aren't prepared for. Callers that need every address (CLI cache args)
+    should iterate the list themselves rather than going through this.
+    """
+    for address in addresses:
+        if "." in address and ":" not in address:
+            return address
+    return addresses[0]
