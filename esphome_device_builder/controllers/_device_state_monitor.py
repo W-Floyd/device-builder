@@ -21,6 +21,8 @@ from collections.abc import Callable
 from typing import Any
 
 from esphome.zeroconf import AsyncEsphomeZeroconf
+from zeroconf import IPVersion
+from zeroconf.asyncio import AsyncServiceInfo
 
 try:
     from icmplib import async_ping as icmp_ping
@@ -62,10 +64,20 @@ VersionChangeCallback = Callable[[str, str], None]
 # older devices simply never fire this callback.
 ConfigHashChangeCallback = Callable[[str, str], None]
 
-# zeroconf hands us raw bytes for TXT keys; declared once so the
-# call site can decode without re-typing the key.
-_TXT_RECORD_VERSION = b"version"
-_TXT_RECORD_CONFIG_HASH = b"config_hash"
+
+def device_name_from_service(service_name: str) -> str:
+    """Extract the device name from an mDNS service-instance name.
+
+    The mDNS service announcement is
+    ``<device-name>._esphomelib._tcp.local.``; the left-hand label is
+    the device's ``esphome.name`` *verbatim* — modern configs use
+    ``friendly_name_slugify``-style names with hyphens
+    (``apollo-r-pro-1-eth-5938e0``) and the broadcast preserves them.
+    Older underscored names (``my_device``) are likewise broadcast as
+    given. Don't substitute hyphens for underscores or vice versa or
+    the catalog lookup will silently miss every match.
+    """
+    return service_name.split(".", maxsplit=1)[0]
 
 
 class DeviceStateMonitor:
@@ -98,6 +110,9 @@ class DeviceStateMonitor:
         self._zeroconf: AsyncEsphomeZeroconf | None = None
         self._mdns_browser: Any = None
         self._ping_task: asyncio.Task | None = None
+        # Strong refs for fire-and-forget mDNS resolve tasks so the
+        # garbage collector can't reap them mid-await.
+        self._tasks: set[asyncio.Task] = set()
         # DNS resolutions for non-mDNS hostnames are cached here so the
         # ping sweep, OTA cache args, and device.ip tracking all share
         # the same TTL'd lookup result instead of re-resolving every
@@ -114,12 +129,23 @@ class DeviceStateMonitor:
         if self._ping_task is not None:
             self._ping_task.cancel()
             self._ping_task = None
+        # Cancel the browser FIRST so it stops dispatching new mDNS
+        # callbacks. If we drained ``self._tasks`` first, the browser
+        # could still spawn new resolve tasks during the ``gather``
+        # await and they'd miss the snapshot we took.
         if self._mdns_browser is not None:
             try:
                 await self._mdns_browser.async_cancel()
             except Exception:
                 _LOGGER.debug("mDNS browser cancel failed", exc_info=True)
             self._mdns_browser = None
+        # Now drain any in-flight resolve tasks. New tasks can no
+        # longer appear, so a single snapshot is safe.
+        for task in self._tasks:
+            task.cancel()
+        if self._tasks:
+            await asyncio.gather(*self._tasks, return_exceptions=True)
+            self._tasks.clear()
         if self._zeroconf is not None:
             try:
                 await self._zeroconf.async_close()
@@ -131,7 +157,7 @@ class DeviceStateMonitor:
         """Return the source currently authoritative for *name* (or "unknown")."""
         return self._state_source.get(name, "unknown")
 
-    def apply(self, name: str, state: DeviceState, source: str) -> bool:
+    def apply(self, name: str, state: DeviceState, source: str, *, claim: bool = False) -> bool:
         """
         Record a state observation from *source*.
 
@@ -139,6 +165,14 @@ class DeviceStateMonitor:
         state and the change was forwarded to the callback. Sources
         below the current source's priority are ignored; same-state
         observations are no-ops.
+
+        ``claim=True`` lets *source* take ownership of the device's
+        state slot even when the state is unchanged, so that a
+        higher-priority observation arriving after a lower-priority
+        one already pinned the same state can still prevent the
+        lower-priority source from later flipping it back. The
+        priority check still applies — ``claim`` doesn't let a lower-
+        priority source override a higher-priority owner.
         """
         device = self._find_device_by_name(name)
         if device is None:
@@ -151,6 +185,8 @@ class DeviceStateMonitor:
         if _SOURCE_PRIORITY.get(source, 0) < _SOURCE_PRIORITY.get(current_source, 0):
             return False
         if device.state == state:
+            if claim:
+                self._state_source[name] = source
             return False
 
         self._state_source[name] = source
@@ -270,30 +306,42 @@ class DeviceStateMonitor:
             self._zeroconf = None
             return
 
-        loop = asyncio.get_running_loop()
-
         def _on_service_state_change(
             zeroconf: Any, service_type: str, name: str, state_change: ServiceStateChange
         ) -> None:
-            # mDNS reports "<my-device>._esphomelib._tcp.local." — strip
-            # the service suffix and convert hyphens (mDNS) back to
-            # underscores (YAML config naming).
-            device_name = name.split(".", maxsplit=1)[0].replace("-", "_")
+            # ``AsyncServiceBrowser`` dispatches handlers on the asyncio
+            # loop, so call apply methods directly. For Added/Updated,
+            # try the zeroconf cache first (sync) — only fall back to a
+            # network query (async task) when the cache misses.
+            device_name = device_name_from_service(name)
             _LOGGER.debug("mDNS: %s %s (raw: %s)", state_change, device_name, name)
 
-            # zeroconf callbacks fire on a different thread — bounce work
-            # back to the asyncio loop. Added/Updated trigger an async
-            # resolve so we can report the IP alongside the state change;
-            # Removed clears state immediately.
-            if state_change in (ServiceStateChange.Added, ServiceStateChange.Updated):
-                asyncio.run_coroutine_threadsafe(
-                    self._resolve_and_apply(zeroconf, service_type, name, device_name),
-                    loop,
-                )
-            elif state_change == ServiceStateChange.Removed:
-                loop.call_soon_threadsafe(self.apply, device_name, DeviceState.OFFLINE, "mdns")
-                loop.call_soon_threadsafe(self.apply_ip, device_name, "")
+            # Short-circuit unconfigured devices so we don't spawn
+            # ServiceInfo lookups / resolve tasks for unrelated ESPHome
+            # nodes on the LAN.
+            if self._find_device_by_name(device_name) is None:
+                return
+
+            if state_change == ServiceStateChange.Removed:
+                self.apply(device_name, DeviceState.OFFLINE, "mdns")
+                self.apply_ip(device_name, "")
                 self._state_source.pop(device_name, None)
+                return
+
+            # ``claim=True`` so mDNS takes ownership even when the
+            # device is already ONLINE via a lower-priority source
+            # (ping / MQTT), preventing later ping observations from
+            # clobbering the now-authoritative mDNS view.
+            self.apply(device_name, DeviceState.ONLINE, "mdns", claim=True)
+
+            info = AsyncServiceInfo(service_type, name)
+            if info.load_from_cache(zeroconf):
+                self._apply_service_info(device_name, info)
+                return
+
+            task = asyncio.create_task(self._resolve_and_apply(zeroconf, info, device_name))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
 
         try:
             self._mdns_browser = AsyncServiceBrowser(
@@ -306,52 +354,34 @@ class DeviceStateMonitor:
             _LOGGER.exception("Could not start mDNS browser — device discovery limited to ping")
 
     async def _resolve_and_apply(
-        self, zeroconf: Any, service_type: str, name: str, device_name: str
+        self, zeroconf: Any, info: AsyncServiceInfo, device_name: str
     ) -> None:
-        """Mark the device online and pull IP + firmware version from mDNS."""
-        # State first — even if the resolve fails or times out, we know the device is online.
-        self.apply(device_name, DeviceState.ONLINE, "mdns")
-
+        """Resolve a cache-miss mDNS service and propagate its details."""
         try:
-            from zeroconf import IPVersion
-            from zeroconf.asyncio import AsyncServiceInfo
-        except ImportError:
-            return
-
-        try:
-            info = AsyncServiceInfo(service_type, name)
             if not await info.async_request(zeroconf, timeout=_MDNS_RESOLVE_TIMEOUT_MS):
                 return
-            addresses = info.parsed_scoped_addresses(
-                IPVersion.V4Only
-            ) or info.parsed_scoped_addresses(IPVersion.V6Only)
-            if addresses:
-                # Strip any zone suffix (e.g. "fe80::1%en0") for display purposes.
-                ip = addresses[0].split("%", 1)[0]
-                self.apply_ip(device_name, ip)
-            properties = info.properties or {}
-            version_bytes = properties.get(_TXT_RECORD_VERSION)
-            if version_bytes:
-                try:
-                    self.apply_version(device_name, version_bytes.decode())
-                except UnicodeDecodeError:
-                    _LOGGER.debug(
-                        "Could not decode mDNS version TXT for %s: %r",
-                        device_name,
-                        version_bytes,
-                    )
-            config_hash_bytes = properties.get(_TXT_RECORD_CONFIG_HASH)
-            if config_hash_bytes:
-                try:
-                    self.apply_config_hash(device_name, config_hash_bytes.decode())
-                except UnicodeDecodeError:
-                    _LOGGER.debug(
-                        "Could not decode mDNS config_hash TXT for %s: %r",
-                        device_name,
-                        config_hash_bytes,
-                    )
         except Exception:
             _LOGGER.debug("mDNS resolve failed for %s", device_name, exc_info=True)
+            return
+        self._apply_service_info(device_name, info)
+
+    def _apply_service_info(self, device_name: str, info: AsyncServiceInfo) -> None:
+        """Pull IP / version / config_hash off a populated ``AsyncServiceInfo``."""
+        # Prefer V4; fall back to scoped V6 (link-local needs the
+        # ``%scope`` suffix to connect at all). Matches the upstream
+        # esphome dashboard's ``parsed_scoped_addresses`` usage.
+        addresses = info.parsed_scoped_addresses(IPVersion.V4Only) or info.parsed_scoped_addresses(
+            IPVersion.V6Only
+        )
+        if addresses:
+            self.apply_ip(device_name, addresses[0])
+        # ``decoded_properties`` is a ``dict[str, str | None]`` — zeroconf
+        # already handles the UTF-8 decode and None-on-bad-bytes for us.
+        props = info.decoded_properties
+        if version := props.get("version"):
+            self.apply_version(device_name, version)
+        if config_hash := props.get("config_hash"):
+            self.apply_config_hash(device_name, config_hash)
 
     async def _ping_loop(self) -> None:
         try:
