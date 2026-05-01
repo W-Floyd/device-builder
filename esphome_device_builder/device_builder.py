@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,17 @@ if TYPE_CHECKING:
     from .controllers.firmware import FirmwareController
 
 _LOGGER = logging.getLogger(__name__)
+
+# Cache policy for the SPA shell:
+#   - ``index.html`` and any non-hashed top-level file: must always
+#     revalidate so a re-deployed wheel doesn't get masked by a
+#     stale browser cache.
+#   - Hashed bundles (``app.<hash>.js``, ``vendors.<hash>.js``,
+#     license sidecars) are content-addressed — the filename changes
+#     on every rebuild, so they're safe to cache forever.
+_NO_CACHE_HEADERS = {"Cache-Control": "no-cache"}
+_IMMUTABLE_HEADERS = {"Cache-Control": "public, max-age=31536000, immutable"}
+_HASHED_FILENAME_RE = re.compile(r"\.[a-f0-9]{8,}\.")
 
 
 class DeviceBuilder:
@@ -248,7 +260,7 @@ class DeviceBuilder:
         # Frontend serving
         frontend_dir = self._get_frontend_dir()
         if frontend_dir and frontend_dir.is_dir():
-            self._register_frontend(app, frontend_dir)
+            self._register_frontend(app, frontend_dir, dev_mode=self.settings.dev_mode)
         elif with_lifecycle:
             # The ingress app is silent here — the public app already logged.
             _LOGGER.info(
@@ -308,7 +320,9 @@ class DeviceBuilder:
             return None
 
     @staticmethod
-    def _register_frontend(app: web.Application, frontend_dir: Path) -> None:
+    def _register_frontend(
+        app: web.Application, frontend_dir: Path, *, dev_mode: bool = False
+    ) -> None:
         """Register routes for the built frontend.
 
         Refuses to start if the installed wheel is missing
@@ -322,6 +336,12 @@ class DeviceBuilder:
         reach this handler. Multi-segment paths never touch the
         filesystem here, which keeps traversal impossible by
         construction.
+
+        ``dev_mode`` flips the SPA shell to ``Cache-Control: no-cache``
+        so a re-deployed wheel isn't masked by a browser-cached
+        ``index.html`` that points at a now-deleted hashed bundle.
+        Hashed bundles are served as ``immutable`` regardless — their
+        filenames are content-addressed by definition.
         """
         index_html = frontend_dir / "index.html"
         assets_dir = frontend_dir / "assets"
@@ -339,10 +359,11 @@ class DeviceBuilder:
                 "reinstall, or uninstall it to run in API-only mode."
             )
 
-        async def handle_index(request: web.Request) -> web.FileResponse:
-            return web.FileResponse(index_html)
-
         frontend_root = frontend_dir.resolve()
+        shell_headers = _NO_CACHE_HEADERS if dev_mode else None
+
+        async def handle_index(request: web.Request) -> web.FileResponse:
+            return web.FileResponse(index_html, headers=shell_headers)
 
         async def handle_spa(request: web.Request) -> web.FileResponse:
             tail = request.match_info["tail"]
@@ -355,13 +376,18 @@ class DeviceBuilder:
                 # frontend dir — matches add_static's default.
                 try:
                     if candidate.is_file() and candidate.resolve().is_relative_to(frontend_root):
-                        return web.FileResponse(candidate)
+                        headers = (
+                            _IMMUTABLE_HEADERS
+                            if _HASHED_FILENAME_RE.search(tail)
+                            else shell_headers
+                        )
+                        return web.FileResponse(candidate, headers=headers)
                 except OSError:
                     pass
-            return web.FileResponse(index_html)
+            return web.FileResponse(index_html, headers=shell_headers)
 
         app.router.add_static("/assets", assets_dir)
         app.router.add_get("/", handle_index)
         app.router.add_get("/{tail:.*}", handle_spa)
 
-        _LOGGER.info("Serving frontend from %s", frontend_dir)
+        _LOGGER.info("Serving frontend from %s (dev_mode=%s)", frontend_dir, dev_mode)

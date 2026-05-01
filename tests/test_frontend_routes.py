@@ -22,9 +22,12 @@ def _make_frontend(tmp_path: Path) -> Path:
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     (frontend / "index.html").write_text("<!doctype html><body></body>")
-    (frontend / "app.abc123.js").write_text("// bundle")
-    (frontend / "vendors.def456.js").write_text("// vendors")
-    (frontend / "vendors.def456.js.LICENSE.txt").write_text("/* license */")
+    # Use 16-char hex hashes to match what rspack actually emits (xxhash64)
+    # so the cache-header regex (``\.[a-f0-9]{8,}\.``) classifies them
+    # as immutable.
+    (frontend / "app.abc123def4567890.js").write_text("// bundle")
+    (frontend / "vendors.def4567890abcdef.js").write_text("// vendors")
+    (frontend / "vendors.def4567890abcdef.js.LICENSE.txt").write_text("/* license */")
 
     assets = frontend / "assets"
     (assets / "logo").mkdir(parents=True)
@@ -32,9 +35,9 @@ def _make_frontend(tmp_path: Path) -> Path:
     return frontend
 
 
-def _make_app(frontend: Path) -> web.Application:
+def _make_app(frontend: Path, *, dev_mode: bool = False) -> web.Application:
     app = web.Application()
-    DeviceBuilder._register_frontend(app, frontend)
+    DeviceBuilder._register_frontend(app, frontend, dev_mode=dev_mode)
     return app
 
 
@@ -47,13 +50,60 @@ async def test_register_frontend_serves_index_at_root(
     assert "<!doctype html>" in (await resp.text())
 
 
+async def test_register_frontend_dev_mode_index_is_no_cache(
+    tmp_path: Path, aiohttp_client: AiohttpClient
+) -> None:
+    """``dev_mode=True`` opts in to ``Cache-Control: no-cache`` for the SPA shell.
+
+    Without this, a re-deployed wheel during development would be
+    masked by a browser-cached ``index.html`` pointing at a now-deleted
+    hashed bundle.
+    """
+    client = await aiohttp_client(_make_app(_make_frontend(tmp_path), dev_mode=True))
+    resp = await client.get("/")
+    assert resp.status == 200
+    assert resp.headers["Cache-Control"] == "no-cache"
+
+
+async def test_register_frontend_default_index_omits_cache_control(
+    tmp_path: Path, aiohttp_client: AiohttpClient
+) -> None:
+    """Production (default) leaves caching up to the browser's default heuristic."""
+    client = await aiohttp_client(_make_app(_make_frontend(tmp_path)))
+    resp = await client.get("/")
+    assert resp.status == 200
+    assert "Cache-Control" not in resp.headers
+
+
+async def test_register_frontend_hashed_bundle_is_always_immutable(
+    tmp_path: Path, aiohttp_client: AiohttpClient
+) -> None:
+    """Hashed bundles are content-addressed → safe to cache forever in either mode."""
+    frontend = _make_frontend(tmp_path)
+    for dev_mode in (False, True):
+        client = await aiohttp_client(_make_app(frontend, dev_mode=dev_mode))
+        resp = await client.get("/app.abc123def4567890.js")
+        assert resp.status == 200, dev_mode
+        assert resp.headers["Cache-Control"] == "public, max-age=31536000, immutable", dev_mode
+
+
+async def test_register_frontend_dev_mode_spa_fallback_is_no_cache(
+    tmp_path: Path, aiohttp_client: AiohttpClient
+) -> None:
+    """Dev-mode SPA-fallback ``index.html`` for a deep link is also no-cache."""
+    client = await aiohttp_client(_make_app(_make_frontend(tmp_path), dev_mode=True))
+    resp = await client.get("/device/foo.yaml")
+    assert resp.status == 200
+    assert resp.headers["Cache-Control"] == "no-cache"
+
+
 async def test_register_frontend_serves_top_level_bundles(
     tmp_path: Path, aiohttp_client: AiohttpClient
 ) -> None:
     """Hashed JS bundles next to index.html are reachable."""
     client = await aiohttp_client(_make_app(_make_frontend(tmp_path)))
-    app_resp = await client.get("/app.abc123.js")
-    vendors_resp = await client.get("/vendors.def456.js")
+    app_resp = await client.get("/app.abc123def4567890.js")
+    vendors_resp = await client.get("/vendors.def4567890abcdef.js")
     assert (await app_resp.text()) == "// bundle"
     assert (await vendors_resp.text()) == "// vendors"
 
@@ -68,7 +118,7 @@ async def test_register_frontend_serves_top_level_license_sidecar(
     "is not a directory" on this exact filename.
     """
     client = await aiohttp_client(_make_app(_make_frontend(tmp_path)))
-    resp = await client.get("/vendors.def456.js.LICENSE.txt")
+    resp = await client.get("/vendors.def4567890abcdef.js.LICENSE.txt")
     assert resp.status == 200
     assert "license" in (await resp.text())
 
@@ -189,7 +239,7 @@ async def test_register_frontend_follows_symlinks_inside_frontend_dir(
     symlink — only ones that would escape the frontend root.
     """
     frontend = _make_frontend(tmp_path)
-    (frontend / "alias.js").symlink_to(frontend / "app.abc123.js")
+    (frontend / "alias.js").symlink_to(frontend / "app.abc123def4567890.js")
 
     client = await aiohttp_client(_make_app(frontend))
     resp = await client.get("/alias.js")
