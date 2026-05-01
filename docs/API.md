@@ -145,8 +145,12 @@ The subscription stays open for the connection's lifetime; closing the WebSocket
 | Command | Args | Response | Description |
 |---------|------|----------|-------------|
 | `components/get_categories` | — | `[{id, name, count}]` | List categories with counts |
-| `components/get_components` | `{query?, category?, platform?, offset?, limit?}` | `PagedComponentsResponse` | Search/list components (filter by platform) |
-| `components/get_component` | `{component_id}` | `ComponentCatalogEntry` | Get component with config entries |
+| `components/get_components` | `{query?, category?, exclude_category?, platform?, board_id?, offset?, limit?}` | `PagedComponentsResponse` | Search/list components |
+| `components/get_component` | `{component_id, platform?, board_id?}` | `ComponentCatalogEntry` | Get component with config entries |
+
+`platform` filters to components compatible with the given target platform; components with an empty `supported_platforms` list are platform-agnostic and always included. `board_id` is a convenience — the boards catalog resolves it to a platform; `platform` wins when both are passed. The platform is also used to materialise each entry's `platform_defaults` into `default_value`.
+
+`category` / `exclude_category` accept either a single category or a list. Use `exclude_category` for the regular catalog selector to hide entries that belong to the dedicated "Add core configuration" dialog.
 
 ### Automations
 
