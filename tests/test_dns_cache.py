@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from typing import ClassVar
 from unittest.mock import patch
 
 import pytest
@@ -285,12 +286,22 @@ async def test_ping_sweep_rescues_local_device_from_zeroconf_cache() -> None:
     assert monitor.priority_for("winefridge") == "mdns"
 
 
-async def test_ping_sweep_pings_hostname_when_resolution_fails(fake_resolver) -> None:
-    """DNS resolution failure → fall back to pinging the hostname."""
+async def test_ping_sweep_marks_offline_directly_on_dns_failure(fake_resolver) -> None:
+    """DNS resolution failure → OFFLINE without calling icmp_ping.
+
+    Handing the bare hostname to ``icmp_ping`` would re-resolve via
+    icmplib's own resolver every sweep — bypassing our DNS cache and
+    hammering the system resolver for nothing. Instead, treat a
+    cache-confirmed lookup failure as the "we tried, can't reach"
+    signal and apply OFFLINE directly.
+    """
+    from esphome_device_builder.models import DeviceState
+
     devices = [_device()]
+    state_changes: list[tuple[str, DeviceState, str]] = []
     monitor = DeviceStateMonitor(
         get_devices=lambda: devices,
-        on_state_change=lambda *_: None,
+        on_state_change=lambda n, s, src: state_changes.append((n, s, src)),
         on_ip_change=lambda *_: None,
     )
 
@@ -311,7 +322,46 @@ async def test_ping_sweep_pings_hostname_when_resolution_fails(fake_resolver) ->
     ):
         await monitor._ping_sweep()
 
-    assert pinged == ["esp.example.com"]
+    # Crucially: ``icmp_ping`` was NOT called. The resolution failure
+    # was enough to declare the device offline.
+    assert pinged == []
+    assert state_changes == [("kitchen", DeviceState.OFFLINE, "ping")]
+
+
+async def test_ping_marks_offline_when_icmp_raises(fake_resolver) -> None:
+    """A ping that raises (NameLookupError, NoRouteToHost, …) flips the device OFFLINE.
+
+    Previously these exceptions short-circuited ``_ping_device`` and
+    left the device stuck in UNKNOWN forever — even after mDNS / MQTT
+    had also failed to find it. The dashboard's red dot was
+    unreachable. Now the failure mode is treated as "we tried, we
+    couldn't reach it" and the state flips to OFFLINE; a subsequent
+    successful ping flips it right back to ONLINE.
+    """
+    from esphome_device_builder.controllers import _device_state_monitor as sm
+    from esphome_device_builder.controllers._device_state_monitor import DeviceStateMonitor
+    from esphome_device_builder.models import DeviceState
+
+    devices = [_device()]
+    state_changes: list[tuple[str, DeviceState, str]] = []
+    monitor = DeviceStateMonitor(
+        get_devices=lambda: devices,
+        on_state_change=lambda n, s, src: state_changes.append((n, s, src)),
+        on_ip_change=lambda *_: None,
+    )
+
+    resolver = fake_resolver(dns_cache_mod.NameLookupError)
+
+    async def raising_ping(_target, **_kwargs):  # type: ignore[no-untyped-def]
+        raise dns_cache_mod.NameLookupError("not resolvable")
+
+    with (
+        patch.object(dns_cache_mod, "async_resolve", resolver),
+        patch.object(sm, "icmp_ping", raising_ping),
+    ):
+        await monitor._ping_sweep()
+
+    assert state_changes == [("kitchen", DeviceState.OFFLINE, "ping")]
 
 
 # ----------------------------------------------------------------------
@@ -387,6 +437,100 @@ def test_load_device_from_storage_threads_ip_through(monkeypatch, tmp_path) -> N
     device = device_yaml.load_device_from_storage(yaml_path, board_id="esp32-devkit", ip="10.0.0.1")
     assert device.ip == "10.0.0.1"
     assert device.board_id == "esp32-devkit"
+
+
+def test_load_device_from_storage_address_falls_back_to_filename_local(  # type: ignore[no-untyped-def]
+    monkeypatch, tmp_path
+) -> None:
+    """Never-compiled devices get ``<filename-stem>.local`` so the ping sweep includes them.
+
+    Without this fallback, ``Device.address`` was empty for any
+    device that hadn't been built yet, so the sweep filter
+    (``if not device.address: continue``) excluded them and they
+    stayed UNKNOWN forever — that's what the user reported with
+    ``wr2-test`` and friends.
+    """
+    from esphome_device_builder.helpers import device_yaml
+
+    monkeypatch.setattr(
+        device_yaml,
+        "ext_storage_path",
+        lambda config: tmp_path / f"{config}.json",
+    )
+    monkeypatch.setattr(device_yaml.StorageJSON, "load", staticmethod(lambda _p: None))
+
+    yaml_path = tmp_path / "wr2-test.yaml"
+    yaml_path.write_text("esphome:\n  name: wr2-test\n")
+
+    device = device_yaml.load_device_from_storage(yaml_path)
+    assert device.address == "wr2-test.local"
+
+
+def test_load_device_from_storage_address_uses_filename_not_parsed_name(  # type: ignore[no-untyped-def]
+    monkeypatch, tmp_path
+) -> None:
+    """Address fallback uses the filename, not the YAML-parsed ``name``.
+
+    Configs that pull the device name from a remote ``dashboard_import``
+    package can leave ``parse_esphome_meta`` returning a stem-shaped
+    package id (like ``ratgdo.esphome``) instead of the actual device
+    name. Using ``<name>.local`` as the fallback would then claim
+    ``ratgdo.esphome.local`` for a device whose YAML is
+    ``largegarage.yaml`` — exactly the bug the user reported. The
+    filename stem is canonical and matches what the user types.
+    """
+    from esphome_device_builder.helpers import device_yaml
+
+    monkeypatch.setattr(
+        device_yaml,
+        "ext_storage_path",
+        lambda config: tmp_path / f"{config}.json",
+    )
+    monkeypatch.setattr(device_yaml.StorageJSON, "load", staticmethod(lambda _p: None))
+
+    # YAML where parse_esphome_meta will resolve the name to whatever
+    # the package provides (here we simulate that by writing the
+    # offending value directly under ``esphome.name``).
+    yaml_path = tmp_path / "largegarage.yaml"
+    yaml_path.write_text("esphome:\n  name: ratgdo.esphome\n")
+
+    device = device_yaml.load_device_from_storage(yaml_path)
+    # Address must come from the filename, not the parsed name.
+    assert device.address == "largegarage.local"
+
+
+def test_load_device_from_storage_address_uses_storage_when_set(  # type: ignore[no-untyped-def]
+    monkeypatch, tmp_path
+) -> None:
+    """A real ``StorageJSON.address`` wins over the ``<name>.local`` fallback."""
+    from esphome_device_builder.helpers import device_yaml
+
+    monkeypatch.setattr(
+        device_yaml,
+        "ext_storage_path",
+        lambda config: tmp_path / f"{config}.json",
+    )
+
+    class _FakeStorage:
+        # Only the fields ``load_device_from_storage`` reads — keeps
+        # the test honest about what it's exercising.
+        name = "kitchen"
+        friendly_name = None
+        comment = None
+        address = "kitchen.lan"
+        web_port = None
+        target_platform = ""
+        firmware_bin_path = None
+        esphome_version = ""
+        loaded_integrations: ClassVar[list[str]] = []
+
+    monkeypatch.setattr(device_yaml.StorageJSON, "load", staticmethod(lambda _p: _FakeStorage()))
+
+    yaml_path = tmp_path / "kitchen.yaml"
+    yaml_path.write_text("esphome:\n  name: kitchen\n")
+
+    device = device_yaml.load_device_from_storage(yaml_path)
+    assert device.address == "kitchen.lan"
 
 
 def test_on_ip_change_persists_non_empty_value(monkeypatch) -> None:  # type: ignore[no-untyped-def]

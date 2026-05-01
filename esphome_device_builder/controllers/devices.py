@@ -73,6 +73,22 @@ class DevicesController:
         self.import_result: dict[str, Any] = {}
         self.ignored_devices: set[str] = set()
 
+        # Background ``--only-generate`` bookkeeping. ``--only-generate``
+        # validates a YAML and writes its ``StorageJSON`` without doing
+        # a real build; we trigger it whenever a YAML is saved or
+        # first-seen with no compile output. Three guards stop us from
+        # spinning:
+        #   * ``_regenerate_pending`` — configurations already in flight
+        #     (scheduled but not yet finished). Skip duplicate schedules.
+        #   * ``_regenerate_failed`` — YAMLs whose last attempt failed.
+        #     Don't retry until the file changes (cleared on
+        #     ``ScanChange.UPDATED``).
+        #   * ``_regenerate_lock`` — serialises the actual subprocess
+        #     so we don't spawn N esphome compiles in parallel.
+        self._regenerate_pending: set[str] = set()
+        self._regenerate_failed: set[str] = set()
+        self._regenerate_lock = asyncio.Lock()
+
         self._scanner = DeviceScanner(
             config_dir=self._db.settings.config_dir,
             get_metadata=self._resolve_device_metadata,
@@ -415,6 +431,91 @@ class DevicesController:
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, path.write_text, content, "utf-8")
         await self._scanner.scan()
+        # Refresh ``StorageJSON`` so address / loaded_integrations /
+        # config_hash etc. reflect the new YAML without waiting for a
+        # full compile. Mirrors the upstream dashboard's
+        # ``async_schedule_storage_json_update`` (called from its
+        # ``EditRequestHandler`` after writing the YAML).
+        self._schedule_storage_regenerate(configuration)
+
+    def _schedule_storage_regenerate(self, configuration: str) -> None:
+        """
+        Run ``esphome compile --only-generate <yaml>`` in the background.
+
+        ``--only-generate`` walks ESPHome's full config validation
+        pipeline (resolving ``!secret`` / ``!include`` / packages /
+        ``dashboard_import``) and writes the resulting StorageJSON
+        without doing a real build. That populates ``address``,
+        ``loaded_integrations``, ``target_platform``, etc. for devices
+        that have never been compiled (the typical "wr2-test was just
+        added and shows UNKNOWN forever" path) and refreshes them
+        whenever the YAML changes.
+
+        Three guards keep this from running away:
+        * ``_regenerate_pending`` skips duplicate schedules for a
+          configuration that's already in flight.
+        * ``_regenerate_failed`` skips YAMLs whose last attempt
+          failed; entries are cleared in ``_on_scan_change`` when the
+          file's cache key changes (i.e. the user actually edited it).
+        * ``_regenerate_lock`` serialises the subprocess itself so we
+          never spawn more than one esphome compile at a time.
+
+        Fire-and-forget: a follow-up ``_scanner.reload(configuration)``
+        on success picks up the new storage and re-emits a
+        ``DEVICE_UPDATED`` event so the frontend reflects the new
+        address / integrations.
+        """
+        if not self._esphome_cmd:
+            return  # ``start()`` hasn't run yet — skip the regenerate.
+        if configuration in self._regenerate_pending:
+            return  # already scheduled, don't queue a duplicate.
+        if configuration in self._regenerate_failed:
+            # Last attempt failed and the YAML hasn't changed since;
+            # rerunning would just produce the same error and burn a
+            # subprocess. Wait for an UPDATED scan to clear the marker.
+            return
+
+        async def _run() -> None:
+            self._regenerate_pending.add(configuration)
+            try:
+                async with self._regenerate_lock:
+                    config_path = str(self._db.settings.rel_path(configuration))
+                    cmd = [
+                        *self._esphome_cmd,
+                        "--dashboard",
+                        "compile",
+                        "--only-generate",
+                        config_path,
+                    ]
+                    try:
+                        proc = await create_subprocess_exec(
+                            *cmd,
+                            stdout=asyncio.subprocess.DEVNULL,
+                            stderr=asyncio.subprocess.PIPE,
+                        )
+                        _, stderr = await proc.communicate()
+                    except Exception:
+                        _LOGGER.debug(
+                            "Storage regenerate spawn failed for %s",
+                            configuration,
+                            exc_info=True,
+                        )
+                        self._regenerate_failed.add(configuration)
+                        return
+                    if proc.returncode != 0:
+                        _LOGGER.debug(
+                            "Storage regenerate for %s exited %s: %s",
+                            configuration,
+                            proc.returncode,
+                            stderr.decode(errors="replace").strip()[:500],
+                        )
+                        self._regenerate_failed.add(configuration)
+                        return
+                    await self._scanner.reload(configuration)
+            finally:
+                self._regenerate_pending.discard(configuration)
+
+        self._db.create_background_task(_run())
 
     @api_command("devices/get_api_key")
     async def get_api_key(self, *, configuration: str, **kwargs: Any) -> dict[str, str]:
@@ -653,6 +754,21 @@ class DevicesController:
             ScanChange.REMOVED: EventType.DEVICE_REMOVED,
         }[kind]
         self._db.bus.fire(event, {"device": device})
+        # The YAML cache key changed (mtime / size / inode) — clear
+        # any prior failure marker so an edit gets a fresh chance at
+        # ``--only-generate``. Same for REMOVED so re-creating the
+        # file later doesn't inherit the old failure.
+        if kind in (ScanChange.UPDATED, ScanChange.REMOVED):
+            self._regenerate_failed.discard(device.configuration)
+        # First-sight devices that have no compile output yet end up
+        # carrying the ``<filename>.local`` address fallback and an
+        # empty ``loaded_integrations`` list. Schedule a background
+        # ``--only-generate`` so the next scan picks up the real
+        # ``StorageJSON``-derived values without making the user wait
+        # for a real compile. Same upstream pattern used in
+        # ``async_schedule_storage_json_update``.
+        if kind is ScanChange.ADDED and not device.loaded_integrations:
+            self._schedule_storage_regenerate(device.configuration)
 
     def _on_state_change(self, name: str, state: DeviceState, source: str) -> None:
         """Forward state monitor updates onto the event bus."""

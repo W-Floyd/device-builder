@@ -35,8 +35,23 @@ from ._dns_cache import DNSCache
 
 _LOGGER = logging.getLogger(__name__)
 _ESPHOME_SERVICE_TYPE = "_esphomelib._tcp.local."
+# Ping fallback runs every 60s after a short bootstrap window.
+# ``_PING_BOOTSTRAP_DELAY`` gives the mDNS browser a head start so the
+# common case (everything announces) doesn't fire a ping sweep that
+# the browser would have answered for free a few seconds later. 10s
+# tracks the upstream esphome dashboard's ``MDNS_BOOTSTRAP_TIME``
+# (~7.5s) closely enough to stay correct without making the user wait
+# a full minute to see UNKNOWN devices flip OFFLINE on first load.
 _PING_INTERVAL = 60  # seconds between ping sweeps
-_PING_BATCH_SIZE = 10
+_PING_BOOTSTRAP_DELAY = 10  # seconds before the first ping sweep
+# Batch size matches the upstream esphome dashboard's
+# ``GROUP_SIZE = MAX_EXECUTOR_WORKERS / 2 = 24``. Each batch's pings
+# run in parallel via ``asyncio.gather``; the cap exists because
+# icmplib gets unreliable past a few dozen concurrent probes. With a
+# small fleet (≤24 ping candidates) one batch covers everything and
+# the sweep finishes in a single ICMP timeout window instead of
+# stacking N timeouts back-to-back.
+_PING_BATCH_SIZE = 24
 _MDNS_RESOLVE_TIMEOUT_MS = 2000
 
 # Source priority for state observations. A new observation can only
@@ -379,7 +394,14 @@ class DeviceStateMonitor:
             self.apply_config_hash(device_name, config_hash)
 
     async def _ping_loop(self) -> None:
+        # First sweep after the short bootstrap window — gives mDNS a
+        # head start so we don't redundantly ping devices the browser
+        # is about to flip ONLINE for free, but still gets the UNKNOWN
+        # → OFFLINE transition in front of the user within ~10s of
+        # startup instead of after a full minute.
         try:
+            await asyncio.sleep(_PING_BOOTSTRAP_DELAY)
+            await self._ping_sweep()
             while True:
                 await asyncio.sleep(_PING_INTERVAL)
                 await self._ping_sweep()
@@ -432,16 +454,16 @@ class DeviceStateMonitor:
         for i in range(0, len(devices_to_ping), _PING_BATCH_SIZE):
             batch = devices_to_ping[i : i + _PING_BATCH_SIZE]
             # Pre-resolve every batch via the DNS cache. icmplib would
-            # otherwise re-resolve internally on every ping, and the
-            # OTA cache args would have nothing to draw on for non-mDNS
-            # hostnames.
+            # otherwise re-resolve internally on every ping (going to
+            # the system resolver each time and ignoring our cache),
+            # and the OTA cache args would have nothing to draw on for
+            # non-mDNS hostnames.
             resolved = await asyncio.gather(
                 *(self._dns_cache.async_resolve(d.address) for d in batch),
                 return_exceptions=True,
             )
             ping_targets: list[tuple[Device, str]] = []
             for device, addresses in zip(batch, resolved, strict=True):
-                target = device.address
                 if isinstance(addresses, list) and addresses:
                     target = addresses[0]
                     # mDNS owns IP tracking for ``.local`` hosts; only
@@ -449,11 +471,22 @@ class DeviceStateMonitor:
                     # DNS result can't clobber the live mDNS value.
                     if not is_local_hostname(device.address):
                         self.apply_ip(device.name, target)
-                ping_targets.append((device, target))
-            await asyncio.gather(
-                *(self._ping_device(device, target) for device, target in ping_targets),
-                return_exceptions=True,
-            )
+                    ping_targets.append((device, target))
+                else:
+                    # DNS cache says we can't resolve this hostname
+                    # (the entry is cached as a failure for the cache
+                    # TTL). Don't hand the bare hostname to icmplib —
+                    # it would re-resolve via the system resolver every
+                    # sweep, hammering DNS for nothing. Treat the cache
+                    # miss as the "we tried, can't reach" signal and
+                    # apply OFFLINE via the same source ``_ping_device``
+                    # would have used.
+                    self.apply(device.name, DeviceState.OFFLINE, "ping")
+            if ping_targets:
+                await asyncio.gather(
+                    *(self._ping_device(device, target) for device, target in ping_targets),
+                    return_exceptions=True,
+                )
 
     def _should_ping(self, device: Device) -> bool:
         """
@@ -471,11 +504,24 @@ class DeviceStateMonitor:
         return _SOURCE_PRIORITY.get(source, 0) <= _SOURCE_PRIORITY["ping"]
 
     async def _ping_device(self, device: Device, target: str) -> None:
+        # Treat any failure mode as "not reachable" → OFFLINE, not as
+        # "still unknown". An exception here means resolution failed
+        # (NameLookupError), the network refused us (NoRouteToHost,
+        # PermissionError, OSError), or icmplib couldn't open a socket.
+        # In every case the user wants the dot to flip red, not stay
+        # grey forever — once mDNS / MQTT / ping have all tried, the
+        # signal is "we couldn't reach this device". A subsequent
+        # successful ping will flip it right back to ONLINE.
         try:
             result = await icmp_ping(target, count=1, timeout=3, privileged=False)
-        except Exception:
-            return
-        new_state = DeviceState.ONLINE if result.is_alive else DeviceState.OFFLINE
+            is_alive = result.is_alive
+        except Exception as exc:
+            # ``.local`` hosts on systems without Avahi / mdnsd hit
+            # this every sweep; the traceback adds nothing and floods
+            # the logs. One-line debug is plenty.
+            _LOGGER.debug("Ping of %s (%s) failed: %s", device.name, target, exc)
+            is_alive = False
+        new_state = DeviceState.ONLINE if is_alive else DeviceState.OFFLINE
         self.apply(device.name, new_state, "ping")
 
 
