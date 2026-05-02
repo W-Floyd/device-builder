@@ -31,16 +31,42 @@ async def test_mixed_newline_and_carriage_return() -> None:
     assert await _collect(reader) == ["a\n", "b\r", "c\n"]
 
 
-async def test_crlf_pair_yields_two_chunks() -> None:
-    r"""``\r\n`` splits on the ``\r`` first, leaving an empty ``\n`` chunk.
+async def test_crlf_pair_coalesces_into_single_chunk() -> None:
+    r"""``\r\n`` (Windows line endings) must surface as one chunk, not two.
 
-    Documents the helper's actual behaviour — coalescing CRLF would
-    require lookahead and isn't needed for the firmware/esptool path
-    (which only emits bare ``\r`` for in-place progress and bare ``\n``
-    for new lines).
+    Without coalescing, ``rstrip("\n\r")`` callers would emit a spurious
+    empty event for every line on Windows.
     """
     reader = _reader_from(b"line\r\n")
-    assert await _collect(reader) == ["line\r", "\n"]
+    assert await _collect(reader) == ["line\r\n"]
+
+
+async def test_crlf_split_across_reads_still_coalesces() -> None:
+    r"""When ``\r`` and ``\n`` arrive in separate reads, still coalesce them."""
+    reader = asyncio.StreamReader()
+
+    async def feed() -> None:
+        reader.feed_data(b"alpha\r")
+        await asyncio.sleep(0)
+        reader.feed_data(b"\nbeta\r\n")
+        reader.feed_eof()
+
+    feeder = asyncio.create_task(feed())
+    chunks = await _collect(reader)
+    await feeder
+    assert chunks == ["alpha\r\n", "beta\r\n"]
+
+
+async def test_lone_carriage_return_at_eof_is_flushed() -> None:
+    r"""A trailing ``\r`` with no following ``\n`` (and EOF) flushes as-is."""
+    reader = _reader_from(b"progress\r")
+    assert await _collect(reader) == ["progress\r"]
+
+
+async def test_carriage_return_followed_by_non_newline_does_not_coalesce() -> None:
+    r"""``\r`` followed by a regular byte stays a standalone terminator."""
+    reader = _reader_from(b"a\rb\n")
+    assert await _collect(reader) == ["a\r", "b\n"]
 
 
 async def test_trailing_bytes_without_terminator_are_flushed_at_eof() -> None:
