@@ -52,6 +52,12 @@ def _make_controller(devices: list[Device]) -> DevicesController:
     controller._db.bus = MagicMock()
     controller._scanner = MagicMock()
     controller._scanner.devices = devices
+    # ``_devices_by_name`` now reads the scanner's name index. Mirror
+    # the same name-keyed grouping the real scanner maintains.
+    by_name: dict[str, list[Device]] = {}
+    for device in devices:
+        by_name.setdefault(device.name, []).append(device)
+    controller._scanner.get_by_name = lambda name: by_name.get(name, [])
     return controller
 
 
@@ -161,3 +167,43 @@ def test_unrelated_devices_are_not_touched() -> None:
     fired = _fired_events(controller)
     assert len(fired) == 1
     assert fired[0][1]["configuration"] == "kitchen.yaml"
+
+
+def test_apply_state_repairs_stale_sibling_when_first_match_is_in_sync() -> None:
+    """``apply()`` must fan out even when ``bucket[0]``'s state already matches.
+
+    With duplicate ``esphome.name`` entries, ``_find_device_by_name``
+    returns whichever device the scanner happens to have first in
+    its bucket. If that one is already ONLINE (e.g. mDNS already
+    flipped it) and a sibling was rebuilt with state=UNKNOWN
+    (atomic-save churn etc.), the old "first device matches → bail"
+    path skipped the fan-out and left the sibling stuck. Verify
+    that ``apply()`` looks at *every* matching device's state and
+    fires the callback when any one of them is stale.
+    """
+    from esphome_device_builder.controllers._device_state_monitor import DeviceStateMonitor
+
+    primary = _device("kitchen.yaml")
+    primary.state = DeviceState.ONLINE  # already in-sync
+    sibling = _device("kitchen (1).yaml")  # state=UNKNOWN — was rebuilt
+
+    on_state = MagicMock()
+
+    def _flip(name: str, state: DeviceState, _source: str) -> None:
+        for d in (primary, sibling):
+            if d.name == name:
+                d.state = state
+
+    on_state.side_effect = _flip
+
+    monitor = DeviceStateMonitor(
+        get_devices=lambda: [primary, sibling],
+        get_devices_by_name=lambda name: [d for d in (primary, sibling) if d.name == name],
+        on_state_change=on_state,
+        on_ip_change=MagicMock(),
+    )
+
+    assert monitor.apply("kitchen", DeviceState.ONLINE, "mdns", claim=True) is True
+    assert primary.state == DeviceState.ONLINE
+    assert sibling.state == DeviceState.ONLINE
+    on_state.assert_called_once_with("kitchen", DeviceState.ONLINE, "mdns")

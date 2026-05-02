@@ -165,8 +165,21 @@ class DeviceStateMonitor:
         on_importable_added: ImportableAddedCallback | None = None,
         on_importable_removed: ImportableRemovedCallback | None = None,
         is_ignored: Callable[[str], bool] | None = None,
+        get_devices_by_name: Callable[[str], list[Device]] | None = None,
     ) -> None:
         self._get_devices = get_devices
+        # ``get_devices_by_name`` is the O(1) name-keyed lookup that
+        # the scanner exposes; mDNS / ping / MQTT observations key on
+        # the device's ``esphome.name`` and call the apply-* methods
+        # several times per broadcast, so a linear scan of every
+        # configured YAML on every announcement is the obvious thing
+        # not to do at fleet scale. Falls back to a linear scan when
+        # the caller hasn't wired the index yet (kept so the existing
+        # tests that build a monitor with just ``get_devices`` keep
+        # working without a parallel rewrite).
+        self._get_devices_by_name = get_devices_by_name or (
+            lambda name: [d for d in get_devices() if d.name == name]
+        )
         self._on_state_change = on_state_change
         self._on_ip_change = on_ip_change
         self._on_version_change = on_version_change
@@ -176,13 +189,6 @@ class DeviceStateMonitor:
         self._on_importable_removed = on_importable_removed
         self._is_ignored = is_ignored or (lambda _name: False)
         self._state_source: dict[str, str] = {}  # device name → "mdns" | "ping"
-        self._device_ips: dict[str, str] = {}  # device name → last known IP
-        self._device_versions: dict[str, str] = {}  # device name → last reported version
-        self._device_config_hashes: dict[str, str] = {}  # device name → last reported config hash
-        # Tri-state-able dedupe map: missing key = never seen mDNS for
-        # this device (callback never fires); empty string = seen
-        # plaintext; non-empty = seen encryption with that algorithm.
-        self._device_api_encryption: dict[str, str] = {}
         # ``DashboardImportDiscovery`` is the upstream esphome class
         # that watches the same ``_esphomelib._tcp.local.`` browser for
         # ``package_import_url`` TXT records and turns them into
@@ -252,10 +258,11 @@ class DeviceStateMonitor:
         """
         Record a state observation from *source*.
 
-        Returns True when the observation actually changed the device's
-        state and the change was forwarded to the callback. Sources
-        below the current source's priority are ignored; same-state
-        observations are no-ops.
+        Returns True when the observation actually changed at least
+        one matching device's state and the change was forwarded to
+        the callback. Sources below the current source's priority
+        are ignored; observations where every matching device
+        already carries *state* are no-ops.
 
         ``claim=True`` lets *source* take ownership of the device's
         state slot even when the state is unchanged, so that a
@@ -265,8 +272,8 @@ class DeviceStateMonitor:
         priority check still applies — ``claim`` doesn't let a lower-
         priority source override a higher-priority owner.
         """
-        device = self._find_device_by_name(name)
-        if device is None:
+        devices = self._get_devices_by_name(name)
+        if not devices:
             _LOGGER.debug(
                 "Device %s not in catalog — ignoring %s state from %s", name, state, source
             )
@@ -275,7 +282,13 @@ class DeviceStateMonitor:
         current_source = self._state_source.get(name, "unknown")
         if _SOURCE_PRIORITY.get(source, 0) < _SOURCE_PRIORITY.get(current_source, 0):
             return False
-        if device.state == state:
+        # Dedupe must look at *every* matching device, not just the
+        # first. With duplicate ``esphome.name`` entries (a config
+        # plus a ``foo (1).yaml`` copy, dashboard_import siblings)
+        # one sibling can be in-sync while another was rebuilt with
+        # state=UNKNOWN — the old "first device matches → bail" path
+        # left the stale sibling stuck.
+        if all(d.state == state for d in devices):
             if claim:
                 self._state_source[name] = source
             return False
@@ -289,17 +302,15 @@ class DeviceStateMonitor:
         Record an IP observation. Empty string clears the stored IP.
 
         Returns True when the IP actually changed and the change was
-        forwarded to the callback.
+        forwarded to the callback. Dedupe is done against the
+        configured devices' current ``ip`` field rather than a
+        separate monitor cache so a Device that's been rebuilt with
+        ``previous=None`` (e.g. an atomic save's brief
+        REMOVE+re-ADD scan churn) still gets repopulated by the
+        next mDNS announcement.
         """
-        if self._find_device_by_name(name) is None:
+        if not self._any_matching_device_differs(name, "ip", ip):
             return False
-        prev = self._device_ips.get(name, "")
-        if prev == ip:
-            return False
-        if ip:
-            self._device_ips[name] = ip
-        else:
-            self._device_ips.pop(name, None)
         self._on_ip_change(name, ip)
         return True
 
@@ -312,11 +323,8 @@ class DeviceStateMonitor:
         """
         if not version or self._on_version_change is None:
             return False
-        if self._find_device_by_name(name) is None:
+        if not self._any_matching_device_differs(name, "deployed_version", version):
             return False
-        if self._device_versions.get(name) == version:
-            return False
-        self._device_versions[name] = version
         self._on_version_change(name, version)
         return True
 
@@ -328,24 +336,17 @@ class DeviceStateMonitor:
         ``api_encryption`` TXT was absent — i.e. the device is
         running plaintext API. A non-empty value (e.g.
         ``Noise_NNpsk0_25519_ChaChaPoly_SHA256``) confirms encryption
-        is active. The "never seen" case is represented by simply not
-        calling this method at all; the device controller treats
-        absence as "trust the YAML".
+        is active. The "never seen" case is represented by the
+        device's ``api_encryption_active`` staying ``None``; the
+        device controller treats that as "trust the YAML".
 
         Returns True when the value actually changed and the change
         was forwarded to the callback.
         """
         if self._on_api_encryption_change is None:
             return False
-        if self._find_device_by_name(name) is None:
+        if not self._any_matching_device_differs(name, "api_encryption_active", encryption):
             return False
-        # ``""`` is a meaningful state ("seen plaintext") so we have to
-        # distinguish "no entry" from "entry == empty"; ``in`` does
-        # that without confusing it with the truthy-check guard
-        # apply_config_hash uses for its empty-string drop.
-        if name in self._device_api_encryption and self._device_api_encryption[name] == encryption:
-            return False
-        self._device_api_encryption[name] = encryption
         self._on_api_encryption_change(name, encryption)
         return True
 
@@ -360,13 +361,22 @@ class DeviceStateMonitor:
         """
         if not config_hash or self._on_config_hash_change is None:
             return False
-        if self._find_device_by_name(name) is None:
+        if not self._any_matching_device_differs(name, "deployed_config_hash", config_hash):
             return False
-        if self._device_config_hashes.get(name) == config_hash:
-            return False
-        self._device_config_hashes[name] = config_hash
         self._on_config_hash_change(name, config_hash)
         return True
+
+    def _any_matching_device_differs(self, name: str, attr: str, value: Any) -> bool:
+        """Return True iff some configured device named *name* has ``attr != value``.
+
+        Uses the scanner's ``get_devices_by_name`` index for an O(1)
+        name lookup so a 1000-device fleet doesn't pay an O(N) scan
+        on every mDNS broadcast. Short-circuits the moment a stale
+        match is found; returns False when no device matches *name*
+        (stray announcement) or when every match already carries
+        *value* (steady-state dedupe).
+        """
+        return any(getattr(device, attr) != value for device in self._get_devices_by_name(name))
 
     def get_cached_addresses(self, host_name: str) -> list[str] | None:
         """
@@ -504,10 +514,8 @@ class DeviceStateMonitor:
     # ------------------------------------------------------------------
 
     def _find_device_by_name(self, name: str) -> Device | None:
-        for device in self._get_devices():
-            if device.name == name:
-                return device
-        return None
+        bucket = self._get_devices_by_name(name)
+        return bucket[0] if bucket else None
 
     async def _start_mdns_browser(self) -> None:
         try:
