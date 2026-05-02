@@ -291,14 +291,14 @@ class DevicesController:
                 set_device_metadata(self._db.settings.config_dir, filename, board_id=board_id)
 
         await loop.run_in_executor(None, _init_storage)
+        # ``_scanner.scan`` fires ``_on_scan_change(ADDED)`` for the
+        # new YAML, and that callback already runs ``probe_device`` —
+        # don't double-probe here. ``file_content`` may carry an
+        # ``esphome.name`` that differs from the URL ``name``, in
+        # which case the scan-change handler probes the YAML's name
+        # (the right one) and an explicit second probe here would
+        # target the wrong service.
         await self._scanner.scan()
-        # The freshly-created config might be for a device that's
-        # already on the network (e.g. the wizard ran against a
-        # device the user just plugged in). Probe mDNS so the new
-        # card lands online with version / config_hash /
-        # api_encryption populated instead of waiting on the next
-        # ping sweep or mDNS announcement.
-        self._state_monitor.probe_device(name)
         return WizardResponse(configuration=filename)
 
     @api_command("devices/update")
@@ -712,10 +712,19 @@ class DevicesController:
             self._state_monitor.apply_ip(name, cached[0])
         # Eagerly probe the esphomelib service so the new card lands
         # with version / config_hash / api_encryption populated, not
-        # just IP. Cache hit returns synchronously; otherwise the
-        # probe runs as a fire-and-forget task whose results land
-        # via the same browser-callback path.
-        self._state_monitor.probe_device(name)
+        # just IP. The device on the network is still broadcasting
+        # under its factory-firmware ``mdns_name`` (the user may have
+        # picked a different YAML name during adoption), so look up
+        # the service under that name but apply the result against
+        # the configured device's chosen name. Cache hit returns
+        # synchronously; otherwise the probe runs as a fire-and-
+        # forget task whose results land via the same
+        # browser-callback path. The ``_on_scan_change`` handler
+        # also probes when the scan picked up the new YAML, but it
+        # uses the YAML name only — for adoption that name has no
+        # mDNS broadcast yet, so this explicit call covers the
+        # rename-during-adopt case.
+        self._state_monitor.probe_device(name, service_name=mdns_name)
         return {"configuration": configuration}
 
     @api_command("devices/ignore")

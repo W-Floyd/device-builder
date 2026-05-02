@@ -12,6 +12,7 @@ and-forget resolve task.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
@@ -47,6 +48,43 @@ async def test_probe_device_cache_hit_applies_synchronously(monkeypatch) -> None
 
     apply.assert_called_once_with("kitchen", fake_info)
     assert not monitor._tasks
+
+
+@pytest.mark.asyncio
+async def test_probe_device_uses_service_name_when_provided(monkeypatch) -> None:
+    """``service_name`` overrides the lookup but apply still keys by ``device_name``.
+
+    Adoption surfaces a device whose mDNS-advertised name (the
+    factory firmware's hostname) differs from the user-chosen YAML
+    name. The probe needs to look up the broadcast under the OLD
+    name (which is what zeroconf has cached) but apply the data to
+    the configured device under its NEW name.
+    """
+    monitor = _make_monitor()
+    apply = MagicMock()
+    monkeypatch.setattr(monitor, "_apply_service_info", apply)
+
+    fake_info = MagicMock()
+    fake_info.load_from_cache.return_value = True
+    constructor_args: list[tuple[Any, ...]] = []
+
+    def _info_ctor(service_type: Any, full_service: Any) -> Any:
+        constructor_args.append((service_type, full_service))
+        return fake_info
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers._device_state_monitor.AsyncServiceInfo",
+        _info_ctor,
+    )
+
+    monitor.probe_device("my-living-room", service_name="apollo-r-pro-1-eth-5938e0")
+
+    # Looked up under the OLD broadcast name…
+    assert constructor_args == [
+        ("_esphomelib._tcp.local.", "apollo-r-pro-1-eth-5938e0._esphomelib._tcp.local.")
+    ]
+    # …but applied under the NEW configured name.
+    apply.assert_called_once_with("my-living-room", fake_info)
 
 
 @pytest.mark.asyncio
@@ -86,3 +124,46 @@ def test_probe_device_no_zeroconf_is_a_noop() -> None:
 
     monitor.probe_device("kitchen")  # no exception, no tasks
     assert not monitor._tasks
+
+
+@pytest.mark.asyncio
+async def test_apply_service_info_claims_online() -> None:
+    """``_apply_service_info`` flips the device ONLINE under the mDNS source.
+
+    A successful apply means we have the device's broadcast address
+    + TXT records from zeroconf, which is itself proof it's
+    reachable. Without this claim the eager probe path could write
+    fully-populated TXT data while leaving the card at "Unknown"
+    until the next ping sweep.
+    """
+    monitor = _make_monitor()
+    monitor._on_state_change = MagicMock()
+    monitor._on_ip_change = MagicMock()
+    monitor._on_version_change = MagicMock()
+    monitor._on_config_hash_change = MagicMock()
+    monitor._on_api_encryption_change = MagicMock()
+    monitor._state_source = {}
+    monitor._device_ips = {}
+    monitor._device_versions = {}
+    monitor._device_config_hashes = {}
+    monitor._device_api_encryption = {}
+    # ``apply()`` validates against the configured-devices catalog.
+    from esphome_device_builder.models import Device, DeviceState
+
+    device = Device(
+        name="kitchen",
+        friendly_name="Kitchen",
+        configuration="kitchen.yaml",
+        address="kitchen.local",
+        state=DeviceState.UNKNOWN,
+    )
+    monitor._get_devices = lambda: [device]
+
+    fake_info = MagicMock()
+    fake_info.parsed_scoped_addresses.return_value = []
+    fake_info.decoded_properties = {}
+    monitor._apply_service_info("kitchen", fake_info)
+
+    # ``_on_state_change`` is the bridge our owner registered for
+    # state transitions; the call carries (name, state, source).
+    monitor._on_state_change.assert_called_once_with("kitchen", DeviceState.ONLINE, "mdns")

@@ -393,27 +393,36 @@ class DeviceStateMonitor:
         addresses = info.parsed_scoped_addresses(IPVersion.All)
         return addresses or None
 
-    def probe_device(self, device_name: str) -> None:
+    def probe_device(self, device_name: str, service_name: str | None = None) -> None:
         """Eagerly resolve a device's ``_esphomelib._tcp.local.`` service.
 
         Adoption / import / wizard-created devices land in the
         configured catalog the moment we write their YAML, but the
-        regular browser path only updates IP / version / config_hash
-        / api_encryption when the *next* mDNS announcement arrives —
-        which can be minutes for a quiet device. This method short-
-        circuits the wait by either reading the existing zeroconf
-        cache (sync hit, common case for a device that was just on
-        the discovery banner) or kicking off an ``async_request``
-        in a fire-and-forget task. Either way the apply path is the
-        same one the browser uses, so the device's card flips from
-        "Unknown" to a fully-populated card immediately instead of
-        on the next periodic sweep.
+        regular browser path only updates ONLINE / IP / version /
+        config_hash / api_encryption when the *next* mDNS announcement
+        arrives — which can be minutes for a quiet device. This method
+        short-circuits the wait by either reading the existing
+        zeroconf cache (sync hit, common case for a device that was
+        just on the discovery banner) or kicking off an
+        ``async_request`` in a fire-and-forget task. Either way the
+        apply path is the same one the browser uses, so the device's
+        card flips from "Unknown" to a fully-populated card
+        immediately instead of on the next periodic sweep.
+
+        ``service_name`` defaults to ``device_name`` and is the
+        broadcast name to look up in mDNS. Adoption surfaces a
+        device whose mDNS-advertised name (the original factory
+        firmware's hostname) differs from the user-chosen YAML name;
+        passing it explicitly lets the lookup hit the cached service
+        info while the apply still keys to the configured device's
+        name.
         """
         if self._zeroconf is None:
             return
         zeroconf = self._zeroconf.zeroconf
-        service_name = f"{device_name}.{_ESPHOME_SERVICE_TYPE}"
-        info = AsyncServiceInfo(_ESPHOME_SERVICE_TYPE, service_name)
+        broadcast = service_name or device_name
+        full_service = f"{broadcast}.{_ESPHOME_SERVICE_TYPE}"
+        info = AsyncServiceInfo(_ESPHOME_SERVICE_TYPE, full_service)
         if info.load_from_cache(zeroconf):
             self._apply_service_info(device_name, info)
             return
@@ -747,7 +756,20 @@ class DeviceStateMonitor:
         )
 
     def _apply_service_info(self, device_name: str, info: AsyncServiceInfo) -> None:
-        """Pull IP / version / config_hash off a populated ``AsyncServiceInfo``."""
+        """Pull IP / version / config_hash off a populated ``AsyncServiceInfo``.
+
+        A successful apply is itself proof the device is reachable —
+        we have its broadcast TXT records and address from zeroconf —
+        so claim ONLINE under the mDNS source. The browser callback
+        already calls ``apply(...ONLINE..., claim=True)`` itself, so
+        for that path this is a no-op dedupe; the eager
+        ``probe_device`` path needs it because it skips the
+        browser-callback prelude.
+        """
+        # ``claim=True`` so mDNS owns the slot even when ping/MQTT
+        # had already labelled the device — same shape the browser
+        # callback uses on its way into this method.
+        self.apply(device_name, DeviceState.ONLINE, "mdns", claim=True)
         # Prefer V4; fall back to scoped V6 (link-local needs the
         # ``%scope`` suffix to connect at all). Matches the upstream
         # esphome dashboard's ``parsed_scoped_addresses`` usage.
