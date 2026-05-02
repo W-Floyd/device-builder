@@ -10,7 +10,7 @@ import re
 import shutil
 from collections.abc import Callable
 from dataclasses import replace
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
 
 from esphome import const
@@ -36,6 +36,7 @@ from ..helpers.device_yaml import (
     generate_device_yaml,
     get_api_encryption_key,
     load_device_yaml,
+    parse_esphome_meta,
     parse_platform_from_yaml,
 )
 from ..helpers.hostname import is_local_hostname, normalize_hostname
@@ -69,6 +70,78 @@ if TYPE_CHECKING:
     from .components import _FeaturedRecord
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _wipe_device_build_dir(configuration: str) -> None:
+    """Remove the per-device build dir if one exists.
+
+    Reads the canonical ``build_path`` off the StorageJSON sidecar
+    (set during compile) and ``shutil.rmtree``s it. No-op when the
+    sidecar is gone or the device has never been built. Used by
+    archive and delete; both treat compile output as dead weight.
+    """
+    storage_path = ext_storage_path(configuration)
+    storage = StorageJSON.load(storage_path)
+    if storage is not None and storage.build_path:
+        shutil.rmtree(storage.build_path, ignore_errors=True)
+
+
+def _remove_device_sidecars(config_dir: Path, configuration: str) -> None:
+    """Remove the StorageJSON sidecar and device-metadata entry.
+
+    Best-effort — failures are logged but don't propagate, so a
+    partial cleanup (e.g. permission error on one file) doesn't
+    block the rest of the archive / delete flow. Used by archive,
+    delete, and delete_archived; all three want a "leave no
+    trace under this filename" semantic at the end of their flow.
+    """
+    storage_path = ext_storage_path(configuration)
+    try:
+        storage_path.unlink(missing_ok=True)
+    except OSError:
+        _LOGGER.warning("Could not remove storage file for %s", configuration)
+    try:
+        remove_device_metadata(config_dir, configuration)
+    except Exception:
+        _LOGGER.warning("Could not remove metadata for %s", configuration)
+
+
+def _validate_archive_configuration(configuration: str) -> None:
+    """Reject anything that isn't a pure basename.
+
+    Defense-in-depth at the public-command boundary for archive /
+    unarchive / delete_archived. Each helper builds paths from the
+    user-supplied filename (``<config_dir>/archive/<configuration>``,
+    ``ext_storage_path(configuration)`` -> ``data_dir/storage/<configuration>.json``)
+    that don't all flow through ``Settings.rel_path`` — a value
+    containing path separators or ``..`` segments could resolve
+    outside the intended directory and be unlinked / overwritten.
+
+    Reject anything where ``Path(value).name != value`` (catches
+    ``../foo``, ``sub/foo``, backslash-separated paths on Windows),
+    the empty string, and the special path components ``.`` / ``..``
+    that pass the ``.name`` round-trip but are still traversal
+    vectors.
+    """
+    if not configuration:
+        raise CommandError(ErrorCode.INVALID_ARGS, "configuration must not be empty")
+    if configuration in (".", ".."):
+        raise CommandError(
+            ErrorCode.INVALID_ARGS,
+            f"configuration must be a plain filename, not {configuration!r}",
+        )
+    if (
+        "/" in configuration
+        or "\\" in configuration
+        or "\x00" in configuration
+        or PurePosixPath(configuration).name != configuration
+        or PureWindowsPath(configuration).name != configuration
+    ):
+        raise CommandError(
+            ErrorCode.INVALID_ARGS,
+            f"configuration must be a plain filename without path separators, "
+            f"got {configuration!r}",
+        )
 
 
 class DevicesController:
@@ -469,6 +542,76 @@ class DevicesController:
         """Delete a device and all associated files."""
         await self._delete_single(configuration)
         await self._scanner.scan()
+
+    @api_command("devices/archive")
+    async def archive_device(self, *, configuration: str, **kwargs: Any) -> None:
+        """Soft-delete a device — keep the YAML, wipe the build dir.
+
+        Moves the YAML to ``<config_dir>/archive/`` so the user
+        can ``unarchive`` later. Build dir, StorageJSON sidecar,
+        and device-metadata entry are all wiped so a future
+        ``configuration`` with the same filename starts from a
+        clean cache (per-filename keying would otherwise let the
+        new device inherit the archived one's stale state). See
+        ``_archive_single`` for the full rationale.
+        """
+        _validate_archive_configuration(configuration)
+        try:
+            await self._archive_single(configuration)
+        except FileNotFoundError as exc:
+            raise CommandError(ErrorCode.NOT_FOUND, str(exc)) from exc
+        await self._scanner.scan()
+
+    @api_command("devices/unarchive")
+    async def unarchive_device(self, *, configuration: str, **kwargs: Any) -> None:
+        """Restore an archived device's YAML to the configured config_dir.
+
+        The scanner's next sweep picks the file up and fires
+        ``DEVICE_ADDED`` so the dashboard's active list refreshes
+        without a manual reload.
+        """
+        _validate_archive_configuration(configuration)
+        try:
+            await self._unarchive_single(configuration)
+        except FileNotFoundError as exc:
+            raise CommandError(ErrorCode.NOT_FOUND, str(exc)) from exc
+        await self._scanner.scan()
+
+    @api_command("devices/list_archived")
+    async def list_archived(self, **kwargs: Any) -> list[dict[str, Any]]:
+        """List archived devices with their parsed name / friendly_name / comment.
+
+        Read-only — surfaces the contents of
+        ``<config_dir>/archive/`` for the dashboard's "Show
+        archived devices" toggle. Each entry carries enough info
+        for the UI to render a row + Unarchive / Delete-permanently
+        actions; full YAML / metadata is left on disk and is fetched
+        on demand if the user opens one.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._list_archived_sync)
+
+    @api_command("devices/delete_archived")
+    async def delete_archived(self, *, configuration: str, **kwargs: Any) -> None:
+        """Permanently delete an archived device's YAML.
+
+        The companion to ``archive`` for the case where the user
+        decided they really don't want this device back. Removes
+        ``<config_dir>/archive/<configuration>``. The StorageJSON
+        sidecar and device-metadata entry are usually already gone
+        (``archive`` wipes them on the way in); this command also
+        cleans up any orphan sidecars left over from legacy /
+        pre-existing archives, but skips that cleanup if an active
+        config of the same filename exists (its sidecars belong to
+        the live device). Surfaces ``CommandError(NOT_FOUND)``
+        when the archive entry is gone — symmetric with
+        ``unarchive``.
+        """
+        _validate_archive_configuration(configuration)
+        try:
+            await self._delete_archived_single(configuration)
+        except FileNotFoundError as exc:
+            raise CommandError(ErrorCode.NOT_FOUND, str(exc)) from exc
 
     @api_command("devices/delete_bulk")
     async def delete_bulk(
@@ -1487,6 +1630,186 @@ class DevicesController:
         except Exception:
             _LOGGER.warning("Could not move metadata for %s", new_filename)
 
+    async def _archive_single(self, configuration: str) -> None:
+        """Soft-delete: move the YAML into ``<config_dir>/archive/`` and wipe build + sidecars.
+
+        Mirrors the legacy dashboard's archive flow with one
+        deliberate divergence: we also wipe the StorageJSON
+        sidecar and the device-metadata entry. The legacy
+        dashboard preserved them so unarchive could restore the
+        cached IP / version / hash, but the per-filename keying
+        means a future ``configuration`` with the same name would
+        inherit the archived device's stale state (loaded_integrations,
+        deployed_config_hash, address) until it's recompiled or
+        edited. Wiping on archive trades a few seconds of
+        "unknown state" after unarchive (the scanner + monitor
+        refill from the next mDNS broadcast) for full isolation
+        between archive and any future same-name device.
+
+        Build dir wipe matches what ``_delete_single`` does — an
+        archived device's compile output is dead weight (the
+        user can recompile after unarchive). The YAML itself
+        stays on disk so the operation is reversible.
+        """
+        config_path = self._db.settings.rel_path(configuration)
+        loop = asyncio.get_running_loop()
+        config_dir = self._db.settings.config_dir
+
+        def _archive_sync() -> None:
+            if not config_path.exists():
+                msg = f"File not found: {configuration}"
+                raise FileNotFoundError(msg)
+            archive_dir = config_dir / "archive"
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            target = archive_dir / configuration
+            if target.exists():
+                # Same name already archived. We can't silently rename
+                # to ``<name> (2).yaml`` because the StorageJSON sidecar
+                # and metadata stay keyed on the original filename —
+                # a later unarchive of the suffixed copy would surface
+                # without its sidecar and lose the cached address /
+                # version / loaded_integrations. Refuse the operation
+                # and let the user resolve the collision explicitly
+                # (unarchive the existing copy or delete it).
+                msg = (
+                    f"Cannot archive {configuration}: an archived config "
+                    "with the same name already exists. Unarchive or "
+                    "permanently delete the existing archive first."
+                )
+                raise FileExistsError(msg)
+            # Wipe build dir first (same shape as delete), then
+            # move the YAML, then wipe the sidecars so a future
+            # same-name ``configuration`` starts from a clean
+            # cache. See the docstring for the full rationale.
+            _wipe_device_build_dir(configuration)
+            shutil.move(str(config_path), str(target))
+            _remove_device_sidecars(config_dir, configuration)
+
+        try:
+            await loop.run_in_executor(None, _archive_sync)
+        except FileExistsError as exc:
+            raise CommandError(ErrorCode.INVALID_ARGS, str(exc)) from exc
+
+    async def _unarchive_single(self, configuration: str) -> None:
+        """Move an archived YAML back into the active config_dir.
+
+        Refuses to clobber an existing active YAML — that case
+        means the user already created a new device under the same
+        filename, and silently overwriting it would surprise them.
+        Surface a ``CommandError`` instead so the dialog can prompt
+        for a different action.
+        """
+        loop = asyncio.get_running_loop()
+        config_dir = self._db.settings.config_dir
+        archive_path = config_dir / "archive" / configuration
+        target = self._db.settings.rel_path(configuration)
+
+        def _unarchive_sync() -> None:
+            if not archive_path.exists():
+                msg = f"Archived file not found: {configuration}"
+                raise FileNotFoundError(msg)
+            if target.exists():
+                msg = (
+                    f"Cannot unarchive {configuration}: an active config "
+                    f"with the same name already exists"
+                )
+                raise FileExistsError(msg)
+            shutil.move(str(archive_path), str(target))
+
+        try:
+            await loop.run_in_executor(None, _unarchive_sync)
+        except FileExistsError as exc:
+            raise CommandError(ErrorCode.INVALID_ARGS, str(exc)) from exc
+
+    def _list_archived_sync(self) -> list[dict[str, Any]]:
+        """Read ``<config_dir>/archive/`` and parse each YAML's meta block.
+
+        Returns one dict per archived YAML with the same name /
+        friendly_name / comment fields the active device list
+        carries, plus ``configuration`` so the dashboard can
+        address each entry. Files that don't parse are skipped
+        with a debug log — the archive dir is user-managed and
+        a stray non-YAML file shouldn't crash the listing.
+
+        When the YAML's ``esphome:`` block is sparse (e.g. friendly
+        name only ever lived in StorageJSON because the user wrote
+        it via the dashboard's edit dialog rather than the YAML),
+        fall back to the StorageJSON sidecar before degrading to
+        the bare filename. ``_archive_single`` wipes its own
+        sidecars on archive, so the fallback only matters for
+        legacy archives (created by the upstream ESPHome dashboard
+        or by an earlier version of this server before the sidecar
+        wipe landed) and for entries dropped into the archive dir
+        externally.
+        """
+        archive_dir = self._db.settings.config_dir / "archive"
+        if not archive_dir.is_dir():
+            return []
+        results: list[dict[str, Any]] = []
+        for path in sorted(archive_dir.iterdir()):
+            if path.suffix not in (".yaml", ".yml") or path.name.startswith("."):
+                continue
+            try:
+                content = path.read_text(encoding="utf-8")
+            except OSError:
+                _LOGGER.debug("Failed to read archived YAML %s", path, exc_info=True)
+                continue
+            name, friendly_name, comment = parse_esphome_meta(content)
+            if not name or not friendly_name or comment is None:
+                storage = StorageJSON.load(ext_storage_path(path.name))
+                if storage is not None:
+                    name = name or storage.name
+                    friendly_name = friendly_name or storage.friendly_name
+                    if comment is None:
+                        comment = storage.comment
+            results.append(
+                {
+                    "configuration": path.name,
+                    "name": name or path.stem,
+                    "friendly_name": friendly_name or name or path.stem,
+                    "comment": comment,
+                }
+            )
+        return results
+
+    async def _delete_archived_single(self, configuration: str) -> None:
+        """Permanently remove an archived YAML and its sidecars.
+
+        Mirrors ``_delete_single`` but operates on
+        ``<config_dir>/archive/<configuration>`` instead of the
+        active config_dir. The build dir is already gone (archive
+        wipes it), so this only has to remove the YAML, the
+        StorageJSON sidecar, and the device-metadata sidecar.
+
+        Defense-in-depth: the StorageJSON / metadata sidecars are
+        keyed on the bare filename, so if an active config of the
+        same name has been re-created since the archive, those
+        sidecars belong to the live device and removing them
+        would wipe its cached IP / hash / loaded_integrations.
+        ``_archive_single`` already wipes its own sidecars on the
+        way in (so this collision shouldn't happen in practice),
+        but we still guard with an existence check on the active
+        path. Callers expect best-effort cleanup of orphan
+        sidecars, not a guarantee of their removal.
+        """
+        loop = asyncio.get_running_loop()
+        config_dir = self._db.settings.config_dir
+        archive_path = config_dir / "archive" / configuration
+        active_path = self._db.settings.rel_path(configuration)
+
+        def _delete_all() -> None:
+            if not archive_path.exists():
+                msg = f"Archived file not found: {configuration}"
+                raise FileNotFoundError(msg)
+            archive_path.unlink()
+            if active_path.exists():
+                # An active config with the same filename owns the
+                # sidecars now — leave them alone.
+                return
+            _remove_device_sidecars(config_dir, configuration)
+
+        await loop.run_in_executor(None, _delete_all)
+
     async def _delete_single(self, configuration: str) -> None:
         """Delete a single device and all associated files."""
         config_path = self._db.settings.rel_path(configuration)
@@ -1500,26 +1823,13 @@ class DevicesController:
             if not config_path.exists():
                 msg = f"File not found: {configuration}"
                 raise FileNotFoundError(msg)
-            # Wipe the per-device PlatformIO build tree first so a partial
-            # failure later in the cleanup still leaves the user able to
-            # retry the delete. ``StorageJSON.build_path`` is the canonical
-            # location (set during compile) — fall back to a no-op when the
-            # device has never been built or the sidecar is gone.
-            storage_path = ext_storage_path(configuration)
-            storage = StorageJSON.load(storage_path)
-            if storage is not None and storage.build_path:
-                shutil.rmtree(storage.build_path, ignore_errors=True)
+            # Wipe build dir first so a partial failure later still
+            # leaves the user able to retry the delete.
+            _wipe_device_build_dir(configuration)
             config_path.unlink(missing_ok=True)
             (config_dir / ".trash" / configuration).unlink(missing_ok=True)
             (config_dir / ".archive" / f"{configuration}.json").unlink(missing_ok=True)
-            try:
-                storage_path.unlink(missing_ok=True)
-            except OSError:
-                _LOGGER.warning("Could not remove storage file for %s", configuration)
-            try:
-                remove_device_metadata(config_dir, configuration)
-            except Exception:
-                _LOGGER.warning("Could not remove metadata for %s", configuration)
+            _remove_device_sidecars(config_dir, configuration)
 
         await loop.run_in_executor(None, _delete_all)
 
