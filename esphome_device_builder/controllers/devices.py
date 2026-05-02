@@ -291,6 +291,13 @@ class DevicesController:
                 set_device_metadata(self._db.settings.config_dir, filename, board_id=board_id)
 
         await loop.run_in_executor(None, _init_storage)
+        # ``_scanner.scan`` fires ``_on_scan_change(ADDED)`` for the
+        # new YAML, and that callback already runs ``probe_device`` —
+        # don't double-probe here. ``file_content`` may carry an
+        # ``esphome.name`` that differs from the URL ``name``, in
+        # which case the scan-change handler probes the YAML's name
+        # (the right one) and an explicit second probe here would
+        # target the wrong service.
         await self._scanner.scan()
         return WizardResponse(configuration=filename)
 
@@ -703,6 +710,21 @@ class DevicesController:
         cached = self._state_monitor.get_cached_addresses(f"{mdns_name}.local")
         if cached:
             self._state_monitor.apply_ip(name, cached[0])
+        # Eagerly probe the esphomelib service so the new card lands
+        # with version / config_hash / api_encryption populated, not
+        # just IP. The device on the network is still broadcasting
+        # under its factory-firmware ``mdns_name`` (the user may have
+        # picked a different YAML name during adoption), so look up
+        # the service under that name but apply the result against
+        # the configured device's chosen name. Cache hit returns
+        # synchronously; otherwise the probe runs as a fire-and-
+        # forget task whose results land via the same
+        # browser-callback path. The ``_on_scan_change`` handler
+        # also probes when the scan picked up the new YAML, but it
+        # uses the YAML name only — for adoption that name has no
+        # mDNS broadcast yet, so this explicit call covers the
+        # rename-during-adopt case.
+        self._state_monitor.probe_device(name, service_name=mdns_name)
         return {"configuration": configuration}
 
     @api_command("devices/ignore")
@@ -880,6 +902,18 @@ class DevicesController:
             ScanChange.REMOVED: EventType.DEVICE_REMOVED,
         }[kind]
         self._db.bus.fire(event, {"device": device})
+        # Eagerly probe mDNS for newly-added devices. Catches the
+        # YAML-dropped-on-disk case the API entrypoints
+        # (``devices/import``, ``devices/create``) can't see — e.g.
+        # the user copies a config into ``config_dir`` from another
+        # dashboard or git clones their setup. Without this the new
+        # card sits at "Unknown" until the next periodic ping sweep
+        # or mDNS announcement, even when the device is already on
+        # the network. ``probe_device`` short-circuits to the
+        # zeroconf cache when present; otherwise it spawns a
+        # fire-and-forget resolve task.
+        if kind is ScanChange.ADDED:
+            self._state_monitor.probe_device(device.name)
         # The YAML cache key changed (mtime / size / inode) — clear
         # any prior failure marker so an edit gets a fresh chance at
         # ``--only-generate``. Same for REMOVED so re-creating the

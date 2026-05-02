@@ -152,7 +152,19 @@ async def test_handler_does_not_substitute_hyphens(monkeypatch: pytest.MonkeyPat
     into ``my_device`` before lookup.
     """
     devices = [_device("my-device")]
-    on_state = MagicMock()
+
+    # Mirror production: the real ``on_state_change`` callback flips
+    # ``device.state`` so the eager ``apply(ONLINE)`` in the browser
+    # callback and the redundant claim in ``_apply_service_info``
+    # short-circuit on the second call. Without this side-effect the
+    # MagicMock leaves ``device.state`` at UNKNOWN forever and we'd
+    # see a misleading double-fire.
+    def _flip_state(name: str, state: DeviceState, _source: str) -> None:
+        for device in devices:
+            if device.name == name:
+                device.state = state
+
+    on_state = MagicMock(side_effect=_flip_state)
     monitor = DeviceStateMonitor(
         get_devices=lambda: devices,
         on_state_change=on_state,
