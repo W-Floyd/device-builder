@@ -153,3 +153,43 @@ async def test_rename_rejects_traversal_in_new_name(tmp_path: Path) -> None:
     with pytest.raises(CommandError) as excinfo:
         await controller.rename(configuration="kitchen.yaml", new_name="../etc/passwd")
     assert excinfo.value.code == ErrorCode.INVALID_ARGS
+
+
+@pytest.mark.asyncio
+async def test_rename_rejects_collision_with_existing_yaml(tmp_path: Path) -> None:
+    """``firmware/rename`` rejects ``new_name`` colliding with another device.
+
+    ``esphome rename`` does not check collisions itself — it blindly
+    ``write_text``s the new YAML and OTA-installs it, silently
+    overwriting the unrelated device's config and flashing that
+    firmware to the wrong device. ``DevicesController.rename_device``
+    checks before forwarding, but a direct WS client can bypass it;
+    the firmware-layer check closes that gap.
+    """
+    controller = _controller(tmp_path)
+    (tmp_path / "kitchen.yaml").write_text("")
+    (tmp_path / "livingroom.yaml").write_text("")
+
+    with pytest.raises(CommandError) as excinfo:
+        await controller.rename(configuration="kitchen.yaml", new_name="livingroom")
+    assert excinfo.value.code == ErrorCode.INVALID_ARGS
+    assert "livingroom.yaml already exists" in excinfo.value.message
+
+
+@pytest.mark.asyncio
+async def test_rename_rejects_same_name(tmp_path: Path) -> None:
+    """``firmware/rename`` rejects ``new_name`` matching the current stem.
+
+    A same-name rename is a no-op at the YAML level but still queues
+    a real ``esphome rename`` job that re-compiles and OTA-flashes
+    the device — wasted work the caller almost certainly didn't
+    intend. ``firmware/install`` is the correct command for "flash
+    without renaming".
+    """
+    controller = _controller(tmp_path)
+    (tmp_path / "kitchen.yaml").write_text("")
+
+    with pytest.raises(CommandError) as excinfo:
+        await controller.rename(configuration="kitchen.yaml", new_name="kitchen")
+    assert excinfo.value.code == ErrorCode.INVALID_ARGS
+    assert "must differ" in excinfo.value.message
