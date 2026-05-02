@@ -26,6 +26,7 @@ from ..helpers.device_yaml import (
 )
 from ..helpers.hostname import is_local_hostname, normalize_hostname
 from ..helpers.json import JSONDecodeError, dumps_indent, loads
+from ..helpers.stream import iter_lines
 from ..helpers.subprocess import create_subprocess_exec
 from ..helpers.yaml import merge_component_yaml, rewrite_esphome_name
 from ..models import (
@@ -1452,8 +1453,8 @@ class DevicesController:
                 env=env,
             )
             assert proc.stdout is not None
-            async for line_bytes in proc.stdout:
-                line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+            async for chunk in iter_lines(proc.stdout):
+                line = chunk.rstrip("\n\r")
                 await client.send_event(message_id, "output", line)
             exit_code = await proc.wait()
         except asyncio.CancelledError:
