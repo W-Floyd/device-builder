@@ -22,7 +22,9 @@ async def iter_lines(
     newline; the default ``async for line in reader`` only splits on
     ``\n`` and leaves them piling up. Each emitted chunk keeps its
     trailing terminator so the consumer can decide whether to append a
-    new line or overwrite the last one.
+    new line or overwrite the last one. ``\r\n`` is treated as a
+    single terminator so Windows-style line endings don't produce
+    spurious empty chunks.
 
     Bytes are decoded as UTF-8 with ``errors="replace"``. Trailing
     bytes that arrive without a terminator are flushed at EOF.
@@ -46,6 +48,13 @@ async def iter_lines(
                 idx = nl
             else:
                 idx = min(nl, cr)
-            chunk = buf[: idx + 1]
-            buf = buf[idx + 1 :]
+            # If ``\r`` is the last byte we've seen, defer — the next
+            # read may bring a ``\n`` we want to coalesce with it.
+            if buf[idx] == 0x0D and idx == len(buf) - 1:
+                break
+            end = idx + 1
+            if buf[idx] == 0x0D and idx + 1 < len(buf) and buf[idx + 1] == 0x0A:
+                end = idx + 2
+            chunk = buf[:end]
+            buf = buf[end:]
             yield chunk.decode("utf-8", errors="replace")
