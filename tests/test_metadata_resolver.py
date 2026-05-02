@@ -212,6 +212,7 @@ def test_added_device_without_hash_triggers_regenerate(monkeypatch: Any) -> None
     controller = DevicesController.__new__(DevicesController)
     controller._db = MagicMock()
     controller._regenerate_failed = set()
+    controller._state_monitor = MagicMock()
     schedule = MagicMock()
     monkeypatch.setattr(controller, "_schedule_storage_regenerate", schedule, raising=False)
 
@@ -228,6 +229,9 @@ def test_added_device_without_hash_triggers_regenerate(monkeypatch: Any) -> None
     # Sanity: the bus fire still happens — the trigger is additive,
     # not a replacement.
     controller._db.bus.fire.assert_called_with(EventType.DEVICE_ADDED, {"device": device})
+    # Probe fires too — the eager mDNS probe on ADDED is what catches
+    # YAMLs dropped on disk outside the API path.
+    controller._state_monitor.probe_device.assert_called_once_with("apollo")
 
 
 def test_added_device_fully_populated_does_not_regenerate(
@@ -245,6 +249,7 @@ def test_added_device_fully_populated_does_not_regenerate(
     controller = DevicesController.__new__(DevicesController)
     controller._db = MagicMock()
     controller._regenerate_failed = set()
+    controller._state_monitor = MagicMock()
     schedule = MagicMock()
     monkeypatch.setattr(controller, "_schedule_storage_regenerate", schedule, raising=False)
 

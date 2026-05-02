@@ -292,6 +292,13 @@ class DevicesController:
 
         await loop.run_in_executor(None, _init_storage)
         await self._scanner.scan()
+        # The freshly-created config might be for a device that's
+        # already on the network (e.g. the wizard ran against a
+        # device the user just plugged in). Probe mDNS so the new
+        # card lands online with version / config_hash /
+        # api_encryption populated instead of waiting on the next
+        # ping sweep or mDNS announcement.
+        self._state_monitor.probe_device(name)
         return WizardResponse(configuration=filename)
 
     @api_command("devices/update")
@@ -703,6 +710,12 @@ class DevicesController:
         cached = self._state_monitor.get_cached_addresses(f"{mdns_name}.local")
         if cached:
             self._state_monitor.apply_ip(name, cached[0])
+        # Eagerly probe the esphomelib service so the new card lands
+        # with version / config_hash / api_encryption populated, not
+        # just IP. Cache hit returns synchronously; otherwise the
+        # probe runs as a fire-and-forget task whose results land
+        # via the same browser-callback path.
+        self._state_monitor.probe_device(name)
         return {"configuration": configuration}
 
     @api_command("devices/ignore")
@@ -880,6 +893,18 @@ class DevicesController:
             ScanChange.REMOVED: EventType.DEVICE_REMOVED,
         }[kind]
         self._db.bus.fire(event, {"device": device})
+        # Eagerly probe mDNS for newly-added devices. Catches the
+        # YAML-dropped-on-disk case the API entrypoints
+        # (``devices/import``, ``devices/create``) can't see — e.g.
+        # the user copies a config into ``config_dir`` from another
+        # dashboard or git clones their setup. Without this the new
+        # card sits at "Unknown" until the next periodic ping sweep
+        # or mDNS announcement, even when the device is already on
+        # the network. ``probe_device`` short-circuits to the
+        # zeroconf cache when present; otherwise it spawns a
+        # fire-and-forget resolve task.
+        if kind is ScanChange.ADDED:
+            self._state_monitor.probe_device(device.name)
         # The YAML cache key changed (mtime / size / inode) — clear
         # any prior failure marker so an edit gets a fresh chance at
         # ``--only-generate``. Same for REMOVED so re-creating the

@@ -393,6 +393,34 @@ class DeviceStateMonitor:
         addresses = info.parsed_scoped_addresses(IPVersion.All)
         return addresses or None
 
+    def probe_device(self, device_name: str) -> None:
+        """Eagerly resolve a device's ``_esphomelib._tcp.local.`` service.
+
+        Adoption / import / wizard-created devices land in the
+        configured catalog the moment we write their YAML, but the
+        regular browser path only updates IP / version / config_hash
+        / api_encryption when the *next* mDNS announcement arrives —
+        which can be minutes for a quiet device. This method short-
+        circuits the wait by either reading the existing zeroconf
+        cache (sync hit, common case for a device that was just on
+        the discovery banner) or kicking off an ``async_request``
+        in a fire-and-forget task. Either way the apply path is the
+        same one the browser uses, so the device's card flips from
+        "Unknown" to a fully-populated card immediately instead of
+        on the next periodic sweep.
+        """
+        if self._zeroconf is None:
+            return
+        zeroconf = self._zeroconf.zeroconf
+        service_name = f"{device_name}.{_ESPHOME_SERVICE_TYPE}"
+        info = AsyncServiceInfo(_ESPHOME_SERVICE_TYPE, service_name)
+        if info.load_from_cache(zeroconf):
+            self._apply_service_info(device_name, info)
+            return
+        task = asyncio.create_task(self._resolve_and_apply(zeroconf, info, device_name))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     def revisit_importable(self, device_name: str) -> None:
         """
         Re-fire ``on_importable_added`` for *device_name* if upstream still has it cached.
