@@ -339,44 +339,102 @@ class DevicesController:
         """
         Rename a device configuration.
 
-        Tries the ESPHome CLI first (authoritative for validated
-        configs). Falls back to a file-level rename when the CLI
-        refuses because the config doesn't validate yet — typical for
-        a freshly-created empty config. Returns the new filename.
+        Validity gates which strategy we use, because the two paths
+        have very different rollback semantics on failure and we MUST
+        keep the user able to reach the device under its old name
+        whenever the rename can't complete:
+
+        - **Config doesn't validate** (typical for a freshly-created
+          empty config that the user hasn't filled in yet). The
+          ``esphome rename`` CLI refuses to touch it. Fall back to a
+          pure file-level rename — there's no firmware on the device
+          yet, so there's nothing to roll back from.
+        - **Config validates**. Run ``esphome --dashboard rename`` and
+          let it own the full atomic rename: write the new YAML,
+          re-validate, ``esphome run`` to compile + install + verify,
+          and then drop the old YAML only on install success. If
+          install fails the CLI unlinks its newly-written YAML and
+          returns non-zero — the old file (and the device's old
+          hostname) stay intact so the user can fix things and try
+          again. We DELIBERATELY do not fall back to a file-level
+          rename here: the legacy dashboard had exactly that bug, and
+          a half-flashed device with the YAML already pointing at the
+          new name leaves nothing to mDNS-resolve when the user goes
+          to retry.
+
+        Returns the new filename. Errors propagate verbatim (with the
+        last lines of ``esphome rename``'s output appended) so the
+        frontend can show a meaningful message.
         """
         config_path = str(self._db.settings.rel_path(configuration))
-        cmd = [*self._esphome_cmd, "rename", config_path, new_name]
-
-        proc = await create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            stdin=asyncio.subprocess.PIPE,
-        )
-        stdout, _ = await proc.communicate(input=b"y\n")
-        exit_code = proc.returncode
-        output = stdout.decode("utf-8", errors="replace")
-
         new_filename = f"{new_name}.yaml"
-        if exit_code != 0:
-            _LOGGER.info(
-                "esphome rename failed (%s); falling back to manual rename",
-                exit_code,
-            )
+
+        # Reject up-front if the target filename is already in use.
+        # The manual-rename branch already checks ``new_path.exists()``
+        # itself, but the CLI ``esphome rename`` path does *not* — it
+        # blindly ``write_text``s the new YAML and then OTA-installs
+        # it, so a collision would silently overwrite the unrelated
+        # device's config and flash that firmware to the wrong device.
+        if new_filename != configuration:
+            new_path = self._db.settings.rel_path(new_filename)
+            if new_path.exists():
+                msg = f"A device named {new_filename} already exists"
+                raise CommandError(ErrorCode.INVALID_ARGS, msg)
+
+        if not await self._yaml_validates(config_path):
             loop = asyncio.get_running_loop()
             try:
                 await loop.run_in_executor(None, self._manual_rename, configuration, new_name)
             except FileExistsError as exc:
                 msg = f"A device named {new_filename} already exists"
-                raise RuntimeError(msg) from exc
+                raise CommandError(ErrorCode.INVALID_ARGS, msg) from exc
             except Exception as exc:
                 _LOGGER.warning("Manual rename failed: %s", exc)
-                tail = output.strip()[-500:]
-                msg = f"Rename failed (exit {exit_code}): {tail}"
-                raise RuntimeError(msg) from exc
+                msg = f"Rename failed: {exc}"
+                raise CommandError(ErrorCode.INTERNAL_ERROR, msg) from exc
+            await self._scanner.scan()
+            return {"configuration": new_filename, "job": None}
 
-        await self._scanner.scan()
-        return {"configuration": new_filename}
+        # Validated configs route through the firmware queue so the
+        # compile + install (which is what ``esphome rename`` does
+        # internally) shows up alongside other firmware tasks with
+        # live output instead of running silently in the background.
+        if self._db.firmware is None:
+            msg = "Firmware controller is unavailable"
+            raise CommandError(ErrorCode.INTERNAL_ERROR, msg)
+        job = await self._db.firmware.rename(configuration=configuration, new_name=new_name)
+        return {"configuration": new_filename, "job": job.to_dict()}
+
+    async def _yaml_validates(self, config_path: str) -> bool:
+        """``esphome config`` precheck.
+
+        Decides between the file-level fallback (for empty / broken
+        configs that ``esphome rename`` would refuse) and the full
+        ``esphome rename`` flow (which compiles + installs).
+
+        Treats only a clean non-zero exit as "doesn't validate".
+        Anything that prevents the precheck from running to
+        completion — missing CLI, permission errors, etc. — bubbles
+        up as a ``CommandError(INTERNAL_ERROR)``: silently treating
+        those as "invalid" would route the rename into the file-level
+        fallback even when the YAML *does* validate, recreating the
+        very footgun (rename without a successful flash) we're
+        trying to avoid.
+        """
+        try:
+            proc = await create_subprocess_exec(
+                *self._esphome_cmd,
+                "--dashboard",
+                "config",
+                config_path,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            return await proc.wait() == 0
+        except Exception as exc:
+            _LOGGER.warning("YAML precheck failed to run for %s: %s", config_path, exc)
+            msg = f"Could not validate {config_path}: {exc}"
+            raise CommandError(ErrorCode.INTERNAL_ERROR, msg) from exc
 
     @api_command("devices/delete")
     async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
@@ -996,6 +1054,14 @@ class DevicesController:
         if getattr(job, "status", None) != JobStatus.COMPLETED:
             return
         job_type = getattr(job, "job_type", None)
+        if job_type == JobType.RENAME:
+            # ``esphome rename`` deletes the old YAML and writes a new
+            # one with a different filename — neither path is the
+            # ``configuration`` field on the job. A full scan is the
+            # simplest way to pick up both the disappearance of the
+            # old entry and the appearance of the new one.
+            self._db.create_background_task(self._scanner.scan())
+            return
         if job_type not in (JobType.COMPILE, JobType.UPLOAD, JobType.INSTALL):
             return
         configuration = getattr(job, "configuration", "")
