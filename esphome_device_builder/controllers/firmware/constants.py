@@ -61,12 +61,6 @@ _PROGRESS_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"^\s*Uploading:.*?\b(\d{1,3})\s*%"),
 )
 
-# How long to wait for a SIGTERM'd subprocess to exit before we
-# escalate to SIGKILL. ESPHome / PlatformIO usually clean up promptly;
-# the longer floor protects against esptool mid-flash where USB I/O
-# can stall the process briefly.
-_TERMINATE_GRACE_SECONDS = 3.0
-
 # History retention. Bulk operations can spawn dozens of jobs at once;
 # we want a useful audit trail without letting the metadata file grow
 # without bound.

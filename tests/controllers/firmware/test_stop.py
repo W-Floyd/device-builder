@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from esphome_device_builder.controllers.firmware import FirmwareController
-from esphome_device_builder.controllers.firmware.helpers import _signal_process_group
+from esphome_device_builder.helpers.process import _signal_process_group
 from esphome_device_builder.helpers.subprocess import create_subprocess_exec
 
 # Process groups, ``os.fork``, and ``SIGKILL`` are POSIX-only. The
@@ -88,7 +88,7 @@ def test_signal_process_group_returns_false_when_killpg_says_dead(
     "the getpgid check already protects us") would surface here.
     """
     monkeypatch.setattr(
-        "esphome_device_builder.controllers.firmware.helpers.os.getpgid",
+        "esphome_device_builder.helpers.process.os.getpgid",
         lambda _pid: 12345,
     )
 
@@ -96,7 +96,7 @@ def test_signal_process_group_returns_false_when_killpg_says_dead(
         raise ProcessLookupError
 
     monkeypatch.setattr(
-        "esphome_device_builder.controllers.firmware.helpers.os.killpg",
+        "esphome_device_builder.helpers.process.os.killpg",
         _raise_lookup,
     )
 
@@ -115,7 +115,7 @@ def test_signal_process_group_returns_false_on_permission_error(
     pin both halves — return value and the warning log.
     """
     monkeypatch.setattr(
-        "esphome_device_builder.controllers.firmware.helpers.os.getpgid",
+        "esphome_device_builder.helpers.process.os.getpgid",
         lambda _pid: 12345,
     )
 
@@ -123,11 +123,11 @@ def test_signal_process_group_returns_false_on_permission_error(
         raise PermissionError
 
     monkeypatch.setattr(
-        "esphome_device_builder.controllers.firmware.helpers.os.killpg",
+        "esphome_device_builder.helpers.process.os.killpg",
         _raise_perm,
     )
 
-    with caplog.at_level("WARNING", logger="esphome_device_builder.controllers.firmware.helpers"):
+    with caplog.at_level("WARNING", logger="esphome_device_builder.helpers.process"):
         assert _signal_process_group(99999, signal.SIGTERM) is False
 
     assert any("Permission denied signalling pgid" in rec.message for rec in caplog.records)
