@@ -28,38 +28,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from esphome_device_builder.controllers.config import DashboardSettings
-from esphome_device_builder.controllers.firmware import FirmwareController
 from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.models import ErrorCode, EventType, JobStatus, JobType
-
-
-def _controller(tmp_path: Path) -> FirmwareController:
-    """Build a controller wired to a real ``DashboardSettings`` for path validation.
-
-    Mirrors ``test_install.py``'s helper — the validator inside
-    ``upload`` calls ``rel_path``, which needs a real
-    ``config_dir`` / ``absolute_config_dir``. Everything else
-    (queue, persistence, supersede check, bus) is stubbed.
-    """
-    settings = DashboardSettings()
-    settings.config_dir = tmp_path
-    settings.absolute_config_dir = tmp_path.resolve()
-
-    controller = FirmwareController.__new__(FirmwareController)
-    controller._jobs = {}
-    controller._queue = AsyncMock()
-    controller._persist_jobs = AsyncMock()
-    controller._supersede_active_jobs = AsyncMock()
-
-    bus = MagicMock()
-    bus.fire = MagicMock()
-    controller._db = type("DB", (), {"settings": settings, "bus": bus})()
-    return controller
+from tests.controllers.firmware.conftest import FirmwareControllerFactory
 
 
 @pytest.mark.asyncio
-async def test_upload_returns_queued_job_with_upload_type(tmp_path: Path) -> None:
+async def test_upload_returns_queued_job_with_upload_type(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """Happy path: handler returns a ``QUEUED`` ``FirmwareJob`` of type ``UPLOAD``.
 
     The frontend's "live tasks" panel keys off ``status`` and
@@ -67,7 +44,7 @@ async def test_upload_returns_queued_job_with_upload_type(tmp_path: Path) -> Non
     refactor that defaults to ``COMPILE`` (the most common job
     type) by mistake.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
     (tmp_path / "kitchen.yaml").write_text("")
 
     job = await controller.upload(configuration="kitchen.yaml")
@@ -78,7 +55,9 @@ async def test_upload_returns_queued_job_with_upload_type(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_upload_defaults_port_to_empty_string(tmp_path: Path) -> None:
+async def test_upload_defaults_port_to_empty_string(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """``port`` defaults to ``""`` — *not* ``"OTA"``.
 
     The legacy spawn protocol defaults ``upload`` with no port,
@@ -91,7 +70,7 @@ async def test_upload_defaults_port_to_empty_string(tmp_path: Path) -> None:
     unifies the defaults breaks visibly here AND in the install
     suite.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
     (tmp_path / "kitchen.yaml").write_text("")
 
     job = await controller.upload(configuration="kitchen.yaml")
@@ -104,7 +83,9 @@ async def test_upload_defaults_port_to_empty_string(tmp_path: Path) -> None:
     ["OTA", "/dev/ttyUSB0", "192.168.1.5", "kitchen.local", "fe80::1"],
 )
 @pytest.mark.asyncio
-async def test_upload_forwards_custom_port_to_job(tmp_path: Path, port: str) -> None:
+async def test_upload_forwards_custom_port_to_job(
+    tmp_path: Path, port: str, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """Caller-supplied port shapes (OTA / serial / IP / hostname) round-trip onto the job.
 
     ``_build_command`` reads ``job.port`` to render the
@@ -112,7 +93,7 @@ async def test_upload_forwards_custom_port_to_job(tmp_path: Path, port: str) -> 
     mutated the value here, the upload would target the wrong
     device.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
     (tmp_path / "kitchen.yaml").write_text("")
 
     job = await controller.upload(configuration="kitchen.yaml", port=port)
@@ -121,7 +102,9 @@ async def test_upload_forwards_custom_port_to_job(tmp_path: Path, port: str) -> 
 
 
 @pytest.mark.asyncio
-async def test_upload_validates_port_before_configuration(tmp_path: Path) -> None:
+async def test_upload_validates_port_before_configuration(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """A typo'd port raises before the configuration validator runs.
 
     ``_validate_port`` is the first line of the handler. Its
@@ -138,7 +121,7 @@ async def test_upload_validates_port_before_configuration(tmp_path: Path) -> Non
     ("Invalid configuration filename …") instead of the
     port-shape error.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     with pytest.raises(CommandError) as exc:
         await controller.upload(configuration="../etc/passwd", port="not a port")
@@ -149,7 +132,9 @@ async def test_upload_validates_port_before_configuration(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_upload_rejects_traversal_configuration(tmp_path: Path) -> None:
+async def test_upload_rejects_traversal_configuration(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """A traversal-shaped configuration trips the boundary validator.
 
     The validator helper itself is fully covered in
@@ -159,7 +144,7 @@ async def test_upload_rejects_traversal_configuration(tmp_path: Path) -> None:
     direct WS client could path-traverse via ``configuration``
     even though every other handler stays gated.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     with pytest.raises(CommandError) as exc:
         await controller.upload(configuration="../etc/passwd")
@@ -168,7 +153,9 @@ async def test_upload_rejects_traversal_configuration(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_enqueues_before_firing_job_queued(tmp_path: Path) -> None:
+async def test_upload_enqueues_before_firing_job_queued(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """``_queue.put`` runs *before* the ``JOB_QUEUED`` broadcast.
 
     Same race-prevention contract as ``install``: a frontend
@@ -188,7 +175,7 @@ async def test_upload_enqueues_before_firing_job_queued(tmp_path: Path) -> None:
     parent.queue.put = AsyncMock()
     parent.bus.fire = MagicMock()
 
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
     controller._queue = parent.queue
     controller._db.bus = parent.bus
     (tmp_path / "kitchen.yaml").write_text("")
@@ -204,7 +191,9 @@ async def test_upload_enqueues_before_firing_job_queued(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_upload_registers_job_in_jobs_map(tmp_path: Path) -> None:
+async def test_upload_registers_job_in_jobs_map(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """The new job lands in ``self._jobs`` keyed by ``job_id``.
 
     Subsequent ``firmware/get_jobs`` / ``firmware/cancel`` /
@@ -212,7 +201,7 @@ async def test_upload_registers_job_in_jobs_map(tmp_path: Path) -> None:
     forgetting to register it here would leave those handlers
     raising ``"Job not found"`` for a job the user just queued.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
     (tmp_path / "kitchen.yaml").write_text("")
 
     job = await controller.upload(configuration="kitchen.yaml")

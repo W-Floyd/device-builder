@@ -26,43 +26,17 @@ specifically.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from esphome_device_builder.controllers.config import DashboardSettings
-from esphome_device_builder.controllers.firmware import FirmwareController
 from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.models import ErrorCode, EventType, FirmwareJob, JobStatus, JobType
-
-
-def _controller(tmp_path: Path) -> FirmwareController:
-    """Build a controller wired to a real ``DashboardSettings`` for path validation.
-
-    The bulk validator inside ``compile_bulk`` calls ``rel_path``
-    in an executor, which needs a real ``config_dir`` /
-    ``absolute_config_dir``. Everything else (queue, persistence,
-    supersede check, bus) is stubbed.
-    """
-    settings = DashboardSettings()
-    settings.config_dir = tmp_path
-    settings.absolute_config_dir = tmp_path.resolve()
-
-    controller = FirmwareController.__new__(FirmwareController)
-    controller._jobs = {}
-    controller._queue = AsyncMock()
-    controller._persist_jobs = AsyncMock()
-    controller._supersede_active_jobs = AsyncMock()
-
-    bus = MagicMock()
-    bus.fire = MagicMock()
-    controller._db = type("DB", (), {"settings": settings, "bus": bus})()
-    return controller
+from tests.controllers.firmware.conftest import FirmwareControllerFactory
 
 
 @pytest.mark.asyncio
 async def test_compile_bulk_returns_queued_jobs_for_every_config(
-    tmp_path: Path,
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
 ) -> None:
     """Happy path: one ``COMPILE`` job per configuration, all ``QUEUED``.
 
@@ -72,7 +46,7 @@ async def test_compile_bulk_returns_queued_jobs_for_every_config(
     """
     for name in ("kitchen.yaml", "garage.yaml", "office.yaml"):
         (tmp_path / name).write_text("")
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     jobs = await controller.compile_bulk(
         configurations=["kitchen.yaml", "garage.yaml", "office.yaml"],
@@ -85,7 +59,7 @@ async def test_compile_bulk_returns_queued_jobs_for_every_config(
 
 @pytest.mark.asyncio
 async def test_compile_bulk_rejects_whole_batch_on_traversal_entry(
-    tmp_path: Path,
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
 ) -> None:
     """A traversal payload anywhere in the list rejects the whole batch.
 
@@ -99,7 +73,7 @@ async def test_compile_bulk_rejects_whole_batch_on_traversal_entry(
     """
     (tmp_path / "kitchen.yaml").write_text("")
     (tmp_path / "garage.yaml").write_text("")
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     with pytest.raises(CommandError) as exc:
         await controller.compile_bulk(
@@ -115,7 +89,7 @@ async def test_compile_bulk_rejects_whole_batch_on_traversal_entry(
 
 @pytest.mark.asyncio
 async def test_compile_bulk_rejects_whole_batch_on_empty_entry(
-    tmp_path: Path,
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
 ) -> None:
     """An empty-string configuration rejects the whole batch.
 
@@ -126,7 +100,7 @@ async def test_compile_bulk_rejects_whole_batch_on_empty_entry(
     the validator entirely).
     """
     (tmp_path / "kitchen.yaml").write_text("")
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     with pytest.raises(CommandError) as exc:
         await controller.compile_bulk(configurations=["kitchen.yaml", ""])
@@ -136,7 +110,7 @@ async def test_compile_bulk_rejects_whole_batch_on_empty_entry(
 
 @pytest.mark.asyncio
 async def test_compile_bulk_skips_entries_with_enqueue_command_error(
-    tmp_path: Path,
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
 ) -> None:
     """A ``CommandError`` from ``_enqueue`` skips that entry but keeps going.
 
@@ -154,7 +128,7 @@ async def test_compile_bulk_skips_entries_with_enqueue_command_error(
     """
     for name in ("kitchen.yaml", "locked.yaml", "office.yaml"):
         (tmp_path / name).write_text("")
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     real_enqueue = controller._enqueue
 
@@ -183,14 +157,16 @@ async def test_compile_bulk_skips_entries_with_enqueue_command_error(
 
 
 @pytest.mark.asyncio
-async def test_compile_bulk_empty_input_returns_empty_list(tmp_path: Path) -> None:
+async def test_compile_bulk_empty_input_returns_empty_list(
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
+) -> None:
     """An empty ``configurations`` list returns ``[]`` without raising.
 
     Frontend's "select all and compile" can produce an empty
     list when the user selected nothing — surface a clean empty
     result rather than a confusing error.
     """
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     jobs = await controller.compile_bulk(configurations=[])
 
@@ -200,7 +176,7 @@ async def test_compile_bulk_empty_input_returns_empty_list(tmp_path: Path) -> No
 
 @pytest.mark.asyncio
 async def test_compile_bulk_fires_job_queued_per_successful_entry(
-    tmp_path: Path,
+    tmp_path: Path, firmware_controller_factory: FirmwareControllerFactory
 ) -> None:
     """``JOB_QUEUED`` fires exactly once per queued job — no double-fire, no skip.
 
@@ -210,7 +186,7 @@ async def test_compile_bulk_fires_job_queued_per_successful_entry(
     """
     for name in ("kitchen.yaml", "garage.yaml"):
         (tmp_path / name).write_text("")
-    controller = _controller(tmp_path)
+    controller = firmware_controller_factory(with_queue=True)
 
     jobs = await controller.compile_bulk(configurations=["kitchen.yaml", "garage.yaml"])
 
