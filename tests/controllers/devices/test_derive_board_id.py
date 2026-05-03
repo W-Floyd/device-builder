@@ -24,7 +24,6 @@ Six branches to pin:
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -118,11 +117,43 @@ def test_derive_uses_pio_board_match_first(
 def test_derive_falls_back_to_platform_when_pio_board_misses(
     tmp_path: Path, make_controller: MakeControllerFactory
 ) -> None:
-    """No PlatformIO match → ``find_by_platform_variant`` runs.
+    """``board:`` present but unknown → ``find_by_platform_variant`` runs.
 
-    Covers the YAML shape where the user only specified
-    ``esp32:`` without a ``board:`` field. The fallback is
-    coarser but still catches the common "generic ESP32" case.
+    Pin the actual fallback chain: a YAML with a ``board:`` field
+    whose value the catalog doesn't recognise should still try the
+    coarser platform lookup before giving up. Without the explicit
+    ``board:``, ``_derive_board_id_from_yaml`` skips the
+    ``find_by_pio_board`` call entirely (see the no-board-specified
+    test below for that path), so a test without a ``board:`` field
+    wouldn't actually pin the "miss-then-fallback" branch this is
+    about.
+    """
+    controller = make_controller(tmp_path, with_boards=True)
+    controller._db.boards.find_by_pio_board = MagicMock(return_value=None)
+    controller._db.boards.find_by_platform_variant = MagicMock(
+        return_value=_stub_match("generic-esp32")
+    )
+    _write_yaml(tmp_path, "kitchen.yaml", platform="esp32", board="unknown-board")
+
+    result = controller._derive_board_id_from_yaml(tmp_path, "kitchen.yaml")
+
+    assert result == "generic-esp32"
+    # Both lookups ran in order: PIO first, then platform fallback.
+    controller._db.boards.find_by_pio_board.assert_called_once_with("unknown-board", "")
+    controller._db.boards.find_by_platform_variant.assert_called_once_with("esp32", "")
+    meta = get_device_metadata(tmp_path, "kitchen.yaml")
+    assert meta == {"board_id": "generic-esp32"}
+
+
+def test_derive_skips_pio_board_when_yaml_omits_board_field(
+    tmp_path: Path, make_controller: MakeControllerFactory
+) -> None:
+    """No ``board:`` in the YAML → ``find_by_pio_board`` is never called.
+
+    Covers the YAML shape where the user only specified ``esp32:``
+    without a ``board:`` field. The implementation skips the PIO
+    lookup entirely (gated on truthy ``pio_board``) and goes
+    straight to the platform fallback.
     """
     controller = make_controller(tmp_path, with_boards=True)
     controller._db.boards.find_by_pio_board = MagicMock(return_value=None)
@@ -134,9 +165,9 @@ def test_derive_falls_back_to_platform_when_pio_board_misses(
     result = controller._derive_board_id_from_yaml(tmp_path, "kitchen.yaml")
 
     assert result == "generic-esp32"
+    # PIO lookup was skipped — pio_board was empty.
+    controller._db.boards.find_by_pio_board.assert_not_called()
     controller._db.boards.find_by_platform_variant.assert_called_once_with("esp32", "")
-    meta = get_device_metadata(tmp_path, "kitchen.yaml")
-    assert meta == {"board_id": "generic-esp32"}
 
 
 def test_derive_returns_empty_when_no_catalog_entry_matches(
@@ -161,8 +192,7 @@ def test_derive_returns_empty_when_no_catalog_entry_matches(
     assert meta == {}
 
 
-@pytest.mark.asyncio
-async def test_derive_swallows_persist_failure_and_still_returns_id(
+def test_derive_swallows_persist_failure_and_still_returns_id(
     tmp_path: Path,
     make_controller: MakeControllerFactory,
     monkeypatch: pytest.MonkeyPatch,
@@ -174,6 +204,13 @@ async def test_derive_swallows_persist_failure_and_still_returns_id(
     because the sidecar write failed (e.g. read-only mount,
     permissions). Pin the warning so an operator gets the
     ``Could not persist derived board_id`` log line.
+
+    Sync test even though the rest of the test file mixes sync and
+    async — ``_derive_board_id_from_yaml`` itself is sync (production
+    calls it from inside ``loop.run_in_executor`` via the scanner's
+    metadata resolver, so blockbuster never sees the ``read_text``).
+    Calling it directly from an async test trips blockbuster on the
+    sync I/O even though production is fine.
     """
     controller = make_controller(tmp_path, with_boards=True)
     controller._db.boards.find_by_pio_board = MagicMock(return_value=_stub_match("generic-esp32c3"))
@@ -194,7 +231,3 @@ async def test_derive_swallows_persist_failure_and_still_returns_id(
     assert result == "generic-esp32c3"
     warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
     assert any("kitchen.yaml" in m for m in warnings), warnings
-    # ``await`` keeps blockbuster's async-loop check happy on Linux CI
-    # (the body only does sync work, but the test file ships an async
-    # test alongside the sync ones for executor-route parity).
-    await asyncio.sleep(0)
