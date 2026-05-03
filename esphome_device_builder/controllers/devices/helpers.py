@@ -11,6 +11,7 @@ upstream decides to keep it.
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import TYPE_CHECKING, Any
@@ -36,13 +37,23 @@ from ..config import clear_volatile_device_metadata, remove_device_metadata
 from .constants import _CONCEALED_SECRET_RE
 
 if TYPE_CHECKING:
+    from ...models import ComponentCatalogEntry, ConfigEntry
     from .._device_state_monitor import DeviceStateMonitor
     from ..components import _FeaturedRecord
+
+# Top-level YAML key matcher: line starts at column zero with an
+# identifier, followed by ``:``. ``re.MULTILINE`` so ``^`` matches the
+# start of every line, not just the document. Used instead of
+# ``yaml.safe_load`` for top-level-block detection because ESPHome
+# configs commonly carry custom tags (``!secret``, ``!include``) the
+# standard loader can't handle.
+_TOP_LEVEL_KEY_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:", re.MULTILINE)
 
 __all__ = [
     "_apply_featured_presets",
     "_archive_clear_device_sidecars",
     "_build_address_cache_args",
+    "_drop_unconfigured_dependent_fields",
     "_normalize_pin_value",
     "_redact_concealed_secrets",
     "_remove_device_sidecars",
@@ -253,6 +264,75 @@ def _apply_featured_presets(
         if not user_supplied and preset.value is not None:
             merged[key] = preset.value
     return merged
+
+
+def _drop_unconfigured_dependent_fields(
+    fields: dict[str, Any],
+    component: ComponentCatalogEntry,
+    existing_yaml: str,
+) -> dict[str, Any]:
+    """
+    Strip fields whose ``depends_on_component`` block isn't in *existing_yaml*.
+
+    Returns a new field map with fields that gate on a separate
+    top-level component (``mqtt:``, ``web_server:``, ``zigbee:``, ...)
+    removed when that block isn't configured on the device. Featured
+    components target the dashboard's native-API setup, which doesn't
+    carry an ``mqtt:`` block — emitting ``availability:`` /
+    ``state_topic:`` / ``qos:`` defaults the frontend pre-fills would
+    produce a YAML config ESPHome rejects (or silently ignores).
+
+    The component currently being added counts as configured — adding
+    ``mqtt`` itself with ``discovery: true`` keeps the discovery field
+    even though ``mqtt:`` isn't in the existing YAML yet.
+
+    Recurses into nested dict fields so sub-fields carrying their own
+    ``depends_on_component`` (multi-phase sensors with per-phase MQTT
+    options, ...) get the same gate.
+
+    Top-level blocks contributed by ``packages:`` aren't detected — the
+    scan is regex-based on the file text rather than a full ESPHome
+    package merge, so a device gating MQTT fields on a package-provided
+    ``mqtt:`` block won't see those fields kept. Standard ESPHome tags
+    (``!secret``, ``!include``) ride through unaffected.
+    """
+    configured_blocks = set(_TOP_LEVEL_KEY_RE.findall(existing_yaml))
+    # ``component.id`` is qualified for platform-style entries
+    # (``switch.gpio``); the YAML lands under the bare domain stem.
+    configured_blocks.add(component.id.split(".", 1)[0])
+
+    entries_by_key = {ce.key: ce for ce in component.config_entries}
+    return _filter_dependent_recursive(fields, entries_by_key, configured_blocks)
+
+
+def _filter_dependent_recursive(
+    fields: dict[str, Any],
+    entries_by_key: dict[str, ConfigEntry],
+    configured_blocks: set[str],
+) -> dict[str, Any]:
+    """Recursively apply the depends_on_component gate to a fields mapping."""
+    out: dict[str, Any] = {}
+    for key, value in fields.items():
+        ce = entries_by_key.get(key)
+        if _gates_on_unconfigured_block(ce, configured_blocks):
+            continue
+        if isinstance(value, dict) and ce is not None and ce.config_entries:
+            sub_entries = {sub.key: sub for sub in ce.config_entries}
+            out[key] = _filter_dependent_recursive(value, sub_entries, configured_blocks)
+        else:
+            out[key] = value
+    return out
+
+
+def _gates_on_unconfigured_block(
+    entry: ConfigEntry | None,
+    configured_blocks: set[str],
+) -> bool:
+    """Return True when *entry* depends on a top-level block not in *configured_blocks*."""
+    if entry is None:
+        return False
+    gate = entry.depends_on_component
+    return bool(gate) and gate not in configured_blocks
 
 
 def _build_address_cache_args(device: Device, monitor: DeviceStateMonitor | None) -> list[str]:
