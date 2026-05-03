@@ -32,6 +32,7 @@ from ...helpers.device_yaml import (
     parse_platform_from_yaml,
 )
 from ...helpers.json import JSONDecodeError, dumps_indent, loads
+from ...helpers.process import kill_quietly
 from ...helpers.subprocess import create_subprocess_exec, iter_lines_with_progress
 from ...helpers.yaml import merge_component_yaml, rewrite_esphome_name
 from ...models import (
@@ -1875,7 +1876,7 @@ class DevicesController:
             # is what tells the frontend the cancel succeeded. ``proc`` may
             # be ``None`` if cancellation arrived before spawn returned.
             if proc is not None and proc.returncode is None:
-                proc.kill()
+                kill_quietly(proc)
             # Honour the cancellation contract — only swallow if no
             # outstanding cancel requests remain on this task.
             if (current := asyncio.current_task()) and current.cancelling():

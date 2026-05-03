@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..helpers.api import api_command
 from ..helpers.json import JSONDecodeError, dumps, loads
+from ..helpers.process import kill_quietly
 from ..helpers.subprocess import create_subprocess_exec
 from .firmware.helpers import _find_esphome_cmd
 
@@ -111,7 +112,7 @@ class EditorController:
             try:
                 await asyncio.wait_for(proc.wait(), timeout=1.0)
             except TimeoutError:
-                proc.kill()
+                kill_quietly(proc)
                 await proc.wait()
 
     def _resolve_file(self, requested: str, configuration: str, content: str) -> str:

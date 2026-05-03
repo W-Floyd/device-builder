@@ -15,11 +15,11 @@ import logging
 import os
 import re
 import sys
-from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ...helpers.api import CommandError
+from ...helpers.process import kill_quietly
 from ...helpers.subprocess import create_subprocess_exec
 from ...models import ErrorCode, FirmwareJob, JobStatus, JobType
 from .constants import (
@@ -28,7 +28,6 @@ from .constants import (
     _OUTPUT_TRIM_NOTICE_PREFIX,
     _PROGRESS_PATTERNS,
     _TERMINAL_JOB_STATUSES,
-    _TERMINATE_GRACE_SECONDS,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -177,89 +176,6 @@ def _parse_progress(line: str) -> int | None:
     return None
 
 
-def _signal_process_group(pid: int, sig: int) -> bool:
-    """
-    Send *sig* to the process group of *pid*; return True iff delivered.
-
-    Used to take down the whole esphome → platformio → gcc tree when
-    the user hits Stop. ``proc.terminate()`` / ``proc.kill()`` only
-    signal the direct child (the python esphome process), so the
-    compiler grandchildren keep running and the build effectively
-    ignores the cancel. Pair this with ``start_new_session=True`` at
-    the spawn site: that makes the spawned process the leader of a
-    new session (and a new process group), and its descendants
-    inherit that group. The dashboard process itself is *not* in the
-    same group — ``killpg(getpgid(spawned_pid), sig)`` therefore
-    targets the build subtree without touching us.
-
-    POSIX-only — ``os.getpgid`` / ``os.killpg`` don't exist on Windows.
-    The Windows path goes through ``_terminate_subtree_windows`` instead.
-
-    Falls back gracefully:
-    * ``ProcessLookupError`` — the process already exited; nothing to do.
-    * ``PermissionError`` — we lost the right to signal it; treat as a
-      no-op rather than crashing the controller.
-    """
-    try:
-        pgid = os.getpgid(pid)
-    except ProcessLookupError:
-        return False
-    try:
-        os.killpg(pgid, sig)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        _LOGGER.warning("Permission denied signalling pgid %d (sig %s)", pgid, sig)
-        return False
-    return True
-
-
-async def _terminate_subtree_windows(pid: int) -> bool:
-    """
-    Forcibly kill *pid* and its descendants on Windows; return True iff successful.
-
-    Windows has no process groups in the POSIX sense, so we shell out to
-    ``taskkill /F /T /PID`` — ``/T`` walks the parent-child tree from
-    *pid* down, ``/F`` is the forceful equivalent of SIGKILL. There's no
-    useful "polite" stage here: a compile chain (esphome → platformio →
-    gcc / esptool) ignores ``WM_CLOSE`` / ``CTRL_BREAK_EVENT`` anyway,
-    so we go straight to the kill.
-
-    Returns False (and logs a warning) when ``taskkill`` is missing,
-    times out, or exits non-zero (access denied, invalid pid, partial
-    failure). The caller should fall back to ``proc.kill()`` so the
-    parent at least dies even when the tree-walk fails.
-    """
-    try:
-        killer = await create_subprocess_exec(
-            "taskkill",
-            "/F",
-            "/T",
-            "/PID",
-            str(pid),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        _LOGGER.warning("taskkill not found on PATH — can't tree-kill pid %d", pid)
-        return False
-    try:
-        await asyncio.wait_for(killer.wait(), timeout=_TERMINATE_GRACE_SECONDS)
-    except TimeoutError:
-        _LOGGER.warning("taskkill timed out for pid %d", pid)
-        with suppress(ProcessLookupError):
-            killer.kill()
-        return False
-    if killer.returncode != 0:
-        _LOGGER.warning(
-            "taskkill exited %s for pid %d — caller should fall back to proc.kill()",
-            killer.returncode,
-            pid,
-        )
-        return False
-    return True
-
-
 def _validate_port(port: str) -> None:
     """Sanity-check the user-supplied ``--device`` value.
 
@@ -375,8 +291,7 @@ async def _verify_esphome_importable(cmd: list[str]) -> tuple[bool, str]:
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
     except TimeoutError:
-        with suppress(ProcessLookupError):
-            proc.kill()
+        kill_quietly(proc)
         await proc.wait()
         return False, "TimeoutExpired: 15s probe didn't return"
     output = stdout.decode("utf-8", errors="replace").strip()

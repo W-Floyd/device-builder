@@ -17,7 +17,6 @@ import importlib
 import logging
 import os
 import shutil
-import signal
 import sys
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -33,6 +32,7 @@ from esphome.storage_json import StorageJSON, ext_storage_path
 
 from ...helpers.api import CommandError, api_command
 from ...helpers.event_bus import StreamControls, stream_events
+from ...helpers.process import terminate_subtree_with_grace
 from ...helpers.subprocess import create_subprocess_exec, iter_lines_with_progress
 from ...models import ErrorCode, EventType, FirmwareJob, JobStatus, JobType
 from ..config import _load_metadata, metadata_transaction
@@ -47,7 +47,6 @@ from .constants import (
     _PRIMARY_JOB_TYPES,
     _RESET_BUILD_ENV_TARGETS,
     _TERMINAL_JOB_STATUSES,
-    _TERMINATE_GRACE_SECONDS,
 )
 from .helpers import (
     _find_esphome_cmd,
@@ -55,8 +54,6 @@ from .helpers import (
     _mark_job_terminal,
     _names_touched_by_job,
     _parse_progress,
-    _signal_process_group,
-    _terminate_subtree_windows,
     _trim_job_output,
     _validate_port,
     _verify_esphome_importable,
@@ -930,26 +927,12 @@ class FirmwareController:
         compile chain doesn't honour any of the polite signals.
         """
         proc = self._current_process
-        if proc is None or proc.returncode is not None:
+        if proc is None:
             return
-        if sys.platform == "win32":
-            if not await _terminate_subtree_windows(proc.pid):
-                # taskkill missing or hung — at least put the parent down
-                # so the runner loop can finalise the job.
-                with suppress(ProcessLookupError):
-                    proc.kill()
-            return
-        if not _signal_process_group(proc.pid, signal.SIGTERM):
-            return
-        try:
-            await asyncio.wait_for(proc.wait(), timeout=_TERMINATE_GRACE_SECONDS)
-        except TimeoutError:
-            _LOGGER.warning(
-                "Subprocess for job %s ignored SIGTERM after %.1fs — sending SIGKILL",
-                self._current_job.job_id if self._current_job else "?",
-                _TERMINATE_GRACE_SECONDS,
-            )
-            _signal_process_group(proc.pid, signal.SIGKILL)
+        await terminate_subtree_with_grace(
+            proc,
+            job_label=f"job {self._current_job.job_id}" if self._current_job else "job ?",
+        )
 
     async def _reset_build_env(self, job: FirmwareJob) -> None:
         """
