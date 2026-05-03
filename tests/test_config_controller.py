@@ -33,6 +33,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from esphome.util import SerialPort
 
 from esphome_device_builder.controllers.config import (
     ConfigController,
@@ -432,3 +433,84 @@ def test_rel_path_bounds_control_byte_payload(make_settings: MakeSettingsFactory
     with pytest.raises(CommandError) as excinfo:
         settings.rel_path(payload)
     assert len(excinfo.value.message) < 200
+
+
+# ---------------------------------------------------------------------------
+# get_serial_ports — config/serial_ports
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_serial_ports_returns_path_and_desc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each upstream ``SerialPort`` round-trips as ``{port, desc}``.
+
+    Pin both the field renaming (``path`` → ``port``,
+    ``description`` → ``desc``) and the executor-route shape
+    (``run_in_executor(None, get_serial_ports)``) — production
+    needs the executor wrap because pyserial's port-listing
+    walks ``/dev`` synchronously and would stall the loop on a
+    busy host.
+    """
+    fake_ports = [
+        SerialPort(path="/dev/ttyUSB0", description="USB Serial"),
+        SerialPort(path="/dev/ttyACM0", description="Arduino Uno"),
+    ]
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.config.get_serial_ports",
+        lambda: fake_ports,
+    )
+    controller = _make_controller(tmp_path)
+
+    result = await controller.get_serial_ports_cmd()
+
+    assert result == [
+        {"port": "/dev/ttyUSB0", "desc": "USB Serial"},
+        {"port": "/dev/ttyACM0", "desc": "Arduino Uno"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_serial_ports_substitutes_path_for_na_description(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``description == "n/a"`` → ``desc`` falls back to the port path.
+
+    pyserial returns the literal string ``"n/a"`` when it can't
+    read a USB descriptor (common with adapter chips that don't
+    expose product strings). Showing "n/a" in the dashboard's
+    flash-target dropdown is unhelpful — a refactor that dropped
+    the fallback would make the chooser look broken without
+    actually being broken.
+    """
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.config.get_serial_ports",
+        lambda: [SerialPort(path="/dev/ttyUSB0", description="n/a")],
+    )
+    controller = _make_controller(tmp_path)
+
+    result = await controller.get_serial_ports_cmd()
+
+    assert result == [{"port": "/dev/ttyUSB0", "desc": "/dev/ttyUSB0"}]
+
+
+@pytest.mark.asyncio
+async def test_get_serial_ports_returns_empty_when_no_ports(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No serial ports → empty list, not None or an exception.
+
+    The dashboard's flash-target dropdown renders "No serial
+    ports available" off an empty list; a regression that
+    returned ``None`` would break iteration in the frontend.
+    """
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.config.get_serial_ports",
+        lambda: [],
+    )
+    controller = _make_controller(tmp_path)
+
+    result = await controller.get_serial_ports_cmd()
+
+    assert result == []
