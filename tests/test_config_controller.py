@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -446,12 +447,13 @@ async def test_get_serial_ports_returns_path_and_desc(
 ) -> None:
     """Each upstream ``SerialPort`` round-trips as ``{port, desc}``.
 
-    Pin both the field renaming (``path`` → ``port``,
-    ``description`` → ``desc``) and the executor-route shape
-    (``run_in_executor(None, get_serial_ports)``) — production
-    needs the executor wrap because pyserial's port-listing
-    walks ``/dev`` synchronously and would stall the loop on a
-    busy host.
+    Pin the field renaming (``path`` → ``port``,
+    ``description`` → ``desc``). The executor-route is asserted
+    separately in ``test_get_serial_ports_runs_in_executor`` —
+    monkeypatching ``get_serial_ports`` to a sync lambda here
+    means a regression that dropped ``run_in_executor`` would
+    still pass this test, so the contract gets its own dedicated
+    pin.
     """
     fake_ports = [
         SerialPort(path="/dev/ttyUSB0", description="USB Serial"),
@@ -469,6 +471,45 @@ async def test_get_serial_ports_returns_path_and_desc(
         {"port": "/dev/ttyUSB0", "desc": "USB Serial"},
         {"port": "/dev/ttyACM0", "desc": "Arduino Uno"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_get_serial_ports_runs_in_executor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``get_serial_ports`` runs in a worker thread, not the event loop.
+
+    Capture the calling thread inside the monkeypatched lookup
+    and assert it isn't the loop's thread. Pyserial's
+    ``list_ports`` walks ``/dev`` synchronously on a busy host,
+    so dropping ``run_in_executor`` would stall the dashboard
+    until the scan finished — the failure mode this test catches
+    is silent and platform-dependent (only shows up under load),
+    which is exactly what blockbuster's per-frame check can't
+    catch from a sync stub. Direct thread-identity assertion is
+    what makes the executor route observable.
+    """
+    loop_thread = threading.get_ident()
+    captured_thread: dict[str, int] = {}
+
+    def _record_thread() -> list[SerialPort]:
+        captured_thread["tid"] = threading.get_ident()
+        return [SerialPort(path="/dev/ttyUSB0", description="USB Serial")]
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.config.get_serial_ports",
+        _record_thread,
+    )
+    controller = _make_controller(tmp_path)
+
+    await controller.get_serial_ports_cmd()
+
+    assert captured_thread.get("tid") is not None, "get_serial_ports was never invoked"
+    assert captured_thread["tid"] != loop_thread, (
+        "get_serial_ports ran on the event-loop thread — production needs "
+        "run_in_executor so pyserial's /dev walk doesn't stall the loop on "
+        "a busy host."
+    )
 
 
 @pytest.mark.asyncio
