@@ -41,6 +41,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+import aiohttp
 import pytest
 from aiohttp import web
 from pytest_aiohttp.plugin import AiohttpClient
@@ -601,7 +602,9 @@ async def test_spawn_ws_skips_non_spawn_message_type(
 
 
 async def test_spawn_ws_breaks_on_non_text_frame(
-    tmp_path: Path, aiohttp_client: AiohttpClient
+    tmp_path: Path,
+    aiohttp_client: AiohttpClient,
+    captured_spawn: dict[str, Any],
 ) -> None:
     """A binary frame breaks out of the message loop without spawning anything.
 
@@ -609,15 +612,29 @@ async def test_spawn_ws_breaks_on_non_text_frame(
     text-only protocol shouldn't trigger ``loads`` on a non-text
     payload (which would raise a confusing decode error). The
     handler bails immediately so the next request opens a clean
-    connection. Pin the break so a regression that fell through
-    to ``loads(msg.data)`` would surface here as a malformed
-    error frame instead of a clean break.
+    connection. Pin the break with two observable outcomes so a
+    regression that ``continue``-d on non-TEXT (silently fell
+    through) couldn't pass:
+
+    1. The followup ``spawn`` text frame is never processed —
+       a fall-through would emit ``{event: "exit", ...}`` on the
+       next ``receive``; the handler instead returns from the
+       break, sending the server-initiated CLOSE frame.
+    2. ``captured_spawn["cmd"]`` stays ``None`` — the
+       ``create_subprocess_exec`` fake records the command on
+       spawn, so confirming it never recorded one proves the
+       break ran before the spawn handler did.
     """
+    (tmp_path / "kitchen.yaml").write_text("")
     client = await aiohttp_client(_make_app(tmp_path))
+
     async with client.ws_connect("/compile") as ws:
         await ws.send_bytes(b"not-text")
-    # No exit frame, no error — the handler returns the empty WS
-    # response on the break and the close handshake completes.
+        await ws.send_json({"type": "spawn", "configuration": "kitchen.yaml"})
+        msg = await ws.receive(timeout=2.0)
+
+    assert msg.type is aiohttp.WSMsgType.CLOSE
+    assert captured_spawn["cmd"] is None
 
 
 async def test_spawn_ws_breaks_on_close(tmp_path: Path, aiohttp_client: AiohttpClient) -> None:
