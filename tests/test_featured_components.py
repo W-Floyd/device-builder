@@ -549,11 +549,15 @@ async def test_add_component_featured_resets_dashed_id(
         },
     )
 
-    assert "id: hlw8012" in response.yaml
+    # Auto-id from the featured display name "HLW8012 Power Monitor"
+    # — the redundant ``hlw8012_`` prefix is dropped by ``_generate_id``.
+    assert "id: hlw8012_power_monitor" in response.yaml
     assert "featured_athom-smart-plug-v3" not in response.yaml
+    # Auto-name preset from the featured display name flows into the YAML.
+    assert "name: HLW8012 Power Monitor" in response.yaml
     # Sub-entity autofill rides through the merge step.
     assert "name: Current" in response.yaml
-    assert "id: hlw8012_current" in response.yaml
+    assert "id: hlw8012_power_monitor_current" in response.yaml
 
 
 async def test_add_component_featured_keeps_user_typed_id(
@@ -584,3 +588,59 @@ async def test_add_component_featured_unknown_id_raises(
             component_id="featured.no-such-board.x",
             fields={},
         )
+
+
+async def test_add_component_featured_emits_name_for_binary_sensor(
+    catalog: ComponentCatalog, tmp_path: Any
+) -> None:
+    """
+    Regression: featured ``binary_sensor.gpio`` entries must get a ``name:``.
+
+    ``binary_sensor.gpio``'s sync output is missing the entity-base
+    ``name`` field, so the materialised view doesn't expose a ``name``
+    config_entry — without the auto-name preset flowing through the
+    apply path, adding the Sonoff Basic's "Front-Panel Button" produced
+    a YAML block with neither ``name:`` nor ``id:``, leaving the
+    resulting entity unnamed in Home Assistant.
+    """
+    (tmp_path / "sonoff.yaml").write_text("esphome:\n  name: sonoff\n", "utf-8")
+    ctrl = _make_controller(catalog, tmp_path)
+
+    response = await ctrl.add_component(
+        configuration="sonoff.yaml",
+        component_id="featured.sonoff-basic.button",
+        fields={},
+    )
+
+    assert "binary_sensor:" in response.yaml
+    assert "platform: gpio" in response.yaml
+    assert "name: Front-Panel Button" in response.yaml
+    assert "id: button" in response.yaml
+
+
+async def test_add_component_featured_skips_name_for_non_entity_platform(
+    catalog: ComponentCatalog, tmp_path: Any
+) -> None:
+    """
+    Auto-name must NOT flow into non-entity platforms (``output:``, ``i2c:``, ...).
+
+    ESPHome's ``output.gpio`` schema doesn't accept a top-level
+    ``name:`` field — it's an internal building block referenced by a
+    parent ``light:`` / ``switch:`` entry, not a HA-visible entity.
+    Emitting ``name:`` here would produce a config ESPHome rejects.
+    """
+    (tmp_path / "sonoff.yaml").write_text("esphome:\n  name: sonoff\n", "utf-8")
+    ctrl = _make_controller(catalog, tmp_path)
+
+    response = await ctrl.add_component(
+        configuration="sonoff.yaml",
+        component_id="featured.sonoff-basic.status_led_output",
+        fields={},
+    )
+
+    assert "output:" in response.yaml
+    assert "platform: gpio" in response.yaml
+    # id is universal — every component accepts it.
+    assert "id: status_led_output" in response.yaml
+    # name must NOT appear under the output block.
+    assert "name:" not in response.yaml.split("output:")[1]

@@ -481,7 +481,7 @@ def _materialise_featured(
     """
     underlying = record.underlying
     fc = record.featured
-    presets = _featured_field_presets(fc)
+    presets = _featured_field_presets(record)
     return ComponentCatalogEntry(
         id=record.full_id,
         name=fc.name or underlying.name,
@@ -499,9 +499,60 @@ def _materialise_featured(
     )
 
 
-def _featured_field_presets(fc: FeaturedComponent) -> dict[str, FieldPreset]:
+# HA entity domains where ESPHome's entity-base schema (the source of
+# the top-level ``name:`` field) is inherited. Used to decide whether
+# the auto-name preset for a featured component is safe to flow into
+# the generated YAML — emitting ``name:`` on a non-entity platform
+# (``output:``, ``i2c:``, ``rtttl:``, ...) produces a config ESPHome
+# rejects. Narrower than ``helpers.yaml._ENTITY_CATEGORIES``: that set
+# also covers platform-pattern domains that aren't HA entities
+# (``output``, ``ota``, ``audio_adc``, ...).
+_HA_ENTITY_CATEGORIES = frozenset(
+    {
+        "sensor",
+        "binary_sensor",
+        "switch",
+        "light",
+        "fan",
+        "cover",
+        "climate",
+        "button",
+        "number",
+        "select",
+        "text",
+        "text_sensor",
+        "lock",
+        "valve",
+        "media_player",
+        "datetime",
+        "event",
+        "update",
+        "alarm_control_panel",
+    }
+)
+
+
+def _supports_name(component: ComponentCatalogEntry) -> bool:
     """
-    Return *fc*'s field presets with sensible ``id`` / ``name`` defaults.
+    Return ``True`` when *component* accepts a top-level ``name:`` field.
+
+    Two paths: either the sync script captured ``name`` as a real
+    ``config_entry`` (the happy case), or the component sits in an HA
+    entity domain where ``name`` is inherited from
+    ``ENTITY_BASE_SCHEMA`` even though the sync output happens to be
+    missing it. The second branch covers a known sync gap on several
+    entity platforms (notably ``binary_sensor.gpio`` and a chunk of
+    ``sensor.*``) so the auto-name preset still flows through to the
+    YAML for the user instead of producing an HA-nameless entity.
+    """
+    if any(ce.key == "name" for ce in component.config_entries):
+        return True
+    return str(component.category) in _HA_ENTITY_CATEGORIES
+
+
+def _featured_field_presets(record: _FeaturedRecord) -> dict[str, FieldPreset]:
+    """
+    Return *record*'s field presets with sensible ``id`` / ``name`` defaults.
 
     The board manifest's explicit ``fields`` entries are preserved as-is.
     For ``id`` and ``name`` the manifest is rarely explicit, so we derive
@@ -510,11 +561,16 @@ def _featured_field_presets(fc: FeaturedComponent) -> dict[str, FieldPreset]:
     catalog id verbatim (``featured.<board>.<local>``) and the merge
     logic falls back to the bare platform stem (``id: gpio``) because
     there's no ``name`` to slug from.
+
+    The auto-name preset is gated on :func:`_supports_name` so we don't
+    inject ``name:`` on non-entity platforms (``output:``, ``i2c:``,
+    ``rtttl:``, ...) where ESPHome would reject the resulting YAML.
     """
+    fc = record.featured
     presets = dict(fc.fields)
     if "id" not in presets:
         presets["id"] = FieldPreset(value=_default_id_from_local(fc.id))
-    if "name" not in presets and fc.name:
+    if "name" not in presets and fc.name and _supports_name(record.underlying):
         presets["name"] = FieldPreset(value=fc.name)
     return presets
 

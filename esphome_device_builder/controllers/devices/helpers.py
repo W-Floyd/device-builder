@@ -32,6 +32,7 @@ from esphome.storage_json import StorageJSON, ext_storage_path
 from ...helpers.api import CommandError
 from ...helpers.hostname import is_local_hostname, normalize_hostname
 from ...models import ConfigEntryType, Device, ErrorCode
+from ..components import _featured_field_presets
 from ..config import clear_volatile_device_metadata, remove_device_metadata
 from .constants import _CONCEALED_SECRET_RE
 
@@ -208,10 +209,18 @@ def _apply_featured_presets(
     (``pin: 12``) or rich mapping (``pin: {number: 12, mode: ..., inverted: ...}``).
     Equality / membership checks compare on the bare GPIO so a manifest's
     ``suggestions: [4, 5]`` accepts whichever shape the frontend submits.
+
+    The preset map iterated here is the auto-augmented one from
+    :func:`_featured_field_presets` — so the same ``id`` / ``name``
+    defaults the frontend sees on the catalog entry also flow into the
+    YAML output, even when the underlying component doesn't surface
+    those keys as its own ``config_entries`` (e.g. ``binary_sensor.gpio``
+    has no top-level ``name`` entry; without this, adding a featured
+    button would emit YAML with neither ``name:`` nor ``id:``).
     """
     entries_by_key = {ce.key: ce for ce in record.underlying.config_entries}
     merged: dict[str, Any] = dict(user_fields)
-    for key, preset in record.featured.fields.items():
+    for key, preset in _featured_field_presets(record).items():
         user_value = merged.get(key)
         user_supplied = key in merged
         is_pin = entries_by_key.get(key) is not None and (
