@@ -170,8 +170,8 @@ class FakeWebSocketClient:
         ``send_event`` takes ``(message_id, event, data)`` —
         ``name`` here filters by the ``event`` argument. Most
         assertions only care about the data attached to a
-        specific event ("show me every ``output`` line");
-        collapsing the (message_id, event, data) tuple unpack
+        specific event ("show me every ``output`` line").
+        Collapsing the (message_id, event, data) tuple unpacking
         into one helper keeps the test bodies readable.
         """
         return [data for (_mid, event, data) in self.events if event == name]
