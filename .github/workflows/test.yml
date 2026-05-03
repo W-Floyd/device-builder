@@ -134,15 +134,15 @@ jobs:
         include:
           - channel: beta
             # ``--pre`` opts into pre-release versions; ``--upgrade``
-            # makes pip pick the highest one even if a stable is also
+            # makes uv pick the highest one even if a stable is also
             # installed transitively.
-            install: pip install --upgrade --pre esphome
+            install: uv pip install --system --upgrade --prerelease=allow esphome
             allow_failure: false
           - channel: dev
             # The ``dev`` branch is ESPHome's nightly working copy;
             # it can break at any time and we want the signal but
             # not the gate.
-            install: pip install --upgrade git+https://github.com/esphome/esphome.git@dev
+            install: uv pip install --system --upgrade git+https://github.com/esphome/esphome.git@dev
             allow_failure: true
     # Job-level ``continue-on-error`` decides whether a failure of
     # this matrix entry fails the whole workflow. ``dev`` opts into
@@ -158,27 +158,38 @@ jobs:
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
           python-version: "3.14"
-          cache: pip
+
+      - name: Set up uv
+        # Same shape as the OS-axis ``test`` job — uv for the install,
+        # ``actions/setup-python`` for the interpreter so PEP 668's
+        # externally-managed marker doesn't trip ``uv pip install
+        # --system`` on macos / windows runners.
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b  # v8.1.0
+        with:
+          enable-cache: true
 
       - name: Install package + test deps
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e '.[esphome]'
-          pip install -e '.[test]'
+        run: uv pip install --system -e '.[esphome,test]'
 
       - name: Install esphome (${{ matrix.channel }} channel)
+        # Each channel's install command pins ``uv pip`` for parity
+        # with the previous step. ``--system`` keeps everything in
+        # the runner's interpreter so subsequent ``pytest`` calls
+        # see the upgraded version.
         run: ${{ matrix.install }}
 
       - name: Show installed esphome version
         # Logs the resolved version so a failure tied to a specific
         # release is greppable in the workflow log without re-running.
-        run: pip show esphome | grep -E '^(Name|Version):'
+        run: uv pip show --system esphome | grep -E '^(Name|Version):'
 
       - name: Run pytest
-        # No ``--cov`` here — the merged coverage report comes from
-        # the OS-axis ``test`` job; this run is purely a "does the
-        # suite still pass against upstream X" probe.
-        run: pytest -q --maxfail=5 --durations=10 --ignore=tests/benchmarks
+        # ``-n auto`` runs under pytest-xdist for the same speedup
+        # the OS-axis matrix gets. No ``--cov`` here — the merged
+        # coverage report comes from the OS-axis ``test`` job; this
+        # run is purely a "does the suite still pass against
+        # upstream X" probe.
+        run: pytest -q -n auto --maxfail=5 --durations=10 --ignore=tests/benchmarks
 
   benchmarks:
     name: Run benchmarks (CodSpeed)
