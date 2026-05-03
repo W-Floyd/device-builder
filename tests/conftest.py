@@ -165,11 +165,13 @@ class FakeWebSocketClient:
         self.results.append((message_id, result))
 
     def events_for(self, name: str) -> list[Any]:
-        """Return the ``data`` payloads for every captured ``send_event(name, …)``.
+        """Return the ``data`` payloads for every captured ``send_event(..., event=name, ...)``.
 
-        Most assertions only care about the data attached to a
-        specific event ("show me every ``output`` line"); collapsing
-        the (message_id, event, data) tuple unpack into one helper
-        keeps the test bodies readable.
+        ``send_event`` takes ``(message_id, event, data)`` —
+        ``name`` here filters by the ``event`` argument. Most
+        assertions only care about the data attached to a
+        specific event ("show me every ``output`` line");
+        collapsing the (message_id, event, data) tuple unpacking
+        into one helper keeps the test bodies readable.
         """
         return [data for (_mid, event, data) in self.events if event == name]
