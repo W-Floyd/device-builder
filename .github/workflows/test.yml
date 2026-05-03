@@ -116,6 +116,70 @@ jobs:
           flags: py${{ matrix.python-version }}
           fail_ci_if_error: false
 
+  test-esphome-channels:
+    name: Pytest (esphome ${{ matrix.channel }})
+    runs-on: ubuntu-latest
+    # Probes the dashboard against the next two esphome release
+    # channels on a single Linux 3.14 runner. The ``test`` matrix
+    # above already covers stable (it's what ``pip install
+    # -e '.[esphome]'`` resolves to), so this job focuses on the
+    # forward-looking channels: ``beta`` is a strict gate so we catch
+    # incompatibilities before they ship to users, and ``dev`` is
+    # advisory (allow-failure) because ESPHome's main-branch nightly
+    # can break mid-day — we want the signal without a permanent red
+    # on every device-builder PR.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: beta
+            # ``--pre`` opts into pre-release versions; ``--upgrade``
+            # makes pip pick the highest one even if a stable is also
+            # installed transitively.
+            install: pip install --upgrade --pre esphome
+            allow_failure: false
+          - channel: dev
+            # The ``dev`` branch is ESPHome's nightly working copy;
+            # it can break at any time and we want the signal but
+            # not the gate.
+            install: pip install --upgrade git+https://github.com/esphome/esphome.git@dev
+            allow_failure: true
+    # Job-level ``continue-on-error`` decides whether a failure of
+    # this matrix entry fails the whole workflow. ``dev`` opts into
+    # advisory-only via the matrix flag; stable + beta stay strict.
+    continue-on-error: ${{ matrix.allow_failure }}
+    steps:
+      - name: Check out code from GitHub
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install package + test deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[esphome]'
+          pip install -e '.[test]'
+
+      - name: Install esphome (${{ matrix.channel }} channel)
+        run: ${{ matrix.install }}
+
+      - name: Show installed esphome version
+        # Logs the resolved version so a failure tied to a specific
+        # release is greppable in the workflow log without re-running.
+        run: pip show esphome | grep -E '^(Name|Version):'
+
+      - name: Run pytest
+        # No ``--cov`` here — the merged coverage report comes from
+        # the OS-axis ``test`` job; this run is purely a "does the
+        # suite still pass against upstream X" probe.
+        run: pytest -q --maxfail=5 --durations=10 --ignore=tests/benchmarks
+
   benchmarks:
     name: Run benchmarks (CodSpeed)
     runs-on: ubuntu-latest
