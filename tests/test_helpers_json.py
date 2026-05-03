@@ -14,6 +14,7 @@ import pytest
 from esphome_device_builder.helpers.json import (
     dumps,
     dumps_str_non_str_keys,
+    error_response,
     loads,
 )
 
@@ -61,3 +62,32 @@ def test_dumps_str_non_str_keys_serialises_plain_str_keys() -> None:
     out = dumps_str_non_str_keys({"plain": 1, "nested": {"x": 2}})
     assert isinstance(out, str)
     assert loads(out) == {"plain": 1, "nested": {"x": 2}}
+
+
+def test_error_response_default_status_400() -> None:
+    """``error_response(message)`` ships ``{"error": message}`` with HTTP 400.
+
+    The shape is the dashboard's universal error envelope — every
+    REST endpoint that returns a non-2xx with a user-facing reason
+    flows through this helper. Pin the default status and the
+    body shape so a refactor that flipped either would surface
+    here rather than at the first endpoint that misbehaves.
+    """
+    resp = error_response("nope")
+
+    assert resp.status == 400
+    assert resp.content_type == "application/json"
+    assert loads(resp.body) == {"error": "nope"}
+
+
+def test_error_response_custom_status() -> None:
+    """A caller-supplied status overrides the default.
+
+    Used by handlers that want a more specific 4xx (e.g. 403
+    Forbidden, 404 Not Found, 409 Conflict) while still surfacing
+    the same body shape HA's library expects.
+    """
+    resp = error_response("Forbidden", status=403)
+
+    assert resp.status == 403
+    assert loads(resp.body) == {"error": "Forbidden"}
