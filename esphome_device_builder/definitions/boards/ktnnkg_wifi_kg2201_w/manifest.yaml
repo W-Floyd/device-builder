@@ -16,13 +16,13 @@ tags:
 pins:
 - gpio: 4
   available: false
-  occupied_by: switch.gpio (${friendly_name})
+  occupied_by: relay
 - gpio: 12
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} Button)
+  occupied_by: Button
 - gpio: 13
   available: false
-  occupied_by: switch.gpio (redLED)
+  occupied_by: redLED
 docs_url: https://devices.esphome.io/devices/KTNNKG-Wifi-KG2201-W/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -35,16 +35,16 @@ featured_components:
       locked: true
     internal: true
     id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: switch_gpio_1
+    name: Button
+- id: relay
   component_id: switch.gpio
   fields:
     pin:
       value: 4
       locked: true
-    id: switch_gpio_1
-    name: Gpio 1
-- id: switch_gpio_2
+    id: relay
+    name: relay
+- id: redled
   component_id: switch.gpio
   fields:
     internal: true
@@ -54,7 +54,7 @@ featured_components:
     inverted:
       value: true
       locked: true
-    id: switch_gpio_2
+    id: redled
     name: redLED
 source:
   type: esphome-devices

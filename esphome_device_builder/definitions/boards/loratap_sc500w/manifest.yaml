@@ -14,19 +14,19 @@ tags:
 pins:
 - gpio: 4
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} S1 switch input)
+  occupied_by: S1 switch input
 - gpio: 5
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} S2 switch input)
+  occupied_by: S2 switch input
 - gpio: 12
   available: false
-  occupied_by: output.gpio (relay1)
+  occupied_by: relay1
 - gpio: 13
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} button)
+  occupied_by: button
 - gpio: 14
   available: false
-  occupied_by: output.gpio (relay2)
+  occupied_by: relay2
 docs_url: https://devices.esphome.io/devices/LoraTap-SC500W/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -37,57 +37,68 @@ featured_components:
       locked: true
     internal: true
     id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: binary_sensor_gpio_2
+    name: button
+- id: button1
   component_id: binary_sensor.gpio
   fields:
     pin:
       value: 4
       locked: true
     disabled_by_default: true
-    id: binary_sensor_gpio_2
-    name: Gpio 2
-- id: binary_sensor_gpio_3
+    id: button1
+    name: S1 switch input
+- id: button2
   component_id: binary_sensor.gpio
   fields:
     pin:
       value: 5
       locked: true
     disabled_by_default: true
-    id: binary_sensor_gpio_3
-    name: Gpio 3
-- id: light_binary_1
+    id: button2
+    name: S2 switch input
+- id: light1
   component_id: light.binary
   fields:
     output: relay1
-    id: light_binary_1
-    name: Binary 1
-- id: light_binary_2
+    id: light1
+    name: L1 output
+- id: light2
   component_id: light.binary
   fields:
     output: relay2
-    id: light_binary_2
-    name: Binary 2
-- id: output_gpio_1
+    id: light2
+    name: L2 output
+- id: relay1
   component_id: output.gpio
   fields:
     pin:
       value: 12
       locked: true
-    id: output_gpio_1
-- id: output_gpio_2
+    id: relay1
+- id: relay2
   component_id: output.gpio
   fields:
     pin:
       value: 14
       locked: true
-    id: output_gpio_2
+    id: relay2
 - id: sensor_wifi_signal_1
   component_id: sensor.wifi_signal
   fields:
     update_interval: 60s
     id: sensor_wifi_signal_1
-    name: Wifi Signal 1
+    name: Wifi Signal Strength
+featured_bundles:
+- id: light1_setup
+  name: L1 output (full setup)
+  component_ids:
+  - relay1
+  - light1
+- id: light2_setup
+  name: L2 output (full setup)
+  component_ids:
+  - relay2
+  - light2
 source:
   type: esphome-devices
   remote_id: LoraTap-SC500W

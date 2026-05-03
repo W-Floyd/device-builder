@@ -14,302 +14,275 @@ images:
 - images/esp32.png
 docs_url: https://devices.esphome.io/devices/Earu-EA777/
 featured_components:
-- id: sensor_modbus_controller_1
+- id: phase_a_voltage
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 0
     register_type: read
     accuracy_decimals: 1
     value_type: U_WORD
     unit_of_measurement: V
-    id: sensor_modbus_controller_1
+    id: phase_a_voltage
     name: Phase A voltage
-- id: sensor_modbus_controller_2
+- id: phase_b_voltage
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 1
     register_type: read
     accuracy_decimals: 1
     value_type: U_WORD
     unit_of_measurement: V
-    id: sensor_modbus_controller_2
+    id: phase_b_voltage
     name: Phase B voltage
-- id: sensor_modbus_controller_3
+- id: phase_c_voltage
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 2
     register_type: read
     accuracy_decimals: 1
     value_type: U_WORD
     unit_of_measurement: V
-    id: sensor_modbus_controller_3
+    id: phase_c_voltage
     name: Phase C voltage
-- id: sensor_modbus_controller_4
+- id: phase_a_current
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 3
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: A
-    id: sensor_modbus_controller_4
+    id: phase_a_current
     name: Phase A current
-- id: sensor_modbus_controller_5
+- id: phase_b_current
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 4
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: A
-    id: sensor_modbus_controller_5
+    id: phase_b_current
     name: Phase B current
-- id: sensor_modbus_controller_6
+- id: phase_c_current
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 5
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: A
-    id: sensor_modbus_controller_6
+    id: phase_c_current
     name: Phase C current
-- id: sensor_modbus_controller_7
+- id: active_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 7
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_7
+    id: active_power
     name: Active power
-- id: sensor_modbus_controller_8
+- id: phase_a_active_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 8
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_8
+    id: phase_a_active_power
     name: Phase A active power
-- id: sensor_modbus_controller_9
+- id: phase_b_active_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 9
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_9
+    id: phase_b_active_power
     name: Phase B active power
-- id: sensor_modbus_controller_10
+- id: phase_c_active_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 10
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_10
+    id: phase_c_active_power
     name: Phase C active power
-- id: sensor_modbus_controller_11
+- id: reactive_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 11
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_11
+    id: reactive_power
     name: Reactive power
-- id: sensor_modbus_controller_12
+- id: phase_a_reactive_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 12
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_12
+    id: phase_a_reactive_power
     name: Phase A reactive power
-- id: sensor_modbus_controller_13
+- id: phase_b_reactive_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 13
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_13
+    id: phase_b_reactive_power
     name: Phase B reactive power
-- id: sensor_modbus_controller_14
+- id: phase_c_reactive_power
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 14
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: W
-    id: sensor_modbus_controller_14
+    id: phase_c_reactive_power
     name: Phase C reactive power
-- id: sensor_modbus_controller_15
+- id: phase_a_power_factor
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 20
     register_type: read
     accuracy_decimals: 3
     value_type: U_WORD
     unit_of_measurement: cos φ
-    id: sensor_modbus_controller_15
+    id: phase_a_power_factor
     name: Phase A power factor
-- id: sensor_modbus_controller_16
+- id: phase_b_power_factor
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 21
     register_type: read
     accuracy_decimals: 3
     value_type: U_WORD
     unit_of_measurement: cos φ
-    id: sensor_modbus_controller_16
+    id: phase_b_power_factor
     name: Phase B power factor
-- id: sensor_modbus_controller_17
+- id: phase_c_power_factor
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 22
     register_type: read
     accuracy_decimals: 3
     value_type: U_WORD
     unit_of_measurement: cos φ
-    id: sensor_modbus_controller_17
+    id: phase_c_power_factor
     name: Phase C power factor
-- id: sensor_modbus_controller_18
+- id: current_voltage_frequency
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 26
     register_type: read
     accuracy_decimals: 2
     value_type: U_WORD
     unit_of_measurement: Hz
-    id: sensor_modbus_controller_18
+    id: current_voltage_frequency
     name: Current voltage frequency
-- id: sensor_modbus_controller_19
+- id: instrument_communication_address
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 97
     register_type: read
     value_type: U_WORD
-    id: sensor_modbus_controller_19
+    id: instrument_communication_address
     name: Instrument communication address
-- id: sensor_modbus_controller_20
+- id: communication_baud_rate
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 98
     register_type: read
     value_type: U_WORD
-    id: sensor_modbus_controller_20
+    id: communication_baud_rate
     name: Communication baud rate
-- id: sensor_modbus_controller_21
+- id: communication_data_format
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 99
     register_type: read
     value_type: U_WORD
-    id: sensor_modbus_controller_21
+    id: communication_data_format
     name: Communication data format
-- id: sensor_modbus_controller_22
+- id: current_total_active_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 29
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kWh
-    id: sensor_modbus_controller_22
+    id: current_total_active_energy
     name: Current total active energy
-- id: sensor_modbus_controller_23
+- id: current_positive_total_active_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 39
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kWh
-    id: sensor_modbus_controller_23
+    id: current_positive_total_active_energy
     name: Current positive total active energy
-- id: sensor_modbus_controller_24
+- id: current_reverse_total_active_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 49
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kWh
-    id: sensor_modbus_controller_24
+    id: current_reverse_total_active_energy
     name: Current reverse total active energy
-- id: sensor_modbus_controller_25
+- id: current_total_reactive_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 59
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kVArh
-    id: sensor_modbus_controller_25
+    id: current_total_reactive_energy
     name: Current total reactive energy
-- id: sensor_modbus_controller_26
+- id: current_positive_total_reactive_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 69
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kVArh
-    id: sensor_modbus_controller_26
+    id: current_positive_total_reactive_energy
     name: Current positive total reactive energy
-- id: sensor_modbus_controller_27
+- id: current_reverse_total_reactive_energy
   component_id: sensor.modbus_controller
   fields:
-    modbus_controller_id: earu_ea777
     address: 79
     register_type: read
     register_count: 2
     accuracy_decimals: 2
     value_type: U_DWORD
     unit_of_measurement: kVArh
-    id: sensor_modbus_controller_27
+    id: current_reverse_total_reactive_energy
     name: Current reverse total reactive energy
 source:
   type: esphome-devices

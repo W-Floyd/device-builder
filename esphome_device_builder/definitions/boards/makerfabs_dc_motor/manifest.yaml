@@ -14,16 +14,16 @@ images:
 pins:
 - gpio: 25
   available: false
-  occupied_by: output.ledc (motor_reverse_pin)
+  occupied_by: motor_reverse_pin
 - gpio: 26
   available: false
-  occupied_by: output.ledc (motor_forward_pin)
+  occupied_by: motor_forward_pin
 - gpio: 32
   available: false
-  occupied_by: binary_sensor.gpio (Endstop 2)
+  occupied_by: Endstop 2
 - gpio: 33
   available: false
-  occupied_by: binary_sensor.gpio (Endstop 1)
+  occupied_by: Endstop 1
 docs_url: https://devices.esphome.io/devices/Makerfabs-DC-Motor/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -50,32 +50,35 @@ featured_components:
       locked: true
     id: binary_sensor_gpio_2
     name: Endstop 2
-- id: fan_hbridge_1
+- id: my_fan
   component_id: fan.hbridge
   fields:
-    pin_a:
-      value: motor_forward_pin
-      locked: true
-    pin_b:
-      value: motor_reverse_pin
-      locked: true
     decay_mode: slow
-    id: fan_hbridge_1
+    pin_a: motor_forward_pin
+    pin_b: motor_reverse_pin
+    id: my_fan
     name: DC Motor
-- id: output_ledc_1
+- id: motor_reverse_pin
   component_id: output.ledc
   fields:
     pin:
       value: 25
       locked: true
-    id: output_ledc_1
-- id: output_ledc_2
+    id: motor_reverse_pin
+- id: motor_forward_pin
   component_id: output.ledc
   fields:
     pin:
       value: 26
       locked: true
-    id: output_ledc_2
+    id: motor_forward_pin
+featured_bundles:
+- id: my_fan_setup
+  name: DC Motor (full setup)
+  component_ids:
+  - motor_forward_pin
+  - motor_reverse_pin
+  - my_fan
 source:
   type: esphome-devices
   remote_id: Makerfabs-DC-Motor

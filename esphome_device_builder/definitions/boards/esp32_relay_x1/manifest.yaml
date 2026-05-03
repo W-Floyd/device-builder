@@ -17,13 +17,13 @@ tags:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (Button)
+  occupied_by: Button
 - gpio: 16
   available: false
-  occupied_by: switch.gpio (ESP32 Relay)
+  occupied_by: ESP32 Relay
 - gpio: 23
   available: false
-  occupied_by: light.status_led (ESP32 Led)
+  occupied_by: ESP32 Led
 docs_url: https://devices.esphome.io/devices/ESP32-Relay-X1/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -47,13 +47,13 @@ featured_components:
       locked: true
     id: light_status_led_1
     name: ESP32 Led
-- id: switch_gpio_1
+- id: esp32_relay
   component_id: switch.gpio
   fields:
     pin:
       value: 16
       locked: true
-    id: switch_gpio_1
+    id: esp32_relay
     name: ESP32 Relay
 source:
   type: esphome-devices

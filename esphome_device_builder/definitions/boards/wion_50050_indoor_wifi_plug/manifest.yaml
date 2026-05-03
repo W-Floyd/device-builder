@@ -15,29 +15,29 @@ tags:
 pins:
 - gpio: 13
   available: false
-  occupied_by: binary_sensor.gpio (button)
+  occupied_by: button
 - gpio: 15
   available: false
-  occupied_by: switch.gpio (Eco Plug 1)
+  occupied_by: Eco Plug 1
 docs_url: https://devices.esphome.io/devices/WiOn-50050-Indoor-WiFi-Plug/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: button
   component_id: binary_sensor.gpio
   fields:
     pin:
       value:
         number: 13
       locked: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: switch_gpio_1
+    id: button
+    name: button
+- id: relay1
   component_id: switch.gpio
   fields:
     pin:
       value: 15
       locked: true
     icon: mdi:power-socket-us
-    id: switch_gpio_1
+    id: relay1
     name: Eco Plug 1
 source:
   type: esphome-devices

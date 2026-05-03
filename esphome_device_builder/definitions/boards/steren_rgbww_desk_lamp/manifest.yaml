@@ -13,19 +13,14 @@ images:
 - images/pcb1.jpg
 docs_url: https://devices.esphome.io/devices/Steren-RGBWW-Desk-Lamp/
 featured_components:
-- id: light_rgbww_1
+- id: rgb_light
   component_id: light.rgbww
   fields:
     restore_mode: ALWAYS_OFF
-    red: red
-    green: green
-    blue: blue
-    warm_white: warm_white
-    cold_white: cold_white
     cold_white_color_temperature: 6500 K
     warm_white_color_temperature: 2000 K
     color_interlock: true
-    id: light_rgbww_1
+    id: rgb_light
     name: Light
 source:
   type: esphome-devices

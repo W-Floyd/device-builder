@@ -15,15 +15,14 @@ images:
 pins:
 - gpio: 46
   available: false
-  occupied_by: switch.gpio (Speaker Enable)
+  occupied_by: Speaker Enable
 docs_url: https://devices.esphome.io/devices/Waveshare-ESP32-S3-Touch-AMOLED-1.75/
 featured_components:
-- id: light_monochromatic_1
+- id: display_backlight
   component_id: light.monochromatic
   fields:
-    output: backlight_brightness
     restore_mode: ALWAYS_ON
-    id: light_monochromatic_1
+    id: display_backlight
     name: Backlight
 - id: switch_gpio_1
   component_id: switch.gpio

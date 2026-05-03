@@ -18,40 +18,40 @@ tags:
 pins:
 - gpio: 4
   available: false
-  occupied_by: output.ledc (pwm_w)
+  occupied_by: pwm_w
 - gpio: 22
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Onboard Button)
+  occupied_by: Onboard Button
 - gpio: 25
   available: false
-  occupied_by: output.ledc (pwm_r)
+  occupied_by: pwm_r
 - gpio: 26
   available: false
-  occupied_by: output.ledc (pwm_g)
+  occupied_by: pwm_g
 - gpio: 27
   available: false
-  occupied_by: output.ledc (pwm_b)
+  occupied_by: pwm_b
 - gpio: 33
   available: false
-  occupied_by: sensor.adc (temp_analog_reading)
+  occupied_by: temp_analog_reading
 - gpio: 34
   available: false
-  occupied_by: sensor.adc (${device_name} Voltage)
+  occupied_by: Voltage
 - gpio: 35
   available: false
-  occupied_by: sensor.adc (${device_name} Current)
+  occupied_by: Current
 - gpio: 36
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Input 1)
+  occupied_by: Input 1
 - gpio: 37
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Input 2)
+  occupied_by: Input 2
 - gpio: 38
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Input 3)
+  occupied_by: Input 3
 - gpio: 39
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Input 4)
+  occupied_by: Input 4
 docs_url: https://devices.esphome.io/devices/Shelly-Plus-RGBW-PM/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -63,7 +63,7 @@ featured_components:
         inverted: true
       locked: true
     id: binary_sensor_gpio_1
-    name: Gpio 1
+    name: Input 1
 - id: binary_sensor_gpio_2
   component_id: binary_sensor.gpio
   fields:
@@ -73,7 +73,7 @@ featured_components:
         inverted: true
       locked: true
     id: binary_sensor_gpio_2
-    name: Gpio 2
+    name: Input 2
 - id: binary_sensor_gpio_3
   component_id: binary_sensor.gpio
   fields:
@@ -83,7 +83,7 @@ featured_components:
         inverted: true
       locked: true
     id: binary_sensor_gpio_3
-    name: Gpio 3
+    name: Input 3
 - id: binary_sensor_gpio_4
   component_id: binary_sensor.gpio
   fields:
@@ -93,7 +93,7 @@ featured_components:
         inverted: true
       locked: true
     id: binary_sensor_gpio_4
-    name: Gpio 4
+    name: Input 4
 - id: binary_sensor_gpio_5
   component_id: binary_sensor.gpio
   fields:
@@ -102,7 +102,7 @@ featured_components:
         number: 22
       locked: true
     id: binary_sensor_gpio_5
-    name: Gpio 5
+    name: Onboard Button
 - id: light_rgbw_1
   component_id: light.rgbw
   fields:
@@ -111,62 +111,62 @@ featured_components:
     blue: pwm_b
     white: pwm_w
     id: light_rgbw_1
-    name: Rgbw 1
-- id: output_ledc_1
+    name: Led Stip
+- id: pwm_r
   component_id: output.ledc
   fields:
     pin:
       value: 25
       locked: true
     frequency: 19531
-    id: output_ledc_1
-- id: output_ledc_2
+    id: pwm_r
+- id: pwm_g
   component_id: output.ledc
   fields:
     pin:
       value: 26
       locked: true
     frequency: 19531
-    id: output_ledc_2
-- id: output_ledc_3
+    id: pwm_g
+- id: pwm_b
   component_id: output.ledc
   fields:
     pin:
       value: 27
       locked: true
     frequency: 19531
-    id: output_ledc_3
-- id: output_ledc_4
+    id: pwm_b
+- id: pwm_w
   component_id: output.ledc
   fields:
     pin:
       value: 4
       locked: true
     frequency: 19531
-    id: output_ledc_4
-- id: sensor_adc_1
+    id: pwm_w
+- id: temp_analog_reading
   component_id: sensor.adc
   fields:
     pin:
       value: 33
       locked: true
     attenuation: 12db
-    id: sensor_adc_1
-    name: Adc 1
-- id: sensor_resistance_1
+    id: temp_analog_reading
+    name: temp_analog_reading
+- id: temp_resistance_reading
   component_id: sensor.resistance
   fields:
-    sensor: temp_analog_reading
     configuration: DOWNSTREAM
     resistor: 10kOhm
-    id: sensor_resistance_1
-    name: Resistance 1
+    sensor: temp_analog_reading
+    id: temp_resistance_reading
+    name: temp_resistance_reading
 - id: sensor_ntc_1
   component_id: sensor.ntc
   fields:
     sensor: temp_resistance_reading
     id: sensor_ntc_1
-    name: Ntc 1
+    name: Temperature
 - id: sensor_adc_2
   component_id: sensor.adc
   fields:
@@ -176,7 +176,7 @@ featured_components:
     attenuation: 12db
     accuracy_decimals: 1
     id: sensor_adc_2
-    name: Adc 2
+    name: Voltage
 - id: sensor_adc_3
   component_id: sensor.adc
   fields:
@@ -187,7 +187,26 @@ featured_components:
     accuracy_decimals: 2
     unit_of_measurement: A
     id: sensor_adc_3
-    name: Adc 3
+    name: Current
+featured_bundles:
+- id: light_rgbw_1_setup
+  name: Led Stip (full setup)
+  component_ids:
+  - pwm_r
+  - pwm_g
+  - pwm_b
+  - pwm_w
+  - light_rgbw_1
+- id: temp_resistance_reading_setup
+  name: temp_resistance_reading (full setup)
+  component_ids:
+  - temp_analog_reading
+  - temp_resistance_reading
+- id: sensor_ntc_1_setup
+  name: Temperature (full setup)
+  component_ids:
+  - temp_resistance_reading
+  - sensor_ntc_1
 source:
   type: esphome-devices
   remote_id: Shelly-Plus-RGBW-PM

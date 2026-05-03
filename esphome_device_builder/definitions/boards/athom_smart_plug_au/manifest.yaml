@@ -15,7 +15,7 @@ tags:
 pins:
 - gpio: 3
   available: false
-  occupied_by: binary_sensor.gpio ($upper_devicename Power Button)
+  occupied_by: $upper_devicename Power Button
 - gpio: 4
   available: false
   occupied_by: sensor.hlw8012
@@ -27,10 +27,10 @@ pins:
   occupied_by: sensor.hlw8012
 - gpio: 13
   available: false
-  occupied_by: switch.gpio (blue_led)
+  occupied_by: blue_led
 - gpio: 14
   available: false
-  occupied_by: switch.gpio ($devicename)
+  occupied_by: $devicename
 docs_url: https://devices.esphome.io/devices/Athom-Smart-Plug-AU/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -66,11 +66,10 @@ featured_components:
 - id: sensor_total_daily_energy_1
   component_id: sensor.total_daily_energy
   fields:
-    power_id: socket_my_power
     unit_of_measurement: kWh
     id: sensor_total_daily_energy_1
     name: $upper_devicename Total Daily Energy
-- id: switch_gpio_1
+- id: blue_led
   component_id: switch.gpio
   fields:
     pin:
@@ -78,15 +77,15 @@ featured_components:
         number: 13
         inverted: true
       locked: true
-    id: switch_gpio_1
-    name: Gpio 1
-- id: switch_gpio_2
+    id: blue_led
+    name: blue_led
+- id: relay
   component_id: switch.gpio
   fields:
     pin:
       value: 14
       locked: true
-    id: switch_gpio_2
+    id: relay
     name: $devicename
 source:
   type: esphome-devices

@@ -19,12 +19,6 @@ images:
 docs_url: https://devices.esphome.io/devices/Tongou-TO-Q-SYS-JWT-power-meter/
 product_url: https://github.com/dshcherb/TO-Q-SYS-JWT-meter-esphome
 featured_components:
-- id: button_template_1
-  component_id: button.template
-  fields:
-    icon: mdi:checkbox-blank-off-outline
-    id: button_template_1
-    name: Clear Balance
 - id: number_tuya_1
   component_id: number.tuya
   fields:
@@ -111,7 +105,7 @@ featured_components:
     step: 1
     id: number_tuya_8
     name: Balance Shortage Threshold
-- id: number_tuya_9
+- id: charge_electricity
   component_id: number.tuya
   fields:
     number_datapoint: 14
@@ -121,7 +115,7 @@ featured_components:
     max_value: 9999
     step: 0.1
     multiply: 100
-    id: number_tuya_9
+    id: charge_electricity
     name: Charge Electricity
 - id: select_tuya_1
   component_id: select.tuya
@@ -215,36 +209,6 @@ featured_components:
     icon: mdi:home-battery-outline
     id: sensor_tuya_4
     name: Electricity Balance
-- id: sensor_template_1
-  component_id: sensor.template
-  fields:
-    unit_of_measurement: A
-    state_class: measurement
-    device_class: current
-    icon: mdi:current-ac
-    accuracy_decimals: 3
-    id: sensor_template_1
-    name: Real-time Current
-- id: sensor_template_2
-  component_id: sensor.template
-  fields:
-    unit_of_measurement: kW
-    state_class: measurement
-    device_class: power
-    icon: mdi:lightning-bolt
-    accuracy_decimals: 3
-    id: sensor_template_2
-    name: Real-time Power
-- id: sensor_template_3
-  component_id: sensor.template
-  fields:
-    unit_of_measurement: V
-    state_class: measurement
-    device_class: voltage
-    icon: mdi:flash-triangle
-    accuracy_decimals: 1
-    id: sensor_template_3
-    name: Real-time Voltage
 - id: switch_tuya_1
   component_id: switch.tuya
   fields:
@@ -279,12 +243,12 @@ featured_components:
     switch_datapoint: 11
     id: switch_tuya_5
     name: Prepayment Switch Mode
-- id: switch_tuya_6
+- id: clear_electricity_switch
   component_id: switch.tuya
   fields:
     switch_datapoint: 12
     internal: true
-    id: switch_tuya_6
+    id: clear_electricity_switch
     name: Clear Remaining Electricity
 - id: switch_tuya_7
   component_id: switch.tuya

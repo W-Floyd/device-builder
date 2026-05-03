@@ -15,19 +15,19 @@ images:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (Button 1)
+  occupied_by: Button 1
 - gpio: 14
   available: false
-  occupied_by: binary_sensor.gpio (Button 2)
+  occupied_by: Button 2
 - gpio: 16
   available: false
-  occupied_by: touchscreen.cst816 (my_touchscreen)
+  occupied_by: my_touchscreen
 - gpio: 21
   available: false
-  occupied_by: touchscreen.cst816 (my_touchscreen)
+  occupied_by: my_touchscreen
 - gpio: 38
   available: false
-  occupied_by: output.ledc (backlight_output)
+  occupied_by: backlight_output
 docs_url: https://devices.esphome.io/devices/Lilygo-TDisplay-S3-Touch/
 product_url: https://www.lilygo.cc/en-ca/products/t-display-s3
 featured_components:
@@ -51,26 +51,25 @@ featured_components:
       locked: true
     id: binary_sensor_gpio_2
     name: Button 2
-- id: light_monochromatic_1
+- id: led
   component_id: light.monochromatic
   fields:
-    output: backlight_output
     restore_mode: ALWAYS_ON
     default_transition_length: 0s
-    id: light_monochromatic_1
+    output: backlight_output
+    id: led
     name: LCD Backlight
-- id: output_ledc_1
+- id: backlight_output
   component_id: output.ledc
   fields:
     frequency: 2000
     pin:
       value: 38
       locked: true
-    id: output_ledc_1
-- id: touchscreen_cst816_1
+    id: backlight_output
+- id: my_touchscreen
   component_id: touchscreen.cst816
   fields:
-    i2c_id: i2c_onboard
     interrupt_pin:
       value: 16
       locked: true
@@ -78,8 +77,14 @@ featured_components:
       value: 21
       locked: true
     skip_probe: false
-    id: touchscreen_cst816_1
-    name: Cst816 1
+    id: my_touchscreen
+    name: my_touchscreen
+featured_bundles:
+- id: led_setup
+  name: LCD Backlight (full setup)
+  component_ids:
+  - backlight_output
+  - led
 source:
   type: esphome-devices
   remote_id: Lilygo-TDisplay-S3-Touch

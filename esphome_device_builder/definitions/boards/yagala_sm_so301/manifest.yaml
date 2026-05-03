@@ -15,43 +15,43 @@ tags:
 pins:
 - gpio: 0
   available: false
-  occupied_by: output.esp8266_pwm (output_component_blue)
+  occupied_by: output_component_blue
 - gpio: 4
   available: false
-  occupied_by: switch.gpio (${displayname} Relay 1)
+  occupied_by: Relay 1
 - gpio: 5
   available: false
-  occupied_by: binary_sensor.gpio (${displayname} Button)
+  occupied_by: Button
 - gpio: 12
   available: false
-  occupied_by: switch.gpio (${displayname} Relay 3)
+  occupied_by: Relay 3
 - gpio: 13
   available: false
-  occupied_by: switch.gpio (${displayname} Relay 2)
+  occupied_by: Relay 2
 - gpio: 14
   available: false
-  occupied_by: switch.gpio (${displayname} Relay 4)
+  occupied_by: Relay 4
 - gpio: 16
   available: false
-  occupied_by: switch.gpio (${displayname} USB Power)
+  occupied_by: USB Power
 docs_url: https://devices.esphome.io/devices/Yagala-SM-SO301/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: button
   component_id: binary_sensor.gpio
   fields:
     pin:
       value: 5
       locked: true
     internal: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
+    id: button
+    name: Button
 - id: light_monochromatic_1
   component_id: light.monochromatic
   fields:
     output: output_component_blue
     id: light_monochromatic_1
-    name: Monochromatic 1
-- id: output_esp8266_pwm_1
+    name: Blue LED
+- id: output_component_blue
   component_id: output.esp8266_pwm
   fields:
     pin:
@@ -60,17 +60,17 @@ featured_components:
     inverted:
       value: true
       locked: true
-    id: output_esp8266_pwm_1
-- id: switch_gpio_1
+    id: output_component_blue
+- id: usb_power
   component_id: switch.gpio
   fields:
     pin:
       value:
         number: 16
       locked: true
-    id: switch_gpio_1
-    name: Gpio 1
-- id: switch_gpio_2
+    id: usb_power
+    name: USB Power
+- id: relay1
   component_id: switch.gpio
   fields:
     inverted:
@@ -80,9 +80,9 @@ featured_components:
       value:
         number: 4
       locked: true
-    id: switch_gpio_2
-    name: Gpio 2
-- id: switch_gpio_3
+    id: relay1
+    name: Relay 1
+- id: relay2
   component_id: switch.gpio
   fields:
     inverted:
@@ -92,9 +92,9 @@ featured_components:
       value:
         number: 13
       locked: true
-    id: switch_gpio_3
-    name: Gpio 3
-- id: switch_gpio_4
+    id: relay2
+    name: Relay 2
+- id: relay3
   component_id: switch.gpio
   fields:
     inverted:
@@ -104,9 +104,9 @@ featured_components:
       value:
         number: 12
       locked: true
-    id: switch_gpio_4
-    name: Gpio 4
-- id: switch_gpio_5
+    id: relay3
+    name: Relay 3
+- id: relay4
   component_id: switch.gpio
   fields:
     inverted:
@@ -116,8 +116,14 @@ featured_components:
       value:
         number: 14
       locked: true
-    id: switch_gpio_5
-    name: Gpio 5
+    id: relay4
+    name: Relay 4
+featured_bundles:
+- id: light_monochromatic_1_setup
+  name: Blue LED (full setup)
+  component_ids:
+  - output_component_blue
+  - light_monochromatic_1
 source:
   type: esphome-devices
   remote_id: Yagala-SM-SO301

@@ -12,25 +12,25 @@ images:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (${device_name} Reset Button)
+  occupied_by: Reset Button
 - gpio: 5
   available: false
-  occupied_by: output.esp8266_pwm (cold_white_channel)
+  occupied_by: cold_white_channel
 - gpio: 12
   available: false
-  occupied_by: output.esp8266_pwm (green_channel)
+  occupied_by: green_channel
 - gpio: 13
   available: false
-  occupied_by: output.esp8266_pwm (blue_channel)
+  occupied_by: blue_channel
 - gpio: 14
   available: false
-  occupied_by: output.esp8266_pwm (red_channel)
+  occupied_by: red_channel
 - gpio: 15
   available: false
-  occupied_by: output.esp8266_pwm (warm_white_channel)
+  occupied_by: warm_white_channel
 docs_url: https://devices.esphome.io/devices/LEDENET-Smart-WiFi-RGB-WW-CW/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: button
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -38,9 +38,9 @@ featured_components:
         number: 0
         inverted: true
       locked: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: light_rgbww_1
+    id: button
+    name: Reset Button
+- id: device_name
   component_id: light.rgbww
   fields:
     red: red_channel
@@ -48,43 +48,53 @@ featured_components:
     blue: blue_channel
     cold_white: cold_white_channel
     warm_white: warm_white_channel
-    id: light_rgbww_1
+    id: device_name
     name: Rgbww 1
-- id: output_esp8266_pwm_1
+- id: red_channel
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 14
       locked: true
-    id: output_esp8266_pwm_1
-- id: output_esp8266_pwm_2
+    id: red_channel
+- id: green_channel
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 12
       locked: true
-    id: output_esp8266_pwm_2
-- id: output_esp8266_pwm_3
+    id: green_channel
+- id: blue_channel
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 13
       locked: true
-    id: output_esp8266_pwm_3
-- id: output_esp8266_pwm_4
+    id: blue_channel
+- id: cold_white_channel
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 5
       locked: true
-    id: output_esp8266_pwm_4
-- id: output_esp8266_pwm_5
+    id: cold_white_channel
+- id: warm_white_channel
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 15
       locked: true
-    id: output_esp8266_pwm_5
+    id: warm_white_channel
+featured_bundles:
+- id: device_name_setup
+  name: Rgbww (full setup)
+  component_ids:
+  - red_channel
+  - green_channel
+  - blue_channel
+  - cold_white_channel
+  - warm_white_channel
+  - device_name
 source:
   type: esphome-devices
   remote_id: LEDENET-Smart-WiFi-RGB-WW-CW

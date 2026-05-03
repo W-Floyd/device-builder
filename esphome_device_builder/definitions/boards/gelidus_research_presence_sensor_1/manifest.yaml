@@ -16,24 +16,17 @@ images:
 pins:
 - gpio: 4
   available: false
-  occupied_by: binary_sensor.gpio (GPIO Presence)
+  occupied_by: GPIO Presence
 docs_url: https://devices.esphome.io/devices/Gelidus-Research-Presence-Sensor-1/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: gpio_presence_sensor
   component_id: binary_sensor.gpio
   fields:
     pin:
       value: 4
       locked: true
-    id: binary_sensor_gpio_1
+    id: gpio_presence_sensor
     name: GPIO Presence
-- id: switch_template_1
-  component_id: switch.template
-  fields:
-    restore_mode: RESTORE_DEFAULT_ON
-    optimistic: true
-    id: switch_template_1
-    name: Enable Presence Sensor
 source:
   type: esphome-devices
   remote_id: Gelidus-Research-Presence-Sensor-1

@@ -17,20 +17,13 @@ featured_components:
     icon: mdi:button-pointer
     id: binary_sensor_gpio_1
     name: Button
-- id: sensor_wifi_signal_1
+- id: wifi_signal_db
   component_id: sensor.wifi_signal
   fields:
     update_interval: 60s
     entity_category: diagnostic
-    id: sensor_wifi_signal_1
+    id: wifi_signal_db
     name: WiFi Signal dB
-- id: switch_template_1
-  component_id: switch.template
-  fields:
-    optimistic: true
-    restore_mode: ALWAYS_OFF
-    id: switch_template_1
-    name: RF Receiver
 source:
   type: esphome-devices
   remote_id: Tuya-Generic-S11-IR-RF-Remote-Control

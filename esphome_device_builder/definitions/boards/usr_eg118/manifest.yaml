@@ -16,22 +16,22 @@ images:
 pins:
 - gpio: 1
   available: false
-  occupied_by: switch.gpio (DO1)
+  occupied_by: DO1
 - gpio: 2
   available: false
-  occupied_by: switch.gpio (DO2)
+  occupied_by: DO2
 - gpio: 3
   available: false
-  occupied_by: output.gpio (WDT_Trigger)
+  occupied_by: WDT_Trigger
 - gpio: 35
   available: false
-  occupied_by: sensor.adc (AI1)
+  occupied_by: AI1
 - gpio: 36
   available: false
-  occupied_by: binary_sensor.gpio (Reload)
+  occupied_by: Reload
 - gpio: 39
   available: false
-  occupied_by: binary_sensor.gpio (DI1)
+  occupied_by: DI1
 docs_url: https://devices.esphome.io/devices/USR-EG118/
 product_url: https://www.pusr.com/products/arduino-open-source-iot-gateway.html
 featured_components:
@@ -55,13 +55,13 @@ featured_components:
       locked: true
     id: binary_sensor_gpio_2
     name: Reload
-- id: output_gpio_1
+- id: wdt_trigger
   component_id: output.gpio
   fields:
     pin:
       value: 3
       locked: true
-    id: output_gpio_1
+    id: wdt_trigger
 - id: sensor_adc_1
   component_id: sensor.adc
   fields:

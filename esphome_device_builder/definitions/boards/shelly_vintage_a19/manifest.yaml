@@ -14,7 +14,7 @@ tags:
 pins:
 - gpio: 4
   available: false
-  occupied_by: output.esp8266_pwm (brightness)
+  occupied_by: brightness
 docs_url: https://devices.esphome.io/devices/Shelly-Vintage-A19/
 featured_components:
 - id: light_monochromatic_1
@@ -22,14 +22,20 @@ featured_components:
   fields:
     output: brightness
     id: light_monochromatic_1
-    name: Monochromatic 1
-- id: output_esp8266_pwm_1
+    name: Light
+- id: brightness
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 4
       locked: true
-    id: output_esp8266_pwm_1
+    id: brightness
+featured_bundles:
+- id: light_monochromatic_1_setup
+  name: Light (full setup)
+  component_ids:
+  - brightness
+  - light_monochromatic_1
 source:
   type: esphome-devices
   remote_id: Shelly-Vintage-A19

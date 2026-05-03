@@ -15,12 +15,12 @@ tags:
 - compact
 docs_url: https://devices.esphome.io/devices/Energizer-Smart-Plug/
 featured_components:
-- id: light_status_led_1
+- id: status_light
   component_id: light.status_led
   fields:
     internal: true
-    id: light_status_led_1
-    name: Status Led 1
+    id: status_light
+    name: status_light
 source:
   type: esphome-devices
   remote_id: Energizer-Smart-Plug

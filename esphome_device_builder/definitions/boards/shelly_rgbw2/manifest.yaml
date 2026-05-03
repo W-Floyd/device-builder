@@ -14,16 +14,16 @@ tags:
 pins:
 - gpio: 4
   available: false
-  occupied_by: output.esp8266_pwm (pwm_w)
+  occupied_by: pwm_w
 - gpio: 12
   available: false
-  occupied_by: output.esp8266_pwm (pwm_r)
+  occupied_by: pwm_r
 - gpio: 14
   available: false
-  occupied_by: output.esp8266_pwm (pwm_b)
+  occupied_by: pwm_b
 - gpio: 15
   available: false
-  occupied_by: output.esp8266_pwm (pwm_g)
+  occupied_by: pwm_g
 docs_url: https://devices.esphome.io/devices/Shelly-RGBW2/
 featured_components:
 - id: light_rgbw_1
@@ -35,38 +35,47 @@ featured_components:
     white: pwm_w
     id: light_rgbw_1
     name: ledstrip_shelly_rgbw2
-- id: output_esp8266_pwm_1
+- id: pwm_r
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 12
       locked: true
     frequency: 1000 Hz
-    id: output_esp8266_pwm_1
-- id: output_esp8266_pwm_2
+    id: pwm_r
+- id: pwm_g
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 15
       locked: true
     frequency: 1000 Hz
-    id: output_esp8266_pwm_2
-- id: output_esp8266_pwm_3
+    id: pwm_g
+- id: pwm_b
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 14
       locked: true
     frequency: 1000 Hz
-    id: output_esp8266_pwm_3
-- id: output_esp8266_pwm_4
+    id: pwm_b
+- id: pwm_w
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 4
       locked: true
     frequency: 1000 Hz
-    id: output_esp8266_pwm_4
+    id: pwm_w
+featured_bundles:
+- id: light_rgbw_1_setup
+  name: ledstrip_shelly_rgbw2 (full setup)
+  component_ids:
+  - pwm_r
+  - pwm_g
+  - pwm_b
+  - pwm_w
+  - light_rgbw_1
 source:
   type: esphome-devices
   remote_id: Shelly-RGBW2

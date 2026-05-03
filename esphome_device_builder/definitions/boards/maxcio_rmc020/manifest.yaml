@@ -25,10 +25,10 @@ pins:
   occupied_by: sensor.hlw8012
 - gpio: 13
   available: false
-  occupied_by: output.esp8266_pwm (${devicename}_red_output)
+  occupied_by: red_output
 - gpio: 14
   available: false
-  occupied_by: switch.gpio (${friendly_name})
+  occupied_by: relay
 docs_url: https://devices.esphome.io/devices/Maxcio-RMC020/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -36,8 +36,14 @@ featured_components:
   fields:
     device_class: power
     id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: output_esp8266_pwm_1
+    name: Button
+- id: devicename_red_led
+  component_id: light.monochromatic
+  fields:
+    output: devicename_red_output
+    id: devicename_red_led
+    name: Light
+- id: devicename_red_output
   component_id: output.esp8266_pwm
   fields:
     pin:
@@ -45,13 +51,13 @@ featured_components:
         number: 13
         inverted: true
       locked: true
-    id: output_esp8266_pwm_1
+    id: devicename_red_output
 - id: sensor_wifi_signal_1
   component_id: sensor.wifi_signal
   fields:
     update_interval: 60s
     id: sensor_wifi_signal_1
-    name: Wifi Signal 1
+    name: Wifi Signal
 - id: sensor_hlw8012_1
   component_id: sensor.hlw8012
   fields:
@@ -70,15 +76,21 @@ featured_components:
     update_interval: 10s
     id: sensor_hlw8012_1
     name: Hlw8012 1
-- id: switch_gpio_1
+- id: relay
   component_id: switch.gpio
   fields:
     pin:
       value: 14
       locked: true
     restore_mode: ALWAYS_OFF
-    id: switch_gpio_1
-    name: Gpio 1
+    id: relay
+    name: relay
+featured_bundles:
+- id: devicename_red_led_setup
+  name: Light (full setup)
+  component_ids:
+  - devicename_red_output
+  - devicename_red_led
 source:
   type: esphome-devices
   remote_id: Maxcio-RMC020

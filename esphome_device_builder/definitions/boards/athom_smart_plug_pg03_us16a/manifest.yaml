@@ -15,7 +15,7 @@ tags:
 pins:
 - gpio: 3
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} Power Button)
+  occupied_by: Power Button
 - gpio: 4
   available: false
   occupied_by: sensor.hlw8012
@@ -27,10 +27,10 @@ pins:
   occupied_by: sensor.hlw8012
 - gpio: 13
   available: false
-  occupied_by: light.status_led (${friendly_name} Status LED)
+  occupied_by: Status LED
 - gpio: 14
   available: false
-  occupied_by: switch.gpio (${friendly_name})
+  occupied_by: relay
 docs_url: https://devices.esphome.io/devices/Athom-Smart-Plug-PG03-US16A/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -44,8 +44,8 @@ featured_components:
       locked: true
     disabled_by_default: true
     id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: light_status_led_1
+    name: Power Button
+- id: blue_led
   component_id: light.status_led
   fields:
     icon: mdi:led-outline
@@ -55,8 +55,8 @@ featured_components:
         inverted: true
         number: 13
       locked: true
-    id: light_status_led_1
-    name: Status Led 1
+    id: blue_led
+    name: Status LED
 - id: sensor_hlw8012_1
   component_id: sensor.hlw8012
   fields:
@@ -80,27 +80,26 @@ featured_components:
   component_id: sensor.total_daily_energy
   fields:
     icon: mdi:clock-alert
-    power_id: socket_my_power
     unit_of_measurement: kWh
     accuracy_decimals: 3
     restore: true
     id: sensor_total_daily_energy_1
-    name: Total Daily Energy 1
+    name: Total Energy
 - id: sensor_wifi_signal_1
   component_id: sensor.wifi_signal
   fields:
     update_interval: 60s
     id: sensor_wifi_signal_1
-    name: Wifi Signal 1
-- id: switch_gpio_1
+    name: Wifi Signal
+- id: relay
   component_id: switch.gpio
   fields:
     icon: mdi:power-socket-us
     pin:
       value: 14
       locked: true
-    id: switch_gpio_1
-    name: Gpio 1
+    id: relay
+    name: relay
 source:
   type: esphome-devices
   remote_id: Athom-Smart-Plug-PG03-US16A

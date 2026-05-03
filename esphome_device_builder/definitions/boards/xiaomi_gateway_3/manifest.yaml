@@ -15,16 +15,16 @@ images:
 pins:
 - gpio: 12
   available: false
-  occupied_by: switch.gpio (${name} Zigbee Download Mode)
+  occupied_by: Zigbee Download Mode
 - gpio: 13
   available: false
-  occupied_by: switch.gpio (${name} Zigbee nRST)
+  occupied_by: Zigbee nRST
 - gpio: 14
   available: false
-  occupied_by: output.ledc (output0)
+  occupied_by: output0
 - gpio: 34
   available: false
-  occupied_by: binary_sensor.gpio (${name} Enable Pairing Mode)
+  occupied_by: Enable Pairing Mode
 docs_url: https://devices.esphome.io/devices/Xiaomi-Gateway-3/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -37,14 +37,14 @@ featured_components:
         inverted: true
       locked: true
     id: binary_sensor_gpio_1
-    name: Gpio 1
+    name: Enable Pairing Mode
 - id: light_monochromatic_1
   component_id: light.monochromatic
   fields:
     output: output0
     id: light_monochromatic_1
-    name: Monochromatic 1
-- id: output_ledc_1
+    name: green led
+- id: output0
   component_id: output.ledc
   fields:
     pin:
@@ -53,8 +53,8 @@ featured_components:
     inverted:
       value: true
       locked: true
-    id: output_ledc_1
-- id: switch_gpio_1
+    id: output0
+- id: zigbee_rst
   component_id: switch.gpio
   fields:
     pin:
@@ -65,9 +65,9 @@ featured_components:
       locked: true
     internal: true
     restore_mode: ALWAYS_OFF
-    id: switch_gpio_1
-    name: Gpio 1
-- id: switch_gpio_2
+    id: zigbee_rst
+    name: Zigbee nRST
+- id: download_mode
   component_id: switch.gpio
   fields:
     pin:
@@ -77,8 +77,14 @@ featured_components:
       value: true
       locked: true
     restore_mode: ALWAYS_OFF
-    id: switch_gpio_2
-    name: Gpio 2
+    id: download_mode
+    name: Zigbee Download Mode
+featured_bundles:
+- id: light_monochromatic_1_setup
+  name: green led (full setup)
+  component_ids:
+  - output0
+  - light_monochromatic_1
 source:
   type: esphome-devices
   remote_id: Xiaomi-Gateway-3

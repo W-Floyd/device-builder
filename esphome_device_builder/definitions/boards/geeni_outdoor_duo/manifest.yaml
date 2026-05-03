@@ -15,19 +15,19 @@ tags:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (Button)
+  occupied_by: Button
 - gpio: 5
   available: false
-  occupied_by: output.gpio (green_led_gpio)
+  occupied_by: green_led_gpio
 - gpio: 13
   available: false
-  occupied_by: output.gpio (blue_led_gpio)
+  occupied_by: blue_led_gpio
 - gpio: 14
   available: false
-  occupied_by: switch.gpio (Left plug)
+  occupied_by: Left plug
 - gpio: 16
   available: false
-  occupied_by: switch.gpio (Right plug)
+  occupied_by: Right plug
 docs_url: https://devices.esphome.io/devices/Geeni-Outdoor-Duo/
 featured_components:
 - id: binary_sensor_gpio_1
@@ -41,19 +41,19 @@ featured_components:
       locked: true
     id: binary_sensor_gpio_1
     name: Button
-- id: light_binary_1
+- id: green_led
   component_id: light.binary
   fields:
     output: green_led_gpio
-    id: light_binary_1
+    id: green_led
     name: Green LED
-- id: light_binary_2
+- id: blue_led
   component_id: light.binary
   fields:
     output: blue_led_gpio
-    id: light_binary_2
+    id: blue_led
     name: Blue LED
-- id: output_gpio_1
+- id: green_led_gpio
   component_id: output.gpio
   fields:
     pin:
@@ -62,8 +62,8 @@ featured_components:
     inverted:
       value: true
       locked: true
-    id: output_gpio_1
-- id: output_gpio_2
+    id: green_led_gpio
+- id: blue_led_gpio
   component_id: output.gpio
   fields:
     pin:
@@ -72,23 +72,34 @@ featured_components:
     inverted:
       value: true
       locked: true
-    id: output_gpio_2
-- id: switch_gpio_1
+    id: blue_led_gpio
+- id: relay_left
   component_id: switch.gpio
   fields:
     pin:
       value: 14
       locked: true
-    id: switch_gpio_1
+    id: relay_left
     name: Left plug
-- id: switch_gpio_2
+- id: relay_right
   component_id: switch.gpio
   fields:
     pin:
       value: 16
       locked: true
-    id: switch_gpio_2
+    id: relay_right
     name: Right plug
+featured_bundles:
+- id: green_led_setup
+  name: Green LED (full setup)
+  component_ids:
+  - green_led_gpio
+  - green_led
+- id: blue_led_setup
+  name: Blue LED (full setup)
+  component_ids:
+  - blue_led_gpio
+  - blue_led
 source:
   type: esphome-devices
   remote_id: Geeni-Outdoor-Duo

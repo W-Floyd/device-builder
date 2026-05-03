@@ -18,16 +18,16 @@ tags:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (push_button)
+  occupied_by: push_button
 - gpio: 12
   available: false
-  occupied_by: switch.gpio (Sonoff Basic Relay)
+  occupied_by: Sonoff Basic Relay
 - gpio: 13
   available: false
-  occupied_by: light.status_led (blue_led)
+  occupied_by: blue_led
 docs_url: https://devices.esphome.io/devices/Sonoff-BASIC-R2-v1.4/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: push_button
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -37,9 +37,9 @@ featured_components:
         inverted: true
       locked: true
     internal: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: light_status_led_1
+    id: push_button
+    name: push_button
+- id: blue_led
   component_id: light.status_led
   fields:
     internal: true
@@ -48,15 +48,15 @@ featured_components:
         number: 13
         inverted: true
       locked: true
-    id: light_status_led_1
-    name: Status Led 1
-- id: switch_gpio_1
+    id: blue_led
+    name: blue_led
+- id: relay
   component_id: switch.gpio
   fields:
     pin:
       value: 12
       locked: true
-    id: switch_gpio_1
+    id: relay
     name: Sonoff Basic Relay
 source:
   type: esphome-devices

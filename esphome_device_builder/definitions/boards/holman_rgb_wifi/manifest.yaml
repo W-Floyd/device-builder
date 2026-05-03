@@ -12,19 +12,19 @@ images:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (${friendly_name} Panel Button)
+  occupied_by: Panel Button
 - gpio: 12
   available: false
-  occupied_by: output.esp8266_pwm (output_component_green)
+  occupied_by: output_component_green
 - gpio: 13
   available: false
-  occupied_by: output.esp8266_pwm (output_component_red)
+  occupied_by: output_component_red
 - gpio: 14
   available: false
-  occupied_by: output.esp8266_pwm (output_component_blue)
+  occupied_by: output_component_blue
 docs_url: https://devices.esphome.io/devices/Holman-RGB-Wifi/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: panelbutton
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -35,14 +35,14 @@ featured_components:
           input: true
           pullup: true
       locked: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: button_restart_1
+    id: panelbutton
+    name: Panel Button
+- id: restart_button
   component_id: button.restart
   fields:
     disabled_by_default: true
-    id: button_restart_1
-    name: Restart 1
+    id: restart_button
+    name: Restart
 - id: light_rgb_1
   component_id: light.rgb
   fields:
@@ -51,40 +51,41 @@ featured_components:
     blue: output_component_blue
     id: light_rgb_1
     name: RGB Lights
-- id: output_esp8266_pwm_1
+- id: output_component_red
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 13
       locked: true
-    id: output_esp8266_pwm_1
-- id: output_esp8266_pwm_2
+    id: output_component_red
+- id: output_component_green
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 12
       locked: true
-    id: output_esp8266_pwm_2
-- id: output_esp8266_pwm_3
+    id: output_component_green
+- id: output_component_blue
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 14
       locked: true
-    id: output_esp8266_pwm_3
+    id: output_component_blue
 - id: sensor_wifi_signal_1
   component_id: sensor.wifi_signal
   fields:
     update_interval: 600s
     id: sensor_wifi_signal_1
-    name: Wifi Signal 1
-- id: text_sensor_template_1
-  component_id: text_sensor.template
-  fields:
-    icon: mdi:clock-start
-    entity_category: diagnostic
-    id: text_sensor_template_1
-    name: Uptime
+    name: wifi signal
+featured_bundles:
+- id: light_rgb_1_setup
+  name: RGB Lights (full setup)
+  component_ids:
+  - output_component_red
+  - output_component_green
+  - output_component_blue
+  - light_rgb_1
 source:
   type: esphome-devices
   remote_id: Holman-RGB-Wifi

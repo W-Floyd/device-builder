@@ -17,67 +17,67 @@ tags:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (b8-input01)
+  occupied_by: b8-0
 - gpio: 1
   available: false
-  occupied_by: binary_sensor.gpio (b8-input02)
+  occupied_by: b8-input02
 - gpio: 2
   available: false
-  occupied_by: binary_sensor.gpio (b8-input03)
+  occupied_by: b8-input03
 - gpio: 3
   available: false
-  occupied_by: binary_sensor.gpio (b8-input04)
+  occupied_by: b8-input04
 - gpio: 4
   available: false
-  occupied_by: binary_sensor.gpio (b8-input05)
+  occupied_by: b8-input05
 - gpio: 5
   available: false
-  occupied_by: binary_sensor.gpio (b8-input06)
+  occupied_by: b8-input06
 - gpio: 6
   available: false
-  occupied_by: binary_sensor.gpio (b8-input07)
+  occupied_by: b8-input07
 - gpio: 7
   available: false
-  occupied_by: binary_sensor.gpio (b8-input08)
+  occupied_by: b8-W1-io7
 - gpio: 8
   available: false
-  occupied_by: switch.gpio (b8-output01)
+  occupied_by: b8-output01
 - gpio: 9
   available: false
-  occupied_by: switch.gpio (b8-output02)
+  occupied_by: b8-output02
 - gpio: 10
   available: false
-  occupied_by: switch.gpio (b8-output03)
+  occupied_by: b8-output03
 - gpio: 11
   available: false
-  occupied_by: switch.gpio (b8-output04)
+  occupied_by: b8-output04
 - gpio: 12
   available: false
-  occupied_by: switch.gpio (b8-output05)
+  occupied_by: b8-output05
 - gpio: 13
   available: false
-  occupied_by: binary_sensor.gpio (b8-13)
+  occupied_by: b8-output06
 - gpio: 14
   available: false
-  occupied_by: binary_sensor.gpio (b8-14)
+  occupied_by: b8-output07
 - gpio: 15
   available: false
-  occupied_by: switch.gpio (b8-output08)
+  occupied_by: b8-output08
 - gpio: 21
   available: false
-  occupied_by: binary_sensor.gpio (b8-21)
+  occupied_by: b8-21
 - gpio: 40
   available: false
-  occupied_by: binary_sensor.gpio (b8-W1-io40)
+  occupied_by: b8-W1-io40
 - gpio: 47
   available: false
-  occupied_by: binary_sensor.gpio (b8-W1-io47)
+  occupied_by: b8-W1-io47
 - gpio: 48
   available: false
-  occupied_by: binary_sensor.gpio (b8-W1-io48)
+  occupied_by: b8-W1-io48
 docs_url: https://devices.esphome.io/devices/KinCony-B8/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: b8_input01
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -87,9 +87,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_1
+    id: b8_input01
     name: b8-input01
-- id: binary_sensor_gpio_2
+- id: b8_input02
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -99,9 +99,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_2
+    id: b8_input02
     name: b8-input02
-- id: binary_sensor_gpio_3
+- id: b8_input03
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -111,9 +111,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_3
+    id: b8_input03
     name: b8-input03
-- id: binary_sensor_gpio_4
+- id: b8_input04
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -123,9 +123,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_4
+    id: b8_input04
     name: b8-input04
-- id: binary_sensor_gpio_5
+- id: b8_input05
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -135,9 +135,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_5
+    id: b8_input05
     name: b8-input05
-- id: binary_sensor_gpio_6
+- id: b8_input06
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -147,9 +147,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_6
+    id: b8_input06
     name: b8-input06
-- id: binary_sensor_gpio_7
+- id: b8_input07
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -159,9 +159,9 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_7
+    id: b8_input07
     name: b8-input07
-- id: binary_sensor_gpio_8
+- id: b8_input08
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -171,7 +171,7 @@ featured_components:
         mode: INPUT
         inverted: true
       locked: true
-    id: binary_sensor_gpio_8
+    id: b8_input08
     name: b8-input08
 - id: binary_sensor_gpio_9
   component_id: binary_sensor.gpio
@@ -253,15 +253,6 @@ featured_components:
       locked: true
     id: binary_sensor_gpio_16
     name: b8-0
-- id: display_ssd1306_i2c_1
-  component_id: display.ssd1306_i2c
-  fields:
-    i2c_id: bus_a
-    model: SSD1306 128x64
-    address: 60
-    lambda: it.printf(0, 0, id(roboto), "KinCony b8");
-    id: display_ssd1306_i2c_1
-    name: Ssd1306 I2C 1
 - id: sensor_ads1115_1
   component_id: sensor.ads1115
   fields:
@@ -295,13 +286,7 @@ featured_components:
     update_interval: 5s
     id: sensor_ads1115_4
     name: ADS1115 Channel A3-GND
-- id: switch_uart_1
-  component_id: switch.uart
-  fields:
-    uart_id: uart_1
-    id: switch_uart_1
-    name: RS485 Button
-- id: switch_gpio_1
+- id: b8_output01
   component_id: switch.gpio
   fields:
     pin:
@@ -311,9 +296,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_1
+    id: b8_output01
     name: b8-output01
-- id: switch_gpio_2
+- id: b8_output02
   component_id: switch.gpio
   fields:
     pin:
@@ -323,9 +308,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_2
+    id: b8_output02
     name: b8-output02
-- id: switch_gpio_3
+- id: b8_output03
   component_id: switch.gpio
   fields:
     pin:
@@ -335,9 +320,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_3
+    id: b8_output03
     name: b8-output03
-- id: switch_gpio_4
+- id: b8_output04
   component_id: switch.gpio
   fields:
     pin:
@@ -347,9 +332,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_4
+    id: b8_output04
     name: b8-output04
-- id: switch_gpio_5
+- id: b8_output05
   component_id: switch.gpio
   fields:
     pin:
@@ -359,9 +344,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_5
+    id: b8_output05
     name: b8-output05
-- id: switch_gpio_6
+- id: b8_output06
   component_id: switch.gpio
   fields:
     pin:
@@ -371,9 +356,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_6
+    id: b8_output06
     name: b8-output06
-- id: switch_gpio_7
+- id: b8_output07
   component_id: switch.gpio
   fields:
     pin:
@@ -383,9 +368,9 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_7
+    id: b8_output07
     name: b8-output07
-- id: switch_gpio_8
+- id: b8_output08
   component_id: switch.gpio
   fields:
     pin:
@@ -395,7 +380,7 @@ featured_components:
         mode: OUTPUT
         inverted: true
       locked: true
-    id: switch_gpio_8
+    id: b8_output08
     name: b8-output08
 source:
   type: esphome-devices

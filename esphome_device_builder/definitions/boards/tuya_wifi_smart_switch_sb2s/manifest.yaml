@@ -15,13 +15,12 @@ images:
 - images/Tuya-WiFi-Smart-Switch-SB2S-submodule-back.jpg
 docs_url: https://devices.esphome.io/devices/Tuya-WiFi-Smart-Switch-SB2S/
 featured_components:
-- id: switch_output_1
+- id: relay
   component_id: switch.output
   fields:
-    output: relayoutput
     restore_mode: ALWAYS_OFF
-    id: switch_output_1
-    name: Output 1
+    id: relay
+    name: Relay
 source:
   type: esphome-devices
   remote_id: Tuya-WiFi-Smart-Switch-SB2S

@@ -12,37 +12,44 @@ images:
 pins:
 - gpio: 12
   available: false
-  occupied_by: output.esp8266_pwm (ww)
+  occupied_by: ww
 - gpio: 14
   available: false
-  occupied_by: output.esp8266_pwm (cw)
+  occupied_by: cw
 docs_url: https://devices.esphome.io/devices/Globe-Edison-Bulb-34873/
 featured_components:
 - id: light_cwww_1
   component_id: light.cwww
   fields:
-    cold_white: cw
-    warm_white: ww
     cold_white_color_temperature: 5000 K
     warm_white_color_temperature: 2000 K
     restore_mode: RESTORE_DEFAULT_ON
     constant_brightness: true
+    cold_white: cw
+    warm_white: ww
     id: light_cwww_1
     name: light
-- id: output_esp8266_pwm_1
+- id: ww
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 12
       locked: true
-    id: output_esp8266_pwm_1
-- id: output_esp8266_pwm_2
+    id: ww
+- id: cw
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 14
       locked: true
-    id: output_esp8266_pwm_2
+    id: cw
+featured_bundles:
+- id: light_cwww_1_setup
+  name: light (full setup)
+  component_ids:
+  - cw
+  - ww
+  - light_cwww_1
 source:
   type: esphome-devices
   remote_id: Globe-Edison-Bulb-34873

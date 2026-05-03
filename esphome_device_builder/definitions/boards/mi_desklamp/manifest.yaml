@@ -12,22 +12,22 @@ images:
 pins:
 - gpio: 2
   available: false
-  occupied_by: binary_sensor.gpio (button)
+  occupied_by: button
 - gpio: 4
   available: false
-  occupied_by: output.esp8266_pwm (output_cold)
+  occupied_by: output_cold
 - gpio: 5
   available: false
-  occupied_by: output.esp8266_pwm (output_warm)
+  occupied_by: output_warm
 - gpio: 12
   available: false
-  occupied_by: sensor.rotary_encoder (rotation)
+  occupied_by: rotation
 - gpio: 13
   available: false
-  occupied_by: sensor.rotary_encoder (rotation)
+  occupied_by: rotation
 docs_url: https://devices.esphome.io/devices/Mi-Desklamp/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: button
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -35,41 +35,41 @@ featured_components:
         number: 2
         inverted: true
       locked: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: light_cwww_1
+    id: button
+    name: button
+- id: light1
   component_id: light.cwww
   fields:
     default_transition_length: 0s
     constant_brightness: true
-    cold_white: output_cold
-    warm_white: output_warm
     cold_white_color_temperature: 6500K
     warm_white_color_temperature: 2650K
     gamma_correct: 0
-    id: light_cwww_1
-    name: Cwww 1
-- id: output_esp8266_pwm_1
+    cold_white: output_cold
+    warm_white: output_warm
+    id: light1
+    name: Light
+- id: output_cold
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 4
       locked: true
-    id: output_esp8266_pwm_1
-- id: output_esp8266_pwm_2
+    id: output_cold
+- id: output_warm
   component_id: output.esp8266_pwm
   fields:
     pin:
       value: 5
       locked: true
-    id: output_esp8266_pwm_2
+    id: output_warm
 - id: sensor_wifi_signal_1
   component_id: sensor.wifi_signal
   fields:
     update_interval: 60s
     id: sensor_wifi_signal_1
-    name: Wifi Signal 1
-- id: sensor_rotary_encoder_1
+    name: Wifi Signal
+- id: rotation
   component_id: sensor.rotary_encoder
   fields:
     pin_a:
@@ -79,8 +79,15 @@ featured_components:
       value: 12
       locked: true
     resolution: 2
-    id: sensor_rotary_encoder_1
-    name: Rotary Encoder 1
+    id: rotation
+    name: rotation
+featured_bundles:
+- id: light1_setup
+  name: Light (full setup)
+  component_ids:
+  - output_cold
+  - output_warm
+  - light1
 source:
   type: esphome-devices
   remote_id: Mi-Desklamp

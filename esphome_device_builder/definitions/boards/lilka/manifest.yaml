@@ -14,38 +14,38 @@ images:
 pins:
 - gpio: 0
   available: false
-  occupied_by: binary_sensor.gpio (button_select)
+  occupied_by: button_select
 - gpio: 4
   available: false
-  occupied_by: binary_sensor.gpio (button_start)
+  occupied_by: button_start
 - gpio: 5
   available: false
-  occupied_by: binary_sensor.gpio (button_a)
+  occupied_by: button_a
 - gpio: 6
   available: false
-  occupied_by: binary_sensor.gpio (button_b)
+  occupied_by: button_b
 - gpio: 9
   available: false
-  occupied_by: binary_sensor.gpio (button_d)
+  occupied_by: button_d
 - gpio: 10
   available: false
-  occupied_by: binary_sensor.gpio (button_c)
+  occupied_by: button_c
 - gpio: 38
   available: false
-  occupied_by: binary_sensor.gpio (button_up)
+  occupied_by: button_up
 - gpio: 39
   available: false
-  occupied_by: binary_sensor.gpio (button_left)
+  occupied_by: button_left
 - gpio: 40
   available: false
-  occupied_by: binary_sensor.gpio (button_right)
+  occupied_by: button_right
 - gpio: 41
   available: false
-  occupied_by: binary_sensor.gpio (button_down)
+  occupied_by: button_down
 docs_url: https://devices.esphome.io/devices/Lilka/
 product_url: https://docs.lilka.dev/
 featured_components:
-- id: binary_sensor_gpio_1
+- id: button_up
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -54,9 +54,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_1
-    name: Gpio 1
-- id: binary_sensor_gpio_2
+    id: button_up
+    name: button_up
+- id: button_down
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -65,9 +65,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_2
-    name: Gpio 2
-- id: binary_sensor_gpio_3
+    id: button_down
+    name: button_down
+- id: button_left
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -76,9 +76,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_3
-    name: Gpio 3
-- id: binary_sensor_gpio_4
+    id: button_left
+    name: button_left
+- id: button_right
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -87,9 +87,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_4
-    name: Gpio 4
-- id: binary_sensor_gpio_5
+    id: button_right
+    name: button_right
+- id: button_a
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -98,9 +98,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_5
-    name: Gpio 5
-- id: binary_sensor_gpio_6
+    id: button_a
+    name: button_a
+- id: button_b
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -109,9 +109,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_6
-    name: Gpio 6
-- id: binary_sensor_gpio_7
+    id: button_b
+    name: button_b
+- id: button_c
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -120,9 +120,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_7
-    name: Gpio 7
-- id: binary_sensor_gpio_8
+    id: button_c
+    name: button_c
+- id: button_d
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -131,9 +131,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_8
-    name: Gpio 8
-- id: binary_sensor_gpio_9
+    id: button_d
+    name: button_d
+- id: button_start
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -142,9 +142,9 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_9
-    name: Gpio 9
-- id: binary_sensor_gpio_10
+    id: button_start
+    name: button_start
+- id: button_select
   component_id: binary_sensor.gpio
   fields:
     pin:
@@ -153,8 +153,8 @@ featured_components:
         mode: INPUT_PULLUP
         inverted: true
       locked: true
-    id: binary_sensor_gpio_10
-    name: Gpio 10
+    id: button_select
+    name: button_select
 source:
   type: esphome-devices
   remote_id: Lilka

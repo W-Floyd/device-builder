@@ -13,74 +13,18 @@ images:
 docs_url: https://devices.esphome.io/devices/AquaPing/
 product_url: https://github.com/microphonon/acoustic-leak-detector/tree/main/Home_Assistant
 featured_components:
-- id: binary_sensor_gpio_1
+- id: noise
   component_id: binary_sensor.gpio
   fields:
     icon: mdi:volume-vibrate
-    id: binary_sensor_gpio_1
+    id: noise
     name: AquaPing Noise Alert
-- id: binary_sensor_gpio_2
+- id: leak
   component_id: binary_sensor.gpio
   fields:
     icon: mdi:water-pump
-    id: binary_sensor_gpio_2
+    id: leak
     name: AquaPing Leak Alert
-- id: number_template_1
-  component_id: number.template
-  fields:
-    optimistic: true
-    min_value: 10
-    max_value: 255
-    initial_value: 20
-    step: 1
-    mode: box
-    icon: mdi:counter
-    id: number_template_1
-    name: Event array size
-- id: number_template_2
-  component_id: number.template
-  fields:
-    optimistic: true
-    min_value: 10
-    max_value: 255
-    initial_value: 18
-    step: 1
-    mode: box
-    icon: mdi:counter
-    id: number_template_2
-    name: Alarm trigger size
-- id: number_template_3
-  component_id: number.template
-  fields:
-    optimistic: true
-    min_value: 10
-    max_value: 255
-    initial_value: 30
-    step: 1
-    mode: box
-    icon: mdi:counter
-    id: number_template_3
-    name: Background array size
-- id: number_template_4
-  component_id: number.template
-  fields:
-    optimistic: true
-    min_value: 1
-    max_value: 9
-    initial_value: 2
-    step: 1
-    mode: box
-    icon: mdi:timer-sand
-    id: number_template_4
-    name: Polling period
-- id: switch_template_1
-  component_id: switch.template
-  fields:
-    restore_mode: ALWAYS_ON
-    icon: mdi:led-outline
-    optimistic: true
-    id: switch_template_1
-    name: LED Switch
 source:
   type: esphome-devices
   remote_id: AquaPing

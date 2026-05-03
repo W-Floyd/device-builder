@@ -11,13 +11,12 @@ images:
 - images/Aubess-WiFi-Smart-Switch.jpg
 docs_url: https://devices.esphome.io/devices/Aubess-WiFi-Smart-Switch/
 featured_components:
-- id: switch_output_1
+- id: relay
   component_id: switch.output
   fields:
-    output: relayoutput
     restore_mode: ALWAYS_OFF
-    id: switch_output_1
-    name: Output 1
+    id: relay
+    name: Relay
 source:
   type: esphome-devices
   remote_id: Aubess-WiFi-Smart-Switch

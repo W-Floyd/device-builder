@@ -172,6 +172,38 @@ _LOCKABLE_FIELD_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^inverted$"),
 ]
 
+# Strings that mark "user must fill this in" placeholders in upstream
+# YAML. Lifting them as featured-component presets would create an
+# entity that compiles but can't actually run — better to skip the
+# whole component and let the user add the underlying catalog entry
+# manually. Match is case-insensitive and substring-anchored.
+_PLACEHOLDER_PATTERNS: list[re.Pattern[str]] = [
+    re.compile(r"\bfill\s*in\b", re.IGNORECASE),
+    re.compile(r"\breplace\s*me\b", re.IGNORECASE),
+    re.compile(r"<\s*replaceme\s*>", re.IGNORECASE),
+    re.compile(r"<[A-Z_][A-Z0-9_]*>"),  # <UNKNOWN>, <ADDRESS>, ...
+    re.compile(r"\byour[\s_-]+(key|address|token|id)\b", re.IGNORECASE),
+]
+
+# Template substitutions like ``${friendly_name}`` that upstream pages
+# resolve at runtime via ``substitutions:``. We don't carry the
+# substitutions block forward, so anything still containing one is
+# unsafe to surface as a preset value or as an ``occupied_by`` label.
+_TEMPLATE_VAR_RE = re.compile(r"\$\{[^}]*\}")
+
+# Platforms we never lift, regardless of which domain hosts them. The
+# ``template`` family (``switch.template``, ``binary_sensor.template``,
+# ...) and the ``copy`` family both rely on user-provided lambdas or
+# id references for their actual behaviour — without those we'd emit a
+# featured component that compiles but does nothing.
+_SKIPPED_PLATFORMS: frozenset[str] = frozenset({"template", "copy"})
+
+# Top-level inline-yaml keys whose presence means the upstream YAML's
+# behaviour comes from a lambda we can't represent in a preset. When
+# any of these appears on a featured-component item we drop the whole
+# item rather than emit a static skeleton.
+_LAMBDA_BEHAVIOUR_KEYS: frozenset[str] = frozenset({"lambda", "write_lambda"})
+
 # Maximum images to copy per device. Some pages list 30+ photos —
 # we cap to the first few so the repo doesn't bloat with PCB galleries.
 _MAX_IMAGES_PER_DEVICE = 8
@@ -562,6 +594,11 @@ def _resolve_board_and_variant(
     raw_framework = soc_block.get("framework")
 
     board = raw_board if isinstance(raw_board, str) else None
+    # Upstream pages occasionally ship a ``<REPLACEME>`` placeholder
+    # where a real PlatformIO board id should be — those configs would
+    # never compile, so treat them the same as a missing board.
+    if board is not None and _is_placeholder_value(board):
+        board = None
     # Upstream pages sometimes write the variant in uppercase (``ESP32C3``)
     # — normalize to match our enum.
     variant = raw_variant.lower() if isinstance(raw_variant, str) else None
@@ -579,20 +616,46 @@ def _resolve_board_and_variant(
     return board, variant, framework
 
 
+@dataclass
+class _Candidate:
+    """One inline-yaml item that survived filtering, ready to render."""
+
+    item: dict[str, Any]
+    domain: str
+    platform: str
+    component_id: str
+    component: dict[str, Any]
+    local_id: str
+    fields: dict[str, Any]
+    counter: int  # 1-based position among kept entries with the same component_id
+
+
 def _extract_featured_components(
     inline: dict[str, Any], components_index: dict[str, dict[str, Any]]
-) -> tuple[list[dict[str, Any]], dict[int, str]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[int, str]]:
     """
-    Build featured_components entries from inline-yaml platform lists.
+    Build ``featured_components`` + ``featured_bundles`` from inline-yaml platform lists.
 
-    Returns ``(featured_components, gpio_occupancy)``. The occupancy
-    map captures one human-readable label per GPIO referenced by an
-    extracted component — used to synthesize ``pins[]`` entries.
+    Returns ``(featured_components, featured_bundles, gpio_occupancy)``.
+    The occupancy map captures one human-readable label per GPIO
+    referenced by an extracted component — used to synthesize the
+    manifest's ``pins[]`` block.
+
+    Pass 1 walks the inline yaml, applies safety filters (placeholder
+    sentinels, lambda-driven items, ``*.template`` platforms) and
+    pre-assigns each survivor a local id — preferring the upstream
+    ``id:`` value so cross-component references like
+    ``light.rgbct.red: red_output`` still resolve in the user's YAML.
+    Pass 2 rewrites those references through the upstream→local id
+    map and emits the final entries; bundles are derived from the
+    same map so the dashboard can add a multi-component setup
+    (e.g. RGB(W) light + its PWM outputs) as a single click.
     """
-    featured: list[dict[str, Any]] = []
+    candidates: list[_Candidate] = []
+    used_ids: set[str] = set()
+    counters: dict[str, int] = {}
     gpio_occupancy: dict[int, str] = {}
 
-    counters: dict[str, int] = {}
     for domain in sorted(inline.keys()):
         if domain not in _PLATFORM_LIST_DOMAINS:
             continue
@@ -600,50 +663,350 @@ def _extract_featured_components(
         if not isinstance(items, list):
             continue
         for item in items:
-            if not isinstance(item, dict):
+            candidate = _build_candidate(
+                item, domain, components_index, gpio_occupancy, used_ids, counters
+            )
+            if candidate is None:
                 continue
-            platform = item.get("platform")
-            if not isinstance(platform, str) or not platform:
-                continue
-            component_id = f"{domain}.{platform}"
-            component = components_index.get(component_id)
-            if component is None:
-                continue
-            fields = _extract_fields(item, component, gpio_occupancy, component_id)
-            # No-field components are generic catalog entries the user
-            # can add from the regular flow; including them here just
-            # adds noise (sensor.uptime, switch.restart, ...). Keeping
-            # only those with a real hardware-specific preset.
-            if not fields:
-                continue
-            counters[component_id] = counters.get(component_id, 0) + 1
-            local_id = f"{domain}_{platform}_{counters[component_id]}"
-            # Always set ``fields.id`` so the dashboard never has to
-            # auto-derive one at runtime — definitions are the source
-            # of truth for what ends up in the user's YAML.
-            fields["id"] = local_id
-            # For HA entity platforms, also fill ``fields.name`` so the
-            # entity surfaces in Home Assistant. Prefer upstream's name
-            # when the page set one (and it's a simple scalar — skip
-            # ``${friendly_name}`` templates the user can't sensibly
-            # override); otherwise derive a default.
-            if domain in _HA_ENTITY_DOMAINS:
-                upstream_name = item.get("name")
-                if _is_simple_scalar(upstream_name) and isinstance(upstream_name, str):
-                    upstream_name = upstream_name.strip()
-                else:
-                    upstream_name = ""
-                fields["name"] = (
-                    upstream_name
-                    or f"{platform.replace('_', ' ').title()} {counters[component_id]}"
-                )
-            entry: dict[str, Any] = {
-                "id": local_id,
-                "component_id": component_id,
-                "fields": fields,
+            used_ids.add(candidate.local_id)
+            candidates.append(candidate)
+
+    survivors = _select_survivors(candidates)
+    id_map = _build_id_map(survivors)
+    featured = [_finalize_entry(c, id_map) for c in survivors]
+    bundles = _build_bundles(survivors, id_map)
+    return featured, bundles, gpio_occupancy
+
+
+def _select_survivors(candidates: list[_Candidate]) -> list[_Candidate]:
+    """
+    Pick the candidates that should land in the manifest.
+
+    Initial survivors are the candidates whose tentative entry — built
+    against the unfiltered id map — already carries a useful preset
+    (own scalar/pin field, or an id ref that resolves to a sibling).
+    From there we walk the id-reference graph upward, pulling in any
+    producers a survivor depends on. So an RGBW bulb keeps its PWM
+    outputs even when their pins use SoC-specific names we can't
+    parse, while standalone components with no presets and no
+    consumers get pruned as no-op skeletons.
+    """
+    full_id_map = _build_id_map(candidates)
+    by_local: dict[str, _Candidate] = {c.local_id: c for c in candidates}
+
+    survivor_locals: set[str] = set()
+    for cand in candidates:
+        entry = _finalize_entry(cand, full_id_map)
+        if _entry_has_useful_preset(cand, entry):
+            survivor_locals.add(cand.local_id)
+
+    while True:
+        added = False
+        for local_id in list(survivor_locals):
+            cand = by_local[local_id]
+            for target in _id_ref_targets(cand, full_id_map):
+                if target not in survivor_locals:
+                    survivor_locals.add(target)
+                    added = True
+        if not added:
+            break
+
+    return [c for c in candidates if c.local_id in survivor_locals]
+
+
+def _entry_has_useful_preset(candidate: _Candidate, entry: dict[str, Any]) -> bool:
+    """
+    Return True when *entry* carries a real preset beyond the auto-injected ``id`` / ``name``.
+
+    Lets ``_select_survivors`` distinguish skeleton components (no
+    real fields) from consumers whose only contribution is a resolved
+    ``output:`` reference — both have empty pass-1 ``fields`` but only
+    the latter is worth keeping in the manifest.
+    """
+    fields = entry["fields"]
+    auto_keys = {"id", "name"} if candidate.domain in _HA_ENTITY_DOMAINS else {"id"}
+    return any(key not in auto_keys for key in fields)
+
+
+def _id_ref_targets(cand: _Candidate, id_map: dict[str, str]) -> Iterator[str]:
+    """Yield each kept-sibling local id referenced by *cand*'s ``type: "id"`` fields."""
+    valid_keys = {
+        ce.get("key"): ce
+        for ce in cand.component.get("config_entries") or []
+        if isinstance(ce.get("key"), str)
+    }
+    for fkey, fval in cand.item.items():
+        if fkey in _SKIPPED_FIELDS:
+            continue
+        ce = valid_keys.get(fkey)
+        if ce is None or ce.get("type") != "id":
+            continue
+        if not isinstance(fval, str):
+            continue
+        mapped = id_map.get(fval)
+        if mapped is not None:
+            yield mapped
+
+
+def _build_candidate(  # noqa: PLR0911 — distinct skip reasons each get their own early exit
+    item: Any,
+    domain: str,
+    components_index: dict[str, dict[str, Any]],
+    gpio_occupancy: dict[int, str],
+    used_ids: set[str],
+    counters: dict[str, int],
+) -> _Candidate | None:
+    """
+    Turn one upstream inline-yaml entry into a ``_Candidate`` or skip it.
+
+    Applies the same safety filters as before — non-mapping items,
+    blank platform, ``*.template`` / ``*.copy`` platforms, top-level
+    ``lambda:``, components missing from our catalog, placeholder field
+    values, and items whose hardware-fixed fields all got filtered out.
+    Returns ``None`` for any of those; otherwise records the per-item
+    GPIO occupancy and assigns the local id.
+    """
+    if not isinstance(item, dict):
+        return None
+    platform = item.get("platform")
+    if not isinstance(platform, str) or not platform:
+        return None
+    if platform in _SKIPPED_PLATFORMS:
+        return None
+    if any(key in item for key in _LAMBDA_BEHAVIOUR_KEYS):
+        return None
+    component_id = f"{domain}.{platform}"
+    component = components_index.get(component_id)
+    if component is None:
+        return None
+    local_occupancy: dict[int, str] = {}
+    fields = _extract_fields(item, component, local_occupancy, component_id)
+    # ``None`` means an unfillable placeholder ("(FILL IN ...)").
+    if fields is None:
+        return None
+    # ``{}`` is fine when the inline item carries a ``type: "id"`` ref
+    # we'll resolve in pass 2 (e.g. ``light.binary`` consuming an
+    # ``output.gpio``); otherwise it means no hardware-specific value
+    # at all and the entry would be a no-op skeleton.
+    if not fields and not _has_id_reference_fields(item, component):
+        return None
+    gpio_occupancy.update(local_occupancy)
+    counters[component_id] = counters.get(component_id, 0) + 1
+    local_id = _assign_local_id(item, domain, platform, used_ids, counters[component_id])
+    return _Candidate(
+        item=item,
+        domain=domain,
+        platform=platform,
+        component_id=component_id,
+        component=component,
+        local_id=local_id,
+        fields=fields,
+        counter=counters[component_id],
+    )
+
+
+def _assign_local_id(
+    item: dict[str, Any],
+    domain: str,
+    platform: str,
+    used_ids: set[str],
+    counter: int,
+) -> str:
+    """
+    Pick a local id, preferring the sanitized upstream ``id:`` field.
+
+    Falls back to ``<domain>_<platform>_<counter>`` when no upstream
+    id exists, the value can't be sanitized to a valid local id, the
+    candidate equals the bare domain (validate_definitions flags
+    ``id: light`` on a ``light.tuya`` as a domain clash), or it
+    collides with one already assigned to a sibling on this board.
+    """
+    upstream_id = item.get("id")
+    if isinstance(upstream_id, str):
+        sanitized = _sanitize_local_id(upstream_id)
+        if sanitized and sanitized != domain and sanitized not in used_ids:
+            return sanitized
+    return f"{domain}_{platform}_{counter}"
+
+
+def _has_id_reference_fields(item: dict[str, Any], component: dict[str, Any]) -> bool:
+    """Return True when *item* has a ``type: "id"`` field defined by *component*."""
+    valid_keys = {
+        ce.get("key"): ce
+        for ce in component.get("config_entries") or []
+        if isinstance(ce.get("key"), str)
+    }
+    for fkey, fval in item.items():
+        if fkey in _SKIPPED_FIELDS:
+            continue
+        ce = valid_keys.get(fkey)
+        if ce is None or ce.get("type") != "id":
+            continue
+        if isinstance(fval, str) and fval:
+            return True
+    return False
+
+
+def _sanitize_local_id(raw: str) -> str:
+    """
+    Normalize *raw* into a valid manifest local id, or empty on failure.
+
+    Local ids must match ``^[a-z][a-z0-9_]*$`` (the schema's component
+    + bundle pattern). Lowercases, replaces non-id characters with
+    underscores, collapses runs, trims, and rejects values that don't
+    start with a letter after cleanup.
+    """
+    cleaned = re.sub(r"[^a-z0-9_]", "_", raw.lower())
+    cleaned = re.sub(r"_+", "_", cleaned).strip("_")
+    if not cleaned or not cleaned[0].isalpha():
+        return ""
+    return cleaned
+
+
+def _build_id_map(candidates: list[_Candidate]) -> dict[str, str]:
+    """Map each kept candidate's upstream ``id:`` to its assigned local id."""
+    out: dict[str, str] = {}
+    for cand in candidates:
+        upstream_id = cand.item.get("id")
+        if isinstance(upstream_id, str) and upstream_id:
+            out.setdefault(upstream_id, cand.local_id)
+    return out
+
+
+def _finalize_entry(candidate: _Candidate, id_map: dict[str, str]) -> dict[str, Any]:
+    """
+    Render one ``_Candidate`` as a ``featured_components`` dict.
+
+    Resolves cross-component ``type: "id"`` references through *id_map*
+    (dropping refs whose target wasn't kept), then injects the standard
+    ``id`` and (for HA entity domains) ``name`` fields.
+    """
+    fields = dict(candidate.fields)
+    _apply_id_references(fields, candidate.item, candidate.component, id_map)
+    fields["id"] = candidate.local_id
+    if candidate.domain in _HA_ENTITY_DOMAINS:
+        fields["name"] = _clean_entity_name(candidate.item) or (
+            f"{candidate.platform.replace('_', ' ').title()} {candidate.counter}"
+        )
+    return {
+        "id": candidate.local_id,
+        "component_id": candidate.component_id,
+        "fields": fields,
+    }
+
+
+def _apply_id_references(
+    fields: dict[str, Any],
+    inline_item: dict[str, Any],
+    component: dict[str, Any],
+    id_map: dict[str, str],
+) -> None:
+    """
+    Add ``type: "id"`` reference fields to *fields*, remapped via *id_map*.
+
+    The dashboard regenerates per-instance ids, so the upstream value
+    (``output: red_output``) only resolves when its target was also
+    kept as a featured component on the same board. Refs to dropped
+    components are silently omitted — the user picks a real target
+    when adding the consumer.
+    """
+    valid_keys = {
+        ce.get("key"): ce
+        for ce in component.get("config_entries") or []
+        if isinstance(ce.get("key"), str)
+    }
+    for fkey, fval in inline_item.items():
+        if fkey in _SKIPPED_FIELDS:
+            continue
+        ce = valid_keys.get(fkey)
+        if ce is None or ce.get("type") != "id":
+            continue
+        if not isinstance(fval, str):
+            continue
+        mapped = id_map.get(fval)
+        if mapped is not None:
+            fields[fkey] = mapped
+
+
+def _build_bundles(candidates: list[_Candidate], id_map: dict[str, str]) -> list[dict[str, Any]]:
+    """
+    Derive ``featured_bundles`` from id-reference dependencies.
+
+    For each candidate that consumes one or more sibling components
+    via ``type: "id"`` fields (e.g. ``light.rgbct`` referencing the
+    PWM outputs that drive its colour channels), emit a bundle whose
+    members are the dependency ids followed by the consumer itself —
+    so the dashboard adds them in the right order in one shot.
+    """
+    bundles: list[dict[str, Any]] = []
+    used_bundle_ids: set[str] = set()
+    for cand in candidates:
+        members = _bundle_members_for(cand, id_map)
+        if len(members) < 2:
+            continue
+        bundle_id = _bundle_id_for(cand, used_bundle_ids)
+        used_bundle_ids.add(bundle_id)
+        bundles.append(
+            {
+                "id": bundle_id,
+                "name": _bundle_name_for(cand),
+                "component_ids": members,
             }
-            featured.append(entry)
-    return featured, gpio_occupancy
+        )
+    return bundles
+
+
+def _bundle_members_for(cand: _Candidate, id_map: dict[str, str]) -> list[str]:
+    """
+    List the local ids a consumer's bundle should add, dependencies first.
+
+    Walks the consumer's inline-yaml fields, collects every ``type:
+    "id"`` value that resolves through *id_map*, then appends the
+    consumer's own local id. Order is preserved and duplicates are
+    dropped — the dashboard adds members one by one and the consumer
+    must come last so its ``output:`` references already exist.
+    """
+    valid_keys = {
+        ce.get("key"): ce
+        for ce in cand.component.get("config_entries") or []
+        if isinstance(ce.get("key"), str)
+    }
+    members: list[str] = []
+    seen: set[str] = set()
+    for fkey, fval in cand.item.items():
+        if fkey in _SKIPPED_FIELDS:
+            continue
+        ce = valid_keys.get(fkey)
+        if ce is None or ce.get("type") != "id":
+            continue
+        if not isinstance(fval, str):
+            continue
+        mapped = id_map.get(fval)
+        if mapped is not None and mapped not in seen:
+            members.append(mapped)
+            seen.add(mapped)
+    if cand.local_id not in seen:
+        members.append(cand.local_id)
+    return members
+
+
+def _bundle_id_for(cand: _Candidate, used: set[str]) -> str:
+    """Return a bundle id derived from the consumer, unique within the board."""
+    base = f"{cand.local_id}_setup"
+    if base not in used:
+        return base
+    counter = 2
+    while f"{base}_{counter}" in used:
+        counter += 1
+    return f"{base}_{counter}"
+
+
+def _bundle_name_for(cand: _Candidate) -> str:
+    """Pick a human-readable bundle name from the consumer's upstream item."""
+    cleaned = _clean_entity_name(cand.item)
+    if cleaned:
+        return f"{cleaned} (full setup)"
+    return f"{cand.platform.replace('_', ' ').title()} (full setup)"
 
 
 def _extract_fields(
@@ -651,7 +1014,7 @@ def _extract_fields(
     component: dict[str, Any],
     gpio_occupancy: dict[int, str],
     component_id: str,
-) -> dict[str, Any]:
+) -> dict[str, Any] | None:
     """
     Lift hardware-fixed fields out of an inline platform-list item.
 
@@ -660,6 +1023,11 @@ def _extract_fields(
     Per-instance fields (``id``) are skipped — the dashboard generates
     its own ids and pre-filling the upstream value would just create
     rename friction or duplicate-id collisions.
+
+    Returns ``None`` when the upstream item carries an unfillable
+    placeholder (e.g. ``address: (FILL IN ONE-WIRE BUS ADDRESS)``).
+    The caller drops the whole featured-component entry in that case
+    rather than emit a preset that would compile but not run.
     """
     valid_keys: dict[str, dict[str, Any]] = {}
     for ce in component.get("config_entries") or []:
@@ -674,34 +1042,90 @@ def _extract_fields(
         ce = valid_keys.get(fkey)
         if ce is None:
             continue
-        ce_type = ce.get("type")
-        if ce_type == "pin":
-            normalized = _normalize_pin_value(fval)
-            gpio = _gpio_number(normalized)
-            if gpio is None:
-                # Reference-style pins or lambdas — skip silently.
-                continue
-            label = _occupancy_label(inline_item, component_id)
-            if gpio not in gpio_occupancy:
-                gpio_occupancy[gpio] = label
-            out[fkey] = {"value": normalized, "locked": True}
-            continue
-        if not _is_simple_scalar(fval):
-            continue
-        if _looks_lockable(fkey):
-            out[fkey] = {"value": fval, "locked": True}
-        else:
-            out[fkey] = fval
+        if _is_placeholder_value(fval):
+            return None
+        preset = _coerce_field_preset(ce, fval, fkey, inline_item, gpio_occupancy, component_id)
+        if preset is not None:
+            out[fkey] = preset
     return out
 
 
+def _coerce_field_preset(
+    config_entry: dict[str, Any],
+    raw_value: Any,
+    field_name: str,
+    inline_item: dict[str, Any],
+    gpio_occupancy: dict[int, str],
+    component_id: str,
+) -> Any:
+    """
+    Convert one upstream field value into a preset, or ``None`` to skip it.
+
+    Pin entries record GPIO occupancy and emit a ``locked`` preset.
+    Cross-component id references are dropped (the user picks at add
+    time). Other simple scalars come through as either locked presets
+    (when the field name looks hardware-fixed) or bare suggestions.
+    """
+    ce_type = config_entry.get("type")
+    if ce_type == "pin":
+        normalized = _normalize_pin_value(raw_value)
+        gpio = _gpio_number(normalized)
+        if gpio is None:
+            # Reference-style pins or lambdas — skip silently.
+            return None
+        label = _occupancy_label(inline_item, component_id)
+        gpio_occupancy.setdefault(gpio, label)
+        return {"value": normalized, "locked": True}
+    if ce_type == "id":
+        # Cross-component id refs are resolved in pass 2 by
+        # ``_apply_id_references`` once every kept component has its
+        # local id assigned — emitting them here would lock in the
+        # raw upstream value before remapping.
+        return None
+    if not _is_simple_scalar(raw_value):
+        return None
+    if _looks_lockable(field_name):
+        return {"value": raw_value, "locked": True}
+    return raw_value
+
+
 def _occupancy_label(inline_item: dict[str, Any], component_id: str) -> str:
-    """Build a human-readable label for a GPIO's ``occupied_by`` field."""
+    """
+    Build a human-readable label for a GPIO's ``occupied_by`` field.
+
+    Strips ``${friendly_name}``-style template variables that survive
+    in upstream ``name:`` / ``id:`` fields and would otherwise leak
+    raw substitution syntax into the manifest. Falls back to the
+    catalog component id when nothing readable remains.
+    """
+    return _clean_entity_name(inline_item) or component_id
+
+
+def _clean_entity_name(inline_item: dict[str, Any]) -> str:
+    """
+    Pick a readable entity name from an inline-yaml item.
+
+    Returns the upstream ``name:`` / ``id:`` value with any
+    ``${...}`` template substitutions removed and surrounding
+    whitespace / separators trimmed. Returns an empty string when no
+    readable label remains — callers fall back to a derived default.
+    """
     for key in ("name", "id"):
         candidate = inline_item.get(key)
-        if isinstance(candidate, str) and candidate.strip():
-            return f"{component_id} ({candidate.strip()})"
-    return component_id
+        if not isinstance(candidate, str):
+            continue
+        cleaned = _TEMPLATE_VAR_RE.sub("", candidate).strip(" -_")
+        cleaned = re.sub(r"\s+", " ", cleaned)
+        if cleaned:
+            return cleaned
+    return ""
+
+
+def _is_placeholder_value(value: Any) -> bool:
+    """Return True for upstream "user must fill this in" sentinel strings."""
+    if not isinstance(value, str):
+        return False
+    return any(p.search(value) for p in _PLACEHOLDER_PATTERNS)
 
 
 def _is_simple_scalar(value: Any) -> bool:
@@ -769,7 +1193,9 @@ def _make_record(  # noqa: PLR0911 — distinct skip reasons each get their own 
     if not board:
         return None, f"no concrete board id for {soc}"
 
-    featured, gpio_occupancy = _extract_featured_components(src.inline_yaml, components_index)
+    featured, bundles, gpio_occupancy = _extract_featured_components(
+        src.inline_yaml, components_index
+    )
     if not featured:
         return None, "no extractable featured components"
 
@@ -806,6 +1232,8 @@ def _make_record(  # noqa: PLR0911 — distinct skip reasons each get their own 
         record["product_url"] = project_url
 
     record["featured_components"] = featured
+    if bundles:
+        record["featured_bundles"] = bundles
 
     record["source"] = _build_source_block(src.folder_name, revision, src.content_hash)
 
