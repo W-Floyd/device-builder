@@ -78,16 +78,11 @@ async def test_create_device_rejects_unknown_board_id(
     assert ctrl._scanner.calls == []
 
 
+@pytest.mark.usefixtures("stub_create_device_metadata_helpers")
 async def test_create_device_writes_stub_yaml_and_scans(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    make_controller: MakeControllerFactory,
+    tmp_path: Path, make_controller: MakeControllerFactory
 ) -> None:
     """Happy path with no board / no file_content: stub YAML lands on disk and scan fires."""
-    storage_path = tmp_path / "storage.json"
-    monkeypatch.setattr(devices_module, "ext_storage_path", lambda _filename: storage_path)
-    monkeypatch.setattr(devices_module, "set_device_metadata", lambda *args, **kwargs: None)
-    monkeypatch.setattr(devices_module, "remove_device_metadata", lambda *args, **kwargs: None)
     ctrl = make_controller(tmp_path, with_state_monitor=True, with_boards=True)
     # Catalog lookups must return ``None`` so the derive-from-yaml
     # branch leaves ``board`` unset; otherwise ``StorageJSON``'s
@@ -101,7 +96,7 @@ async def test_create_device_writes_stub_yaml_and_scans(
     assert result.configuration == "kitchen.yaml"
     yaml_path = tmp_path / "kitchen.yaml"
     assert yaml_path.read_text("utf-8").startswith("esphome:\n  name: kitchen\n")
-    assert storage_path.exists()
+    assert (tmp_path / "storage.json").exists()
     assert ctrl._scanner.calls == [("scan",)]
 
 

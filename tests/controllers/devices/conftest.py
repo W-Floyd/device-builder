@@ -565,6 +565,37 @@ def capture_devices_events(
 
 
 @pytest.fixture
+def stub_create_device_metadata_helpers(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Stub the three module-level helpers ``create_device`` reaches into.
+
+    The wizard / adoption flow's happy path persists through
+    ``ext_storage_path`` (resolved against ``CORE.config_path``,
+    unset in isolated tests) and the metadata-sidecar helpers
+    (``set_device_metadata`` / ``remove_device_metadata``, which
+    write through ``metadata_transaction`` and trip blockbuster
+    on the inner ``tempfile.mkstemp``). Tests that don't care
+    about the sidecar's contents — only that the YAML lands on
+    disk and the catalog lookup ran — get all three patched
+    together. Tests that *do* care (e.g. "archived metadata is
+    cleared on stub create") want the real ``set_device_metadata``
+    and should NOT request this fixture.
+    """
+    storage_path = tmp_path / "storage.json"
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.devices.controller.ext_storage_path",
+        lambda _filename: storage_path,
+    )
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.devices.controller.set_device_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.devices.controller.remove_device_metadata",
+        lambda *_args, **_kwargs: None,
+    )
+
+
+@pytest.fixture
 def redirect_storage_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Point ``ext_storage_path`` at ``tmp_path/.esphome/storage/``.
 
