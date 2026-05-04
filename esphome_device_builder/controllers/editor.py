@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -81,10 +82,12 @@ class EditorController:
         # one warm subprocess per config) from "same file
         # respawned after a timeout / crash". The cmd line itself
         # only carries the config-dir, not the specific file.
+        # ``shlex.join`` (not ``" ".join``) so a config-dir with
+        # spaces produces a correctly-quoted, copy-pasteable line.
         _LOGGER.info(
             "Spawning vscode subprocess for %s: %s",
             session.configuration,
-            " ".join(cmd),
+            shlex.join(cmd),
         )
         session.proc = await create_subprocess_exec(
             *cmd,
