@@ -31,6 +31,7 @@ _VALIDATE_TIMEOUT = 30.0
 class _EditorSession:
     """Per-configuration validator state: one warm subprocess plus a serialization lock."""
 
+    configuration: str
     proc: asyncio.subprocess.Process | None = None
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
@@ -75,7 +76,16 @@ class EditorController:
 
         config_dir = str(self._db.settings.config_dir)
         cmd = [*self._esphome_cmd, "vscode", config_dir, "--ace"]
-        _LOGGER.info("Spawning vscode subprocess: %s", " ".join(cmd))
+        # Include the session's configuration so a fleet-wide log
+        # can distinguish "two different files opened" (expected:
+        # one warm subprocess per config) from "same file
+        # respawned after a timeout / crash". The cmd line itself
+        # only carries the config-dir, not the specific file.
+        _LOGGER.info(
+            "Spawning vscode subprocess for %s: %s",
+            session.configuration,
+            " ".join(cmd),
+        )
         session.proc = await create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.PIPE,
@@ -163,7 +173,9 @@ class EditorController:
         ``message`` and (for validation errors) a ``range`` with
         ``{start_line, start_col, end_line, end_col}`` (0-indexed).
         """
-        session = self._sessions.setdefault(configuration, _EditorSession())
+        session = self._sessions.setdefault(
+            configuration, _EditorSession(configuration=configuration)
+        )
         async with session.lock:
             try:
                 return await asyncio.wait_for(

@@ -180,7 +180,7 @@ async def test_validate_locked_returns_result_payload(tmp_path: Path) -> None:
     the dashboard's editor renders both inline.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, stdin_capture = _make_fake_proc(
         [
             dumps(
@@ -217,7 +217,7 @@ async def test_validate_locked_handles_read_file_round_trip(tmp_path: Path) -> N
     is reading.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, reader, stdin_capture = _make_fake_proc(
         [
             dumps({"type": "read_file", "path": "kitchen.yaml"}) + b"\n",
@@ -272,7 +272,7 @@ async def test_validate_locked_raises_when_subprocess_closes_stdout(
     process.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, reader, _ = _make_fake_proc([])
     reader.feed_eof()
     session.proc = proc
@@ -296,8 +296,8 @@ async def test_stop_terminates_all_sessions(tmp_path: Path) -> None:
     previous config dir.
     """
     controller = _make_controller(tmp_path)
-    session_a = _EditorSession()
-    session_b = _EditorSession()
+    session_a = _EditorSession(configuration="a.yaml")
+    session_b = _EditorSession(configuration="b.yaml")
     controller._sessions = {"a.yaml": session_a, "b.yaml": session_b}
     controller._terminate_subprocess = AsyncMock()  # type: ignore[method-assign]
 
@@ -362,7 +362,7 @@ async def test_ensure_subprocess_no_op_when_proc_already_running(
     every validation's wall-clock cost.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, *_ = _make_fake_proc([])
     session.proc = proc
     spawned = False
@@ -398,7 +398,7 @@ async def test_ensure_subprocess_spawns_and_drains_version_line(
     this branch protects against a refactor that drops the readline.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, reader, _ = _make_fake_proc([dumps({"type": "version", "version": "1.0"}) + b"\n"])
 
     async def _fake_spawn(*_args: Any, **_kwargs: Any) -> Any:
@@ -431,7 +431,7 @@ async def test_ensure_subprocess_terminates_session_and_raises_on_startup_timeou
     runs.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, _ = _make_fake_proc([])  # no lines → readline blocks
 
     async def _fake_spawn(*_args: Any, **_kwargs: Any) -> Any:
@@ -474,7 +474,7 @@ async def test_terminate_subprocess_no_op_when_session_proc_is_none(
 ) -> None:
     """No proc → return immediately, no surprise calls."""
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     session.proc = None
     await controller._terminate_subprocess(session)
 
@@ -485,7 +485,7 @@ async def test_terminate_subprocess_no_op_when_proc_already_exited(
 ) -> None:
     """Already-exited proc skips the exit/terminate/kill ladder."""
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, *_ = _make_fake_proc([])
     proc.returncode = 0
     session.proc = proc
@@ -500,7 +500,7 @@ async def test_terminate_subprocess_no_op_when_proc_already_exited(
 async def test_terminate_subprocess_sends_exit_and_waits(tmp_path: Path) -> None:
     """Happy path: write ``{"type": "exit"}``, drain, close stdin, wait."""
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, stdin_capture = _make_fake_proc([])
     session.proc = proc
 
@@ -527,7 +527,7 @@ async def test_terminate_subprocess_escalates_through_terminate_then_kill(
     keeps shutdown from hanging.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, _ = _make_fake_proc([])
     session.proc = proc
 
@@ -574,7 +574,7 @@ async def test_terminate_subprocess_swallows_stdin_write_failure(
     what makes that work.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, _ = _make_fake_proc([])
 
     def _broken_write(_data: bytes) -> None:
@@ -642,7 +642,7 @@ async def test_validate_locked_skips_unparseable_lines(tmp_path: Path) -> None:
     try/except surfaces here.
     """
     controller = _make_controller(tmp_path)
-    session = _EditorSession()
+    session = _EditorSession(configuration="kitchen.yaml")
     proc, _reader, _ = _make_fake_proc(
         [
             b"this is not json\n",
