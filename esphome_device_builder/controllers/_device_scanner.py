@@ -10,11 +10,11 @@ mtime, size) are used to avoid re-parsing files that haven't changed.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Mapping
 from enum import StrEnum
 from pathlib import Path
+from types import MappingProxyType
 from typing import NamedTuple
 
 from esphome import util
@@ -54,6 +54,164 @@ ScanCallback = Callable[[ScanChange, Device], None]
 MetadataResolver = Callable[[Path, str], DeviceFileMetadata]
 
 
+class _DeviceIndex:
+    """
+    Path-keyed Device store with lockstep name-keyed and cache-key indexes.
+
+    The three internal maps (``_devices``, ``_devices_by_name``,
+    ``_cache_keys``) are kept in sync as a structural property of
+    this class — the only mutation entry points (:meth:`set`,
+    :meth:`pop`, :meth:`rebuild_in_path_order`) update all three
+    together. Bypassing requires reaching into the underscore-
+    prefixed attributes, which is exactly what the encapsulation
+    is meant to discourage.
+
+    The lockstep matters because the scanner's apply / dedupe path
+    fans out an mDNS announcement to every Device sharing a
+    ``name`` — the name index is what makes that fan-out O(1)
+    instead of an O(N) linear scan over every configured YAML on
+    every announcement. Buckets are sorted by ``configuration``
+    filename so ``bucket[0]`` consumers (e.g. ``apply()``'s "first
+    match" check) see a deterministic order across scans;
+    set-derived iteration would otherwise let the dedupe flip-flop
+    across scans for duplicate-named YAMLs.
+
+    The ``cache_keys`` map carries (inode, dev, mtime, size) per
+    path so :class:`DeviceScanner` can short-circuit re-parsing
+    files that haven't changed. It's coupled to the device
+    lifecycle (added/removed together) so it lives here too —
+    keeping it in a separate dict on the scanner risks a leak if a
+    future caller pops a device without also popping its key.
+    """
+
+    def __init__(self) -> None:
+        self._devices: dict[Path, Device] = {}
+        # Name-keyed shadow index; mDNS / ping / MQTT observations
+        # arrive keyed by the device's ``esphome.name`` and need an
+        # O(1) lookup instead of an O(N) linear scan of every
+        # configured YAML on every announcement. The list is by
+        # design — two YAMLs can share a ``name:`` (a config plus a
+        # ``foo (1).yaml`` copy, ``dashboard_import`` siblings, etc.)
+        # and a single broadcast must fan out to all of them.
+        self._devices_by_name: dict[str, list[Device]] = {}
+        self._cache_keys: dict[Path, _CacheKey] = {}
+
+    @property
+    def devices(self) -> list[Device]:
+        """Snapshot of the loaded devices in path-iteration order."""
+        return list(self._devices.values())
+
+    @property
+    def by_path(self) -> Mapping[Path, Device]:
+        """Live read-only mapping ``path → Device``.
+
+        Returns a ``MappingProxyType`` view so callers iterate / look
+        up but cannot mutate the index out of lockstep with the
+        name buckets / cache keys. Mutations must go through
+        :meth:`set` / :meth:`pop` / :meth:`rebuild_in_path_order`.
+        """
+        return MappingProxyType(self._devices)
+
+    def get_by_name(self, name: str) -> list[Device]:
+        """Return a fresh-list snapshot of every Device whose ``name`` matches."""
+        bucket = self._devices_by_name.get(name)
+        return list(bucket) if bucket else []
+
+    def cache_key(self, path: Path) -> _CacheKey:
+        """Return the change-detection cache key for a tracked *path*.
+
+        Raises ``KeyError`` if *path* is not in the index. The
+        non-Optional return is the lockstep invariant in API form:
+        every path in ``_devices`` has a cache key, and the only
+        legitimate caller is one that just verified *path* is
+        tracked (e.g. the result of ``find_path_by_filename`` or
+        a key in ``by_path``). A miss here is an invariant break,
+        not a "look before you leap" miss — surface it loudly
+        instead of returning ``None`` (which a caller could pass
+        through to ``set`` and silently store as a cache key,
+        breaking change detection on the next scan).
+        """
+        return self._cache_keys[path]
+
+    def find_path_by_filename(self, filename: str) -> Path | None:
+        """Locate the tracked path whose ``Path.name`` equals *filename*."""
+        return next((p for p in self._devices if p.name == filename), None)
+
+    def set(self, path: Path, device: Device, cache_key: _CacheKey) -> None:
+        """Insert / update *device* and refresh its cache key.
+
+        Drops *previous* (if any) from its bucket via
+        ``_unindex_name`` first — handles both the same-name update
+        path (drop from current bucket so the resort can place the
+        fresh Device) and the rename path (drop from the OLD name's
+        bucket before bucketing under the new name). Configuration
+        filenames are unique per path (the scanner's
+        ``util.list_yaml_files`` walk is non-recursive), so once
+        *previous* is gone the sorted-position insert never
+        collides with an existing entry.
+        """
+        previous = self._devices.get(path)
+        if previous is not None:
+            self._unindex_name(previous)
+        self._devices[path] = device
+        self._cache_keys[path] = cache_key
+        bucket = self._devices_by_name.setdefault(device.name, [])
+        insert_at = 0
+        while insert_at < len(bucket) and bucket[insert_at].configuration < device.configuration:
+            insert_at += 1
+        bucket.insert(insert_at, device)
+
+    def pop(self, path: Path) -> Device | None:
+        """Drop *path* from every map, returning the removed Device or ``None``."""
+        device = self._devices.pop(path, None)
+        self._cache_keys.pop(path, None)
+        if device is not None:
+            self._unindex_name(device)
+        return device
+
+    def rebuild_in_path_order(self, path_order: Iterable[Path]) -> None:
+        """Re-key ``_devices`` / ``_cache_keys`` in *path_order*.
+
+        ``devices`` is a user-visible read; without this rebuild
+        the post-scan iteration order is set-derived and the
+        dashboard sees a different device list every restart.
+        ``_devices_by_name`` doesn't need a parallel re-sort —
+        its values are name-keyed lists whose iteration order
+        isn't user-visible.
+
+        ``path_order`` may carry extra paths that were never
+        indexed (a YAML that failed to load is in the scanner's
+        ``path_to_cache_key`` but not here) — those are filtered.
+        It must NOT omit any currently-indexed path: dropping
+        a path from ``_devices`` while leaving it in
+        ``_devices_by_name`` would silently break the lockstep
+        invariant. Removals must go through :meth:`pop` first.
+        """
+        ordered = list(path_order)
+        ordered_set = set(ordered)
+        # Refuse to silently drop any tracked path — that would
+        # leave a Device stranded in the name buckets.
+        missing = self._devices.keys() - ordered_set
+        if missing:
+            raise ValueError(
+                f"rebuild_in_path_order is missing {len(missing)} indexed path(s); "
+                "call pop() before rebuild to remove devices."
+            )
+        self._devices = {p: self._devices[p] for p in ordered if p in self._devices}
+        self._cache_keys = {p: self._cache_keys[p] for p in ordered if p in self._cache_keys}
+
+    def _unindex_name(self, device: Device) -> None:
+        # By the lockstep invariant, ``device`` is in its bucket
+        # (the only callers — :meth:`set` rename branch and
+        # :meth:`pop` — pass devices retrieved from ``_devices``,
+        # and every Device in ``_devices`` was placed in its bucket
+        # by the matching ``set`` call). No defensive guards needed.
+        bucket = self._devices_by_name[device.name]
+        bucket.remove(device)
+        if not bucket:
+            del self._devices_by_name[device.name]
+
+
 class DeviceScanner:
     """
     Disk-backed device cache.
@@ -71,31 +229,28 @@ class DeviceScanner:
         self._config_dir = config_dir
         self._get_metadata = get_metadata
         self._on_change = on_change
-        self._devices: dict[Path, Device] = {}
-        # Name-keyed shadow index; mDNS / ping / MQTT observations
-        # arrive keyed by the device's ``esphome.name`` and need an
-        # O(1) lookup instead of an O(N) linear scan of every
-        # configured YAML on every announcement. The list is by
-        # design — two YAMLs can share a ``name:`` (a config plus a
-        # ``foo (1).yaml`` copy, dashboard_import siblings, etc.)
-        # and a single broadcast must fan out to all of them.
-        self._devices_by_name: dict[str, list[Device]] = {}
-        self._cache_keys: dict[Path, _CacheKey] = {}
+        self._index = _DeviceIndex()
         self._lock = asyncio.Lock()
 
     @property
     def devices(self) -> list[Device]:
         """Snapshot of the currently-loaded devices in lexicographic order.
 
-        ``_devices`` is kept in sorted insertion order by ``_do_scan`` so
-        this read stays O(n).
+        ``_do_scan`` re-keys the index in sorted path order so this
+        read stays O(n).
         """
-        return list(self._devices.values())
+        return self._index.devices
 
     @property
-    def by_path(self) -> dict[Path, Device]:
-        """Live mapping ``path → Device``. Treat as read-only."""
-        return self._devices
+    def by_path(self) -> Mapping[Path, Device]:
+        """Live read-only mapping ``path → Device``.
+
+        Forwards to :attr:`_DeviceIndex.by_path`, which returns a
+        ``MappingProxyType`` view so external callers can iterate
+        / look up but can't mutate the index out of lockstep with
+        the name buckets / cache keys.
+        """
+        return self._index.by_path
 
     def get_by_name(self, name: str) -> list[Device]:
         """Every configured device whose ``esphome.name`` equals *name*.
@@ -104,10 +259,9 @@ class DeviceScanner:
         ``devices`` property. Callers can iterate / mutate the
         return value without corrupting the scanner's internal
         index, and the bucket order is the lexicographic
-        configuration-filename order maintained by ``_set_device``.
+        configuration-filename order maintained by the index.
         """
-        bucket = self._devices_by_name.get(name)
-        return list(bucket) if bucket else []
+        return self._index.get_by_name(name)
 
     async def scan(self) -> None:
         """Refresh the device cache from disk, emitting per-file change events."""
@@ -130,20 +284,38 @@ class DeviceScanner:
         success.
         """
         async with self._lock:
-            path = next((p for p in self._devices if p.name == filename), None)
+            path = self._index.find_path_by_filename(filename)
             if path is None:
                 return False
+            # Snapshot the existing cache key *before* any ``await``
+            # so the OSError fallback below is race-free regardless
+            # of future lock discipline (today the lock serializes
+            # every writer; tomorrow's caller might not respect it).
+            # ``cache_key`` returns ``_CacheKey`` (raises ``KeyError``
+            # if the path isn't tracked) — the lockstep invariant
+            # makes a miss here impossible since
+            # ``find_path_by_filename`` just located *path*.
+            previous_cache_key = self._index.cache_key(path)
             loop = asyncio.get_running_loop()
             loaded = await loop.run_in_executor(None, self._load_devices, {path})
             device = loaded.get(path)
             if device is None:
                 return False
-            self._set_device(path, device)
+            # Refresh the cache key; if the YAML disappears in the
+            # race window between load and re-stat, keep the
+            # snapshotted previous key so the next ``_do_scan``
+            # re-evaluates it.
             try:
                 stat = await loop.run_in_executor(None, path.stat)
-                self._cache_keys[path] = (stat.st_ino, stat.st_dev, stat.st_mtime, stat.st_size)
+                cache_key: _CacheKey = (
+                    stat.st_ino,
+                    stat.st_dev,
+                    stat.st_mtime,
+                    stat.st_size,
+                )
             except OSError:
-                pass
+                cache_key = previous_cache_key
+            self._index.set(path, device, cache_key)
             self._on_change(ScanChange.UPDATED, device)
             return True
 
@@ -155,94 +327,35 @@ class DeviceScanner:
         loop = asyncio.get_running_loop()
         path_to_cache_key = await loop.run_in_executor(None, self._build_cache_keys)
 
-        old_paths = set(self._devices.keys())
+        old_paths = set(self._index.by_path.keys())
         new_paths = set(path_to_cache_key.keys())
 
         removed_paths = old_paths - new_paths
         added_paths = new_paths - old_paths
         possibly_updated = old_paths & new_paths
         updated_paths = {
-            p for p in possibly_updated if path_to_cache_key[p] != self._cache_keys.get(p)
+            p for p in possibly_updated if path_to_cache_key[p] != self._index.cache_key(p)
         }
 
         paths_to_load = added_paths | updated_paths
         if paths_to_load:
             loaded = await loop.run_in_executor(None, self._load_devices, paths_to_load)
             for path, device in loaded.items():
-                self._set_device(path, device)
-                self._cache_keys[path] = path_to_cache_key[path]
                 kind = ScanChange.ADDED if path in added_paths else ScanChange.UPDATED
+                self._index.set(path, device, path_to_cache_key[path])
                 self._on_change(kind, device)
 
         for path in removed_paths:
-            removed_device = self._pop_device(path)
-            self._cache_keys.pop(path, None)  # type: ignore[arg-type]
+            removed_device = self._index.pop(path)
             if removed_device is not None:
                 self._on_change(ScanChange.REMOVED, removed_device)
 
-        # Rebuild ``_devices`` in lexicographic-path order. Without
-        # this, ``paths_to_load`` is a set so ``_devices`` ends up in
-        # hash-randomised insertion order — visible to the user as a
-        # different device list every restart. Cheap (one dict
-        # comprehension), keeps the ``devices`` property O(n). Filter
-        # to paths actually present so a YAML that failed to load
-        # (caught + skipped in ``_load_devices``) doesn't trigger a
-        # ``KeyError`` here. ``_devices_by_name`` doesn't need a
-        # parallel re-sort — its values are name-keyed lists whose
-        # iteration order isn't user-visible.
+        # Re-key the index in lexicographic-path order so the
+        # ``devices`` read returns a stable order across restarts —
+        # ``paths_to_load`` was a set so the in-place inserts above
+        # ended up in hash-randomised order.
         if added_paths or removed_paths:
-            self._devices = {p: self._devices[p] for p in path_to_cache_key if p in self._devices}
-            self._cache_keys = {
-                p: self._cache_keys[p] for p in path_to_cache_key if p in self._cache_keys
-            }
-
-    def _set_device(self, path: Path, device: Device) -> None:
-        """Insert / update *device* and keep ``_devices_by_name`` in lockstep.
-
-        Buckets are sorted by ``configuration`` filename so
-        ``get_by_name`` (and downstream ``bucket[0]`` consumers like
-        ``_find_device_by_name``) see a deterministic order. Without
-        this, the order depends on ``paths_to_load`` set iteration
-        and can flip between scans, leaking spurious "first match"
-        flips through the apply / dedupe path.
-        """
-        previous = self._devices.get(path)
-        if previous is not None and previous.name != device.name:
-            # Renamed in YAML: drop from old name's bucket before
-            # re-inserting under the new one.
-            self._unindex_name(previous)
-        self._devices[path] = device
-        bucket = self._devices_by_name.setdefault(device.name, [])
-        if previous is not None:
-            with contextlib.suppress(ValueError):
-                bucket.remove(previous)
-        # Insert at the position that keeps the bucket sorted by
-        # configuration filename. Configuration filenames are unique
-        # per path (``util.list_yaml_files`` is non-recursive) and
-        # ``previous`` has already been removed from the bucket
-        # above, so there is never a colliding entry to overwrite.
-        insert_at = 0
-        while insert_at < len(bucket) and bucket[insert_at].configuration < device.configuration:
-            insert_at += 1
-        bucket.insert(insert_at, device)
-
-    def _pop_device(self, path: Path) -> Device | None:
-        """Drop the *path* entry, mirroring the removal in ``_devices_by_name``."""
-        device = self._devices.pop(path, None)
-        if device is not None:
-            self._unindex_name(device)
-        return device
-
-    def _unindex_name(self, device: Device) -> None:
-        bucket = self._devices_by_name.get(device.name)
-        if bucket is None:
-            return
-        try:
-            bucket.remove(device)
-        except ValueError:
-            return
-        if not bucket:
-            del self._devices_by_name[device.name]
+            self._index.rebuild_in_path_order(path_to_cache_key.keys())
 
     def _build_cache_keys(self) -> dict[Path, _CacheKey]:
         """Build ``path → cache_key`` for every YAML file currently on disk."""
@@ -266,7 +379,7 @@ class DeviceScanner:
                     metadata.board_id,
                     metadata.ip,
                     metadata.expected_config_hash,
-                    previous=self._devices.get(path),
+                    previous=self._index.by_path.get(path),
                 )
             except Exception:
                 _LOGGER.warning("Failed to load device from %s", path.name)
