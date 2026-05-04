@@ -10,15 +10,48 @@ a controller.
 from __future__ import annotations
 
 import base64
+import logging
 import re
 import secrets
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from esphome import const, yaml_util
+from esphome.const import CONF_PACKAGES
 from esphome.storage_json import StorageJSON, ext_storage_path
 
+# Prefer the upstream single-call seam when present (the
+# ``resolve_packages`` proposal landing as esphome/esphome#16235).
+# Fall back to the two-step ``do_packages_pass`` + ``merge_packages``
+# that ESPHome's own ``validate_config`` pipeline strings together
+# today. Both imports are guarded by ``try/except ImportError``:
+# a future esphome that ships only ``resolve_packages`` (deprecating
+# or moving the two-step helpers) would otherwise break our module-
+# load. Once the dashboard's dep floor moves past the release that
+# shipped ``resolve_packages``, the entire fallback path can be
+# deleted in one commit.
+try:
+    from esphome.components.packages import (  # type: ignore[attr-defined]
+        resolve_packages as _resolve_packages,
+    )
+except ImportError:
+    _resolve_packages = None
+
+try:
+    from esphome.components.packages import (
+        do_packages_pass as _do_packages_pass,
+    )
+    from esphome.components.packages import (
+        merge_packages as _merge_packages,
+    )
+except ImportError:
+    _do_packages_pass = None  # type: ignore[assignment]
+    _merge_packages = None  # type: ignore[assignment]
+
 from ..models import Device, DeviceState
+
+_LOGGER = logging.getLogger(__name__)
+
 
 if TYPE_CHECKING:
     from ..models import BoardCatalogEntry
@@ -177,16 +210,44 @@ def parse_platform_from_yaml(yaml_content: str) -> tuple[str, str, str]:
 
 def detect_platform_from_yaml(path: Path) -> str:
     """
-    Quick scan of a YAML file to find its platform key.
+    Find a YAML file's platform key.
 
-    Returns the empty string when the file is unreadable or contains no
-    top-level platform key.
+    First tries the cheap line-scan against the raw file (no parser
+    involved, survives mid-edit drafts). Falls back to the
+    package-merged load ONLY when the raw scan misses AND the file
+    actually contains a ``packages:`` block — configs that place
+    ``esp32:`` / ``esp8266:`` / etc. inside a package only register
+    that key after merge runs. Without the gate every YAML that
+    happens to omit a top-level platform key (mid-edit drafts,
+    package-less configs that get their platform from
+    ``StorageJSON``) would pay a full parser load on every
+    dashboard scan, even though there's nothing in the file the
+    merge could surface. The cheap-regex-only fast path stays the
+    winner for the typical no-packages config.
+
+    Returns the empty string when neither path turns up a platform.
     """
     try:
-        platform, _, _ = parse_platform_from_yaml(path.read_text(encoding="utf-8"))
-        return platform
+        raw = path.read_text(encoding="utf-8")
     except Exception:
         return ""
+    try:
+        platform, _, _ = parse_platform_from_yaml(raw)
+    except Exception:
+        platform = ""
+    if platform:
+        return platform
+    if not yaml_has_top_level_block(raw, CONF_PACKAGES):
+        # No ``packages:`` block in the raw text → the merge can't
+        # surface a platform key that wasn't already there. Skip
+        # the load to keep the scan cheap.
+        return ""
+    config = load_device_yaml(path)
+    if isinstance(config, dict):
+        for key in config:
+            if key in _PLATFORM_KEYS:
+                return key
+    return ""
 
 
 def yaml_has_top_level_block(yaml_content: str, key: str) -> bool:
@@ -555,11 +616,27 @@ def _parse_inline_value(raw: str) -> str:
 def load_device_yaml(path: Path) -> dict | None:
     """Load *path* with ESPHome's YAML loader; return the top-level mapping.
 
-    Resolves ``!secret`` / ``!include`` / etc. like a real compile, and
-    returns ``None`` when the file isn't a mapping or fails to parse.
+    Resolves ``!secret`` / ``!include`` / etc. like a real compile,
+    flattens any ``packages:`` block into the main config via
+    ESPHome's package-resolution internals (the single-call
+    ``resolve_packages`` on newer ESPHome, the two-step
+    ``do_packages_pass`` + ``merge_packages`` fallback on older
+    builds), so callers see what the compiler actually sees —
+    ``api:`` / ``wifi:`` / target-platform blocks contributed by
+    packages register as top-level keys here — and returns
+    ``None`` when the file isn't a mapping or fails to parse.
+
+    Package resolution is best-effort: a remote (git) package needs
+    network access, an invalid package definition fails ESPHome's
+    voluptuous validator, etc. When the package pass throws we keep
+    the unmerged config rather than dropping it — better to surface
+    the local YAML than nothing, and the unmerged shape was the
+    pre-fix behaviour the dashboard already handled.
+
     Centralised so callers that need a parsed config — API-key
-    extraction, encryption-status checks, future config inspection —
-    share one entry point with the same error handling.
+    extraction, encryption-status checks, top-level-block detection
+    used by the device-card flags — share one entry point with the
+    same error handling and the same package-merge contract.
     """
     try:
         # ``yaml_util.load_yaml`` calls ``.open()`` on its argument, so
@@ -568,7 +645,51 @@ def load_device_yaml(path: Path) -> dict | None:
         config = yaml_util.load_yaml(path)
     except Exception:
         return None
-    return config if isinstance(config, dict) else None
+    if not isinstance(config, dict):
+        return None
+    # ``packages:`` is a separate pass in the ESPHome pipeline (see
+    # ``do_packages_pass`` + ``merge_packages`` in
+    # ``esphome.config.validate_config``): packages need to be loaded
+    # and merged so blocks they contribute (api / wifi / target-platform
+    # / …) become top-level keys. Without this step a config that
+    # puts those blocks behind ``packages:`` comes back from
+    # ``yaml_util.load_yaml`` with everything still nested under
+    # ``packages:``, and the dashboard's flag detection silently
+    # misses them. We delegate to ESPHome internals — the loader
+    # and merge algorithm live upstream.
+    #
+    # ``load_device_yaml`` runs on a worker thread (the device
+    # scanner uses ``run_in_executor``; the devices controller
+    # threads it through too), NOT the WS event loop. Same trade
+    # the validate path lives with: ESPHome's ``vscode`` subprocess
+    # runs the full resolve on every validate call, so a
+    # remote-package config that fires ``git clone`` synchronously
+    # blocks this worker thread for as long as the clone takes
+    # (minutes on a slow connection / large repo) but the dashboard
+    # stays responsive to other clients. The follow-up that mirrors
+    # the validate-style subprocess pattern for metadata refresh
+    # (so a slow remote clone doesn't stall the whole scan) is
+    # tracked separately; this PR closes the local-package gap
+    # behind #288 without trying to solve the remote-package
+    # latency problem at the same time.
+    if isinstance(config.get(CONF_PACKAGES), (dict, list)):
+        try:
+            if _resolve_packages is not None:
+                config = _resolve_packages(config)
+            elif _do_packages_pass is not None and _merge_packages is not None:
+                config = _do_packages_pass(config)
+                config = _merge_packages(config)
+        except Exception:
+            # Best-effort: a bad / unreachable package shouldn't
+            # blank the device's metadata. Keep the unmerged shape
+            # so the raw-YAML fallback paths at the call sites
+            # still work.
+            _LOGGER.debug(
+                "Package merge failed for %s; using unmerged config",
+                path,
+                exc_info=True,
+            )
+    return config
 
 
 def get_api_encryption_block(config: dict | None) -> dict | None:
