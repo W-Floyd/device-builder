@@ -6,10 +6,12 @@ import argparse
 import logging
 import os
 from logging.handlers import RotatingFileHandler
+from typing import TYPE_CHECKING
 
-from .constants import DEFAULT_HOST, DEFAULT_INGRESS_PORT, DEFAULT_PORT
-from .controllers.config import DashboardSettings
-from .device_builder import DeviceBuilder
+from .constants import DEFAULT_HOST, DEFAULT_INGRESS_PORT, DEFAULT_PORT, __version__
+
+if TYPE_CHECKING:
+    from .controllers.config import DashboardSettings
 
 _FORMAT = "%(asctime)s %(levelname)s [%(name)s] %(message)s"
 _DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -48,6 +50,12 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="ESPHome Device Builder",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=_format_version(),
+        help="Print version information and exit",
     )
     parser.add_argument(
         "configuration",
@@ -133,6 +141,12 @@ def main() -> None:
 
     _setup_logging(args.log_level, args.log_file)
 
+    # Deferred so ``--version`` / ``--help`` keep working in installs
+    # that omit the optional ``[esphome]`` extra — both modules below
+    # transitively import ``esphome`` at module load time.
+    from .controllers.config import DashboardSettings  # noqa: PLC0415
+    from .device_builder import DeviceBuilder  # noqa: PLC0415
+
     settings = DashboardSettings()
     settings.parse_args(args)
 
@@ -140,6 +154,32 @@ def main() -> None:
 
     device_builder = DeviceBuilder(settings)
     device_builder.run()
+
+
+def _esphome_version() -> str | None:
+    """Return the bundled ESPHome version, or ``None`` if the optional extra is missing."""
+    try:
+        from esphome.const import __version__ as version  # noqa: PLC0415
+    except ImportError:
+        return None
+    return version
+
+
+def _format_version() -> str:
+    """
+    Build the string shown by ``--version``.
+
+    Always reports the device builder package version (read from the
+    installed wheel's metadata, which the release workflow stamps via
+    ``pyproject.toml``). Appends the bundled ESPHome version in
+    parentheses when the optional ``[esphome]`` extra is importable —
+    that's the matching pair an operator pastes into a bug report.
+    """
+    base = f"esphome-device-builder {__version__}"
+    esphome = _esphome_version()
+    if esphome is None:
+        return base
+    return f"{base} (esphome {esphome})"
 
 
 def _validate_credentials(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
