@@ -16,6 +16,7 @@ lower-priority source can never override the state set by a higher one.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 from collections.abc import Callable
 from operator import attrgetter
@@ -44,6 +45,7 @@ from zeroconf.const import (
 )
 
 from ..helpers.hostname import is_local_hostname, normalize_hostname
+from ..helpers.subscriber_presence import SubscriberPresence
 from ..models import AdoptableDevice, Device, DeviceState, ReachabilitySource
 from ._dns_cache import DNSCache
 from ._reachability_tracker import MdnsCacheInfo, ReachabilityTracker
@@ -248,6 +250,7 @@ class DeviceStateMonitor:
         reachability: ReachabilityTracker | None = None,
         is_ignored: Callable[[str], bool] | None = None,
         get_devices_by_name: Callable[[str], list[Device]] | None = None,
+        presence: SubscriberPresence | None = None,
     ) -> None:
         self._get_devices = get_devices
         # ``get_devices_by_name`` is the O(1) name-keyed lookup that
@@ -304,6 +307,17 @@ class DeviceStateMonitor:
         # the same TTL'd lookup result instead of re-resolving every
         # cycle.
         self._dns_cache = DNSCache()
+        # When wired, the ping loop pauses while no dashboard client
+        # is subscribed — so a quiet network with no observers
+        # generates no ICMP traffic. Mirrors the legacy
+        # esphome.dashboard.status.ping behaviour (``while
+        # self._subscribers`` in web_server.py + ``await
+        # dashboard.ping_request.wait()`` in ping.py); reaching
+        # parity here closes a regression in the new dashboard,
+        # which had been ping-sweeping unconditionally. Optional so
+        # existing tests that build a monitor without a presence
+        # gate keep working; ``None`` means "always run the loop".
+        self._presence = presence
 
     async def start(self) -> None:
         """Start the mDNS browser and the periodic ping sweep."""
@@ -1169,12 +1183,37 @@ class DeviceStateMonitor:
         # → OFFLINE transition in front of the user within ~10s of
         # startup instead of after a full minute.
         await asyncio.sleep(_PING_BOOTSTRAP_DELAY)
-        await self._resolve_non_api_mdns_targets()
-        await self._ping_sweep()
+        # Strict pause: when wired to a SubscriberPresence gate, only
+        # sweep while at least one dashboard client is subscribed.
+        # The 0→1 transition wakes ``wait_for_subscriber`` immediately
+        # so the first user to open the dashboard sees fresh ICMP-
+        # source state within one sweep instead of waiting up to
+        # ``_PING_INTERVAL``. mDNS browsing keeps running
+        # unconditionally (it's passive), so devices that announce
+        # flip ONLINE the moment the bus delivers their cached state
+        # to the new subscriber.
         while True:
-            await asyncio.sleep(_PING_INTERVAL)
+            if self._presence is not None:
+                await self._presence.wait_for_subscriber()
             await self._resolve_non_api_mdns_targets()
             await self._ping_sweep()
+            if self._presence is not None:
+                # Interruptible idle wait: bail early if the last
+                # subscriber leaves so the next one to connect
+                # doesn't sit through the rest of a stale interval.
+                # ``wait_for`` raises ``TimeoutError`` after
+                # ``_PING_INTERVAL`` when the gate stays open the
+                # whole time (the normal "still subscribed, sweep
+                # again" path). Either branch loops back to the top
+                # where ``wait_for_subscriber`` parks if the gate
+                # has since closed.
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(
+                        self._presence.wait_for_no_subscribers(),
+                        timeout=_PING_INTERVAL,
+                    )
+                continue
+            await asyncio.sleep(_PING_INTERVAL)
 
     async def _resolve_non_api_mdns_targets(self) -> None:
         """Actively resolve ``.local`` hostnames for non-API devices.
