@@ -269,6 +269,9 @@ def set_device_metadata(
     ip: str | None = None,
     expected_config_hash: str | None = None,
     mac_address: str | None = None,
+    build_size_bytes: int | None = None,
+    build_size_dir_mtime: int | None = None,
+    build_size_info_mtime: int | None = None,
 ) -> None:
     """
     Set metadata fields for a device.
@@ -290,6 +293,20 @@ def set_device_metadata(
     Persisted so the dashboard renders the address immediately on
     startup, before the first mDNS probe response. Passing an
     empty string clears it.
+
+    ``build_size_bytes`` caches the total size of the per-device
+    ``.esphome/build/<name>/`` tree at the freshness pair
+    captured by the last walk. The pair is split because each
+    half catches a class of compile-time changes the other
+    misses: ``build_size_dir_mtime`` moves on entry-set churn
+    (PlatformIO atomic-replaces, sibling add/remove),
+    ``build_size_info_mtime`` moves on every real ESPHome
+    recompile (``write_file_if_changed`` rewrites
+    ``build_info.json``). Either side moving counts as stale,
+    so a freshly-restarted dashboard re-walks any device whose
+    pair drifted from what was persisted. Pass ``0`` for any
+    field to clear (used by the archive flow's volatile-field
+    scrub).
     """
     with metadata_transaction(config_dir) as data:
         entry = data.setdefault(filename, {})
@@ -301,16 +318,24 @@ def set_device_metadata(
             entry["comment"] = comment
         if ip:
             entry["ip"] = ip
-        if expected_config_hash is not None:
-            if expected_config_hash:
-                entry["expected_config_hash"] = expected_config_hash
+        # Tri-state fields: ``None`` means "leave alone", a truthy
+        # value writes, an explicit falsy (``""`` / ``0``) clears.
+        # Loop over the (key, value) pairs so adding a new
+        # tri-state field doesn't bump this function's branch
+        # count (ruff PLR0912 caps at 12).
+        for key, value in (
+            ("expected_config_hash", expected_config_hash),
+            ("mac_address", mac_address),
+            ("build_size_bytes", build_size_bytes),
+            ("build_size_dir_mtime", build_size_dir_mtime),
+            ("build_size_info_mtime", build_size_info_mtime),
+        ):
+            if value is None:
+                continue
+            if value:
+                entry[key] = value
             else:
-                entry.pop("expected_config_hash", None)
-        if mac_address is not None:
-            if mac_address:
-                entry["mac_address"] = mac_address
-            else:
-                entry.pop("mac_address", None)
+                entry.pop(key, None)
 
 
 def get_device_metadata(config_dir: Path, filename: str) -> dict[str, Any]:
@@ -355,6 +380,14 @@ _VOLATILE_DEVICE_METADATA_FIELDS: frozenset[str] = frozenset(
         # stale persisted MAC would render until the next mDNS
         # announce overwrote it.
         "mac_address",
+        # Cached size of the per-device build directory at the
+        # freshness pair captured alongside it. Archive wipes the
+        # build tree (``_wipe_device_build_dir``) so the cached
+        # triple would describe a directory that no longer
+        # exists.
+        "build_size_bytes",
+        "build_size_dir_mtime",
+        "build_size_info_mtime",
     }
 )
 

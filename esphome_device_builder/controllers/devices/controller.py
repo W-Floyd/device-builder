@@ -23,6 +23,7 @@ from esphome.components.dashboard_import import import_config
 from esphome.storage_json import StorageJSON, ext_storage_path, ignored_devices_storage_path
 
 from ...helpers.api import CommandError, api_command
+from ...helpers.build_size import coerce_sidecar_int
 from ...helpers.config_hash import compute_yaml_config_hash, read_build_info_hash
 from ...helpers.device_yaml import (
     generate_device_yaml,
@@ -52,6 +53,7 @@ from ...models import (
     UpdateDeviceResponse,
     WizardResponse,
 )
+from .._build_size_refresher import BuildSizeRefresher
 from .._device_mqtt_coordinator import DeviceMqttCoordinator
 from .._device_scanner import DeviceFileMetadata, DeviceScanner, ScanChange
 from .._device_state_monitor import _MDNS_REFRESH_PADDING_SECONDS, DeviceStateMonitor
@@ -142,6 +144,17 @@ class DevicesController:
             get_metadata=self._resolve_device_metadata,
             on_change=self._on_scan_change,
         )
+        # Single-worker build-size refresher. Bulk operations
+        # (clean / delete N devices in a row, fleet-wide startup
+        # sweep) all funnel into one queue so repeated requests
+        # for the same configuration coalesce and we never pile
+        # up background tasks. Constructed after the scanner so
+        # ``on_refreshed=self._scanner.reload`` is bindable.
+        self._build_size = BuildSizeRefresher(
+            config_dir=self._db.settings.config_dir,
+            get_filenames=lambda: (d.configuration for d in self._get_devices()),
+            on_refreshed=self._scanner.reload,
+        )
         # Build the state monitor first so the reachability tracker
         # can take its ``get_mdns_cache_info`` bound method directly
         # as the mDNS cache reader (no wrapper lambda — bound
@@ -199,12 +212,18 @@ class DevicesController:
         self._unsub_job_completed = self._db.bus.add_listener(
             EventType.JOB_COMPLETED, self._on_firmware_job_completed
         )
+        # Build-size worker — runs its own initial fleet sweep
+        # on first iteration to pick up CLI-compile drift, then
+        # drains per-device requests as they arrive from the
+        # job-completion hook.
+        self._build_size.start()
 
     async def stop(self) -> None:
         """Stop background monitors so the process exits cleanly."""
         if self._unsub_job_completed is not None:
             self._unsub_job_completed()
             self._unsub_job_completed = None
+        await self._build_size.stop()
         await self._mqtt_coordinator.stop()
         await self._state_monitor.stop()
 
@@ -1407,11 +1426,19 @@ class DevicesController:
         if not board_id:
             board_id = self._derive_board_id_from_yaml(config_dir, filename)
         mac_address = str(md.get("mac_address", ""))
+        # ``coerce_sidecar_int`` handles the bad-data fall-throughs
+        # (``None`` / object / decimal-string / etc.) — same
+        # defensive shape used by the build-size cache reads in
+        # ``helpers/build_size.py``. The metadata resolver is on
+        # the scanner's per-device hot path; a single corrupt
+        # entry shouldn't fail the whole scan.
+        build_size_bytes = coerce_sidecar_int(md.get("build_size_bytes"))
         return DeviceFileMetadata(
             board_id=board_id,
             ip=ip,
             expected_config_hash=expected_config_hash,
             mac_address=mac_address,
+            build_size_bytes=build_size_bytes,
         )
 
     def _derive_board_id_from_yaml(self, config_dir: Path, filename: str) -> str:
@@ -1824,10 +1851,21 @@ class DevicesController:
             # old entry and the appearance of the new one.
             self._db.create_background_task(self._scanner.scan())
             return
-        if job_type not in (JobType.COMPILE, JobType.UPLOAD, JobType.INSTALL):
-            return
         configuration = getattr(job, "configuration", "")
         if not configuration:
+            return
+        if job_type == JobType.CLEAN:
+            # ``esphome clean`` removes the per-device build tree;
+            # the build-size cache for this device is now stale
+            # (cached non-zero, current dir mtime → 0). The pair-
+            # equality short-circuit in
+            # ``refresh_build_size_if_stale`` detects that and
+            # walks once to clear the cached triple, so the drawer
+            # / table flip back to the em-dash placeholder. No
+            # hash recompute / flash bookkeeping needed for CLEAN.
+            self._build_size.request(configuration)
+            return
+        if job_type not in (JobType.COMPILE, JobType.UPLOAD, JobType.INSTALL):
             return
         recompute_hash = job_type in (JobType.COMPILE, JobType.INSTALL)
         flashed = job_type in (JobType.UPLOAD, JobType.INSTALL)
@@ -1873,6 +1911,14 @@ class DevicesController:
         await self._scanner.reload(configuration)
         if flashed:
             self._sync_deployed_hash_after_flash(configuration)
+        # A real compile moves the freshness pair the build-size
+        # cache keys off (build-dir mtime + ``build_info.json``
+        # mtime); hand off to the build-size worker so the drawer
+        # / table show an up-to-date "Build size" value the next
+        # time the frontend reads the device list. The worker
+        # short-circuits when the pair didn't actually move (e.g.
+        # an UPLOAD-only job that didn't recompile).
+        self._build_size.request(configuration)
 
     async def _persist_expected_config_hash(self, configuration: str) -> None:
         """
