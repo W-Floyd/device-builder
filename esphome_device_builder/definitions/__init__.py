@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import orjson
 import yaml
 
 from ..helpers.yaml import FastestSafeLoader
@@ -46,6 +47,7 @@ _LOGGER = logging.getLogger(__name__)
 
 _DEFINITIONS_DIR = Path(__file__).parent
 _BOARDS_DIR = _DEFINITIONS_DIR / "boards"
+_BOARDS_JSON = _DEFINITIONS_DIR / "boards.json"
 
 _IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".svg", ".webp")
 _GENERIC_DIR = _BOARDS_DIR / "_generic"
@@ -58,7 +60,9 @@ _GENERIC_DIR = _BOARDS_DIR / "_generic"
 
 def _local_to_url(local_path: Path) -> str:
     """Convert a local image path to a relative URL served by /boards/images."""
-    rel = local_path.relative_to(_BOARDS_DIR)
+    # ``as_posix`` keeps the URL forward-slash separated on Windows,
+    # where ``Path.relative_to`` would otherwise produce backslashes.
+    rel = local_path.relative_to(_BOARDS_DIR).as_posix()
     return f"/boards/images/{rel}"
 
 
@@ -225,20 +229,22 @@ def _load_hardware(data: dict | None, board_id: str) -> BoardHardware:
     )
 
 
-def load_board_catalog() -> BoardCatalogResponse:
-    """Load all board definitions from subdirectories."""
+def build_board_catalog_from_manifests(*, strict: bool = False) -> BoardCatalogResponse:
+    """
+    Build the board catalog by parsing every ``manifest.yaml`` on disk.
+
+    With ``strict=True`` a single broken manifest aborts the walk by
+    re-raising; otherwise the offending board is skipped and the
+    failure is logged.
+    """
     boards: list[BoardCatalogEntry] = []
 
     for manifest in sorted(_BOARDS_DIR.glob("*/manifest.yaml")):
         try:
-            # ``FastestSafeLoader`` is libyaml's CSafeLoader when
-            # PyYAML's C extension is present (~7-8x faster on the
-            # ~500-file catalog walk that dominates startup, see
-            # issue #368). Falls back to the pure-Python SafeLoader
-            # only if the C extension is unavailable. CSafeLoader is
-            # the C equivalent of SafeLoader (no arbitrary-instantiation
-            # surface), so the S506 ban on non-safe_load is a false
-            # positive here.
+            # CSafeLoader (via FastestSafeLoader) is the libyaml-backed
+            # equivalent of SafeLoader — same safe-only construction
+            # surface, so the S506 ban on non-safe loaders is a false
+            # positive.
             data = yaml.load(
                 manifest.read_text(encoding="utf-8"),
                 Loader=FastestSafeLoader,  # noqa: S506
@@ -282,6 +288,32 @@ def load_board_catalog() -> BoardCatalogResponse:
                 )
             )
         except Exception:
+            if strict:
+                raise
             _LOGGER.exception("Failed to load board definition from %s", manifest.parent.name)
 
     return BoardCatalogResponse(boards=boards)
+
+
+def load_board_catalog() -> BoardCatalogResponse:
+    """
+    Load the prebuilt board catalog from ``definitions/boards.json``.
+
+    Returns an empty catalog (with a logged warning) when the file
+    is missing or fails to decode — never raises, so a malformed
+    artefact can't take dashboard startup down with it.
+    """
+    if not _BOARDS_JSON.exists():
+        _LOGGER.warning(
+            "boards.json missing — board catalog will be empty. "
+            "Run script/sync_boards.py to generate the artefact.",
+        )
+        return BoardCatalogResponse(boards=[])
+    try:
+        return BoardCatalogResponse.from_dict(orjson.loads(_BOARDS_JSON.read_bytes()))
+    except Exception:
+        _LOGGER.exception(
+            "Failed to load boards.json — board catalog will be empty. "
+            "Run script/sync_boards.py to regenerate the artefact.",
+        )
+        return BoardCatalogResponse(boards=[])

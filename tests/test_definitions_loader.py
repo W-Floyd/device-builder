@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import orjson
 import pytest
 
 from esphome_device_builder import definitions as defs
@@ -20,9 +21,18 @@ from esphome_device_builder.definitions import (
     _parse_connectivity,
     _parse_pin_features,
     _parse_tags,
+    build_board_catalog_from_manifests,
     load_board_catalog,
 )
-from esphome_device_builder.models import BoardTag, Connectivity, PinFeature
+from esphome_device_builder.models import (
+    BoardCatalogEntry,
+    BoardCatalogResponse,
+    BoardEsphomeConfig,
+    BoardTag,
+    Connectivity,
+    PinFeature,
+    Platform,
+)
 
 _DEFS_MOD = "esphome_device_builder.definitions"
 
@@ -101,18 +111,9 @@ def test_parse_connectivity_logs_and_skips_unknown(
     )
 
 
-def test_load_board_catalog_skips_broken_manifest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A manifest that fails to parse is skipped with a logged exception.
-
-    Pin the outer ``except`` in ``load_board_catalog``. A single
-    broken manifest must not crash the whole catalog load — the
-    user's other working boards still need to render. Without
-    the catch, every dashboard load that hit the broken file
-    would 500-out with no working device drawer.
-    """
-    fake_boards = tmp_path / "boards"
+def _write_fake_boards(root: Path) -> Path:
+    """Create a minimal ``boards/`` tree with one good and one broken manifest."""
+    fake_boards = root / "boards"
     fake_boards.mkdir()
     # One good manifest.
     (fake_boards / "good-board").mkdir()
@@ -131,7 +132,19 @@ def test_load_board_catalog_skips_broken_manifest(
         "id: broken-board\nname: Broken\ndescription: Missing esphome key\n",
         encoding="utf-8",
     )
+    return fake_boards
 
+
+def test_build_from_manifests_skips_broken_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A manifest that fails to parse is skipped with a logged exception.
+
+    Without ``strict=True`` a broken board must not abort the walk —
+    the surviving manifests still need to render in any consumer that
+    invokes the YAML walker directly (tests, ad-hoc scripts).
+    """
+    fake_boards = _write_fake_boards(tmp_path)
     monkeypatch.setattr(defs, "_BOARDS_DIR", fake_boards)
     # Co-relocate the generic-images dir so ``_generic_image_url``'s
     # ``_local_to_url`` (which calls ``relative_to(_BOARDS_DIR)``)
@@ -140,7 +153,7 @@ def test_load_board_catalog_skips_broken_manifest(
     monkeypatch.setattr(defs, "_GENERIC_DIR", fake_boards / "_generic")
 
     with caplog.at_level(logging.ERROR):
-        result = load_board_catalog()
+        result = build_board_catalog_from_manifests()
 
     # Good board survived.
     ids = [b.id for b in result.boards]
@@ -150,4 +163,69 @@ def test_load_board_catalog_skips_broken_manifest(
     # Exception logged with the offending board's directory name.
     assert any(
         "broken-board" in rec.getMessage() for rec in caplog.records if rec.levelname == "ERROR"
+    )
+
+
+def test_build_from_manifests_strict_raises_on_broken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``strict=True`` re-raises the first per-board failure."""
+    fake_boards = _write_fake_boards(tmp_path)
+    monkeypatch.setattr(defs, "_BOARDS_DIR", fake_boards)
+    monkeypatch.setattr(defs, "_GENERIC_DIR", fake_boards / "_generic")
+
+    with pytest.raises(KeyError):
+        build_board_catalog_from_manifests(strict=True)
+
+
+def test_load_board_catalog_warns_when_json_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Missing ``boards.json`` returns an empty catalog and logs a warning."""
+    monkeypatch.setattr(defs, "_BOARDS_JSON", tmp_path / "missing-boards.json")
+
+    with caplog.at_level(logging.WARNING):
+        result = load_board_catalog()
+
+    assert result.boards == []
+    assert any("boards.json" in rec.getMessage() for rec in caplog.records)
+
+
+def test_load_board_catalog_reads_json(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``load_board_catalog`` deserializes the prebuilt JSON via mashumaro."""
+    fixture = BoardCatalogResponse(
+        boards=[
+            BoardCatalogEntry(
+                id="round-trip",
+                name="Round Trip",
+                description="JSON load test",
+                manufacturer="",
+                esphome=BoardEsphomeConfig(platform=Platform.ESP32, board="esp32dev"),
+            ),
+        ],
+    )
+    json_path = tmp_path / "boards.json"
+    json_path.write_bytes(orjson.dumps(fixture.to_dict()))
+    monkeypatch.setattr(defs, "_BOARDS_JSON", json_path)
+
+    result = load_board_catalog()
+
+    assert [b.id for b in result.boards] == ["round-trip"]
+    assert result.boards[0].esphome.platform is Platform.ESP32
+
+
+def test_load_board_catalog_handles_corrupt_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Malformed ``boards.json`` returns an empty catalog instead of crashing startup."""
+    json_path = tmp_path / "boards.json"
+    json_path.write_bytes(b"{not valid json")
+    monkeypatch.setattr(defs, "_BOARDS_JSON", json_path)
+
+    with caplog.at_level(logging.ERROR):
+        result = load_board_catalog()
+
+    assert result.boards == []
+    assert any(
+        "boards.json" in rec.getMessage() for rec in caplog.records if rec.levelname == "ERROR"
     )

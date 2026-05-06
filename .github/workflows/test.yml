@@ -69,6 +69,14 @@ jobs:
       - name: Validate board / component manifests
         run: python script/validate_definitions.py
 
+      - name: Verify boards.json is in sync with manifests
+        # Catches PRs that bypass the pre-commit hook — the diff
+        # fails the build if the committed JSON doesn't match what
+        # the script regenerates from the YAMLs.
+        run: |
+          python script/sync_boards.py
+          git diff --exit-code -- esphome_device_builder/definitions/boards.json
+
       - name: Smoke-test component catalog
         run: python script/check_catalog.py
 

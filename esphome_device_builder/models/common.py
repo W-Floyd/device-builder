@@ -445,6 +445,9 @@ class FieldPreset(DataClassORJSONMixin):
     a primitive, list, or dict — the latter for nested config entries.
     """
 
-    value: ConfigPrimitive | list[Any] | dict[str, Any] | None = None
+    # ``dict[str, Any]`` must precede ``list[Any]`` in the union:
+    # mashumaro dispatches in declaration order and ``list(some_dict)``
+    # would otherwise win for dict inputs (returning the keys).
+    value: ConfigPrimitive | dict[str, Any] | list[Any] | None = None
     locked: bool = False
     suggestions: list[ConfigPrimitive] | None = None

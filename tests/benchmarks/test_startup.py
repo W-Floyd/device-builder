@@ -2,9 +2,8 @@
 
 ``DeviceBuilder.start()`` blocks on two synchronous catalog loads
 before the first WS frame can be served: ``BoardCatalog.load()``
-walks ~500 hand-curated ``manifest.yaml`` files under
-``definitions/boards/`` and parses each via ``FastestSafeLoader``;
-``ComponentCatalog.load()`` decodes the ~20 MB pre-generated
+deserializes ``definitions/boards.json`` via ``orjson`` +
+mashumaro; ``ComponentCatalog.load()`` decodes the ~20 MB
 ``definitions/components.json`` and instantiates ~900
 ``ComponentCatalogEntry`` objects. Together they account for the
 bulk of the wall-time gap a user feels comparing the new
@@ -12,14 +11,10 @@ dashboard's startup against the legacy Tornado one — and on
 constrained hardware (HA Green) the absolute number runs into
 tens of seconds.
 
-Each benchmark below measures **one unit of work** that the
-production loaders multiply across every entry — one manifest
-parse, one ``_load_component`` dataclass build. That keeps the
-per-iteration cost in the microsecond / sub-millisecond range
-CodSpeed's simulation (callgrind) mode tolerates, while still
-catching the per-unit regressions that compound 500x / 900x in
-production. Benchmarking the full catalog loads end-to-end ran
-into multi-minute callgrind runs that timed out CI.
+The per-board YAML parse benchmark covers ``script/sync_boards.py``
+rather than the runtime path — a regression in the libyaml loader
+chain or the per-board ``_load_*`` helpers would land silently
+otherwise.
 
 The fixture inputs are pre-loaded once at module-collection time
 (real bytes from the bundled ``definitions/`` tree) so disk I/O
@@ -44,8 +39,15 @@ from esphome_device_builder.definitions import (
 )
 from esphome_device_builder.helpers.json import loads
 from esphome_device_builder.helpers.yaml import FastestSafeLoader
+from esphome_device_builder.models import BoardCatalogResponse
 
 _DEFINITIONS = Path(__file__).resolve().parents[2] / "esphome_device_builder" / "definitions"
+
+# Pre-decoded JSON dict for the boards-load benchmark. Reading the
+# bytes once at collection time keeps disk I/O out of the
+# per-iteration sample, matching the pattern used for the manifest
+# bytes below.
+_BOARDS_JSON_DICT = loads((_DEFINITIONS / "boards.json").read_bytes())
 
 # A real board manifest picked to exercise *every* ``_load_*``
 # helper the per-board path runs in production: hardware,
@@ -72,23 +74,18 @@ _SAMPLE_COMPONENT = next(
 
 
 def test_parse_one_board_manifest(benchmark: BenchmarkFixture) -> None:
-    """Pin the per-board parse cost — the unit ``BoardCatalog.load()`` repeats ~500x.
+    """Pin the per-board parse cost — the unit ``script/sync_boards.py`` repeats ~500x.
 
-    Production walks ``definitions/boards/*/manifest.yaml`` and
-    runs the libyaml-backed ``FastestSafeLoader`` + the chain of
-    ``_load_*`` helpers on each. That per-file work is the
-    dominant startup cost on
-    constrained hardware (HA Green, see issue #368) where
-    PyYAML's pure-Python parse loop hurts most. A regression here
-    multiplies linearly across the full catalog, so a 10%
-    slowdown on this benchmark is a 10% slowdown on dashboard
-    startup wall-time.
+    The sync runs in CI and on every PR that touches a manifest,
+    so a per-file regression compounds across the catalog and
+    extends the round-trip diff check.
 
     Run the YAML parse + every ``_load_*`` helper inline rather
-    than calling ``load_board_catalog`` itself — the catalog
-    function is a directory walk + per-file dispatch loop whose
-    per-iteration cost we already cover here, and benchmarking
-    the walk would re-pay disk I/O on every iteration.
+    than calling ``build_board_catalog_from_manifests`` itself —
+    that function is a directory walk + per-file dispatch loop
+    whose per-iteration cost we already cover here, and
+    benchmarking the walk would re-pay disk I/O on every
+    iteration.
     """
     board_id = "unexpectedmaker_feathers3d"
 
@@ -144,3 +141,24 @@ def test_load_one_component_entry(benchmark: BenchmarkFixture) -> None:
     @benchmark
     def run() -> None:
         _load_component(_SAMPLE_COMPONENT)
+
+
+def test_load_board_catalog_json(benchmark: BenchmarkFixture) -> None:
+    """Pin ``BoardCatalog.load()`` cost — one mashumaro ``from_dict`` walk.
+
+    Measures the ``BoardCatalogResponse.from_dict`` recursion that
+    instantiates every ``BoardCatalogEntry`` and its nested
+    dataclasses (pins, hardware, featured components, presets) —
+    the bulk of dashboard startup catalog work. The ``orjson.loads``
+    decode is paid once at module-collection time and excluded from
+    the sample.
+    """
+    # Deserialize once outside the loop so a refactor that broke
+    # ``from_dict`` surfaces here rather than as a fast-but-empty
+    # catalog reading as a CodSpeed "speedup".
+    smoke = BoardCatalogResponse.from_dict(_BOARDS_JSON_DICT)
+    assert len(smoke.boards) > 100  # actual count is 492; floor lets test survive growth
+
+    @benchmark
+    def run() -> None:
+        BoardCatalogResponse.from_dict(_BOARDS_JSON_DICT)
