@@ -28,10 +28,18 @@ from typing import Any
 import pytest
 
 from esphome_device_builder.helpers.yaml import (
+    _safe_yaml_scalar,
     _splice_into_domain_block,
+    _strip_yaml_quotes,
+    generate_api_encryption_key,
     generate_component_yaml,
     merge_component_yaml,
+    parse_substitution_ref,
+    read_yaml_scalar,
+    rewrite_api_encryption_key,
     rewrite_esphome_name,
+    rewrite_name_or_substitution,
+    rewrite_yaml_scalar,
 )
 from esphome_device_builder.models.components import (
     ComponentCatalogEntry,
@@ -72,7 +80,7 @@ def test_rewrite_esphome_name_swaps_value_under_esphome_block() -> None:
     what the wizard emits.
     """
     yaml = "esphome:\n  name: kitchen\n  friendly_name: Kitchen\n"
-    assert rewrite_esphome_name(yaml, "kitchen", "kitchen-2") == (
+    assert rewrite_esphome_name(yaml, "kitchen-2", only_if_current="kitchen") == (
         "esphome:\n  name: kitchen-2\n  friendly_name: Kitchen\n"
     )
 
@@ -89,7 +97,7 @@ def test_rewrite_esphome_name_returns_original_when_no_match() -> None:
     is its own concern; this test stays focused on the helper.
     """
     yaml = "esphome:\n  name: kitchen\n"
-    assert rewrite_esphome_name(yaml, "garage", "garage-2") == yaml
+    assert rewrite_esphome_name(yaml, "garage-2", only_if_current="garage") == yaml
 
 
 def test_rewrite_esphome_name_ignores_lookalike_in_other_block() -> None:
@@ -105,7 +113,7 @@ def test_rewrite_esphome_name_ignores_lookalike_in_other_block() -> None:
         "wifi:\n  ssid: kitchen\n"
         "sensor:\n  - platform: dht\n    name: kitchen\n"
     )
-    out = rewrite_esphome_name(yaml, "kitchen", "kitchen-2")
+    out = rewrite_esphome_name(yaml, "kitchen-2", only_if_current="kitchen")
     assert "name: kitchen-2" in out
     assert "ssid: kitchen\n" in out  # untouched
     assert "    name: kitchen\n" in out  # sensor untouched
@@ -118,7 +126,7 @@ def test_rewrite_esphome_name_preserves_trailing_comment() -> None:
     every rename would be a noisy regression.
     """
     yaml = "esphome:\n  name: kitchen  # primary device\n"
-    out = rewrite_esphome_name(yaml, "kitchen", "kitchen-2")
+    out = rewrite_esphome_name(yaml, "kitchen-2", only_if_current="kitchen")
     assert out == "esphome:\n  name: kitchen-2  # primary device\n"
 
 
@@ -141,7 +149,7 @@ def test_rewrite_esphome_name_no_match_walks_past_sibling_top_level_blocks() -> 
     """
     yaml = "esphome:\n  name: kitchen\nwifi:\n  ssid: home\n"
     # ``other`` doesn't match ``kitchen`` → no rewrite, walker runs to EOF.
-    assert rewrite_esphome_name(yaml, "other", "renamed") == yaml
+    assert rewrite_esphome_name(yaml, "renamed", only_if_current="other") == yaml
 
 
 def test_rewrite_esphome_name_walks_past_non_name_lines_and_other_blocks() -> None:
@@ -168,7 +176,7 @@ def test_rewrite_esphome_name_walks_past_non_name_lines_and_other_blocks() -> No
         "  ssid: home\n"
         "  name: kitchen\n"  # would-be lookalike under wifi block
     )
-    out = rewrite_esphome_name(yaml, "kitchen", "kitchen-2")
+    out = rewrite_esphome_name(yaml, "kitchen-2", only_if_current="kitchen")
     assert "  name: kitchen-2\n" in out
     # Wi-Fi's ``name:`` lookalike survives — the block-exit branch did its job.
     assert out.count("name: kitchen\n") == 1
@@ -183,8 +191,618 @@ def test_rewrite_esphome_name_handles_quoted_value() -> None:
     sees "no match" for a name they can clearly read in the file.
     """
     yaml = 'esphome:\n  name: "kitchen"\n'
-    out = rewrite_esphome_name(yaml, "kitchen", "kitchen-2")
+    out = rewrite_esphome_name(yaml, "kitchen-2", only_if_current="kitchen")
     assert "name: kitchen-2" in out
+
+
+def test_rewrite_esphome_name_unconditional_replaces_regardless_of_value() -> None:
+    """Default mode (no ``only_if_current``) replaces whatever's there.
+
+    Pin the clone-path's behaviour: a YAML whose ``esphome.name``
+    has drifted from its filename (hand-edited config, or a
+    ``name: $hostname`` substitution where the literal in the YAML
+    is ``$hostname``) still gets the new name landed on the line.
+    The gated mode used by ``_manual_rename`` is opt-in via the
+    keyword arg.
+    """
+    yaml = "esphome:\n  name: my-kitchen-bulb\n  friendly_name: Kitchen\n"
+    out = rewrite_esphome_name(yaml, "bedroom-bulb")
+    assert "  name: bedroom-bulb\n" in out
+    assert "my-kitchen-bulb" not in out
+
+
+def test_rewrite_esphome_name_unconditional_replaces_substituted_name() -> None:
+    """Unconditional replace works when the source uses ``$var`` substitutions.
+
+    The literal value on the ``name:`` line is ``$hostname``, not
+    the resolved string. A gated rewrite keyed on the filename
+    would no-op; the unconditional path lands the new name and
+    drops the substitution dependency for the cloned device.
+    """
+    yaml = "esphome:\n  name: $hostname\n"
+    out = rewrite_esphome_name(yaml, "bedroom-bulb")
+    assert out == "esphome:\n  name: bedroom-bulb\n"
+
+
+# ---------------------------------------------------------------------------
+# parse_substitution_ref / rewrite_name_or_substitution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("$devicename", "devicename"),
+        ("${devicename}", "devicename"),
+        ('"$devicename"', "devicename"),
+        ("'${devicename}'", "devicename"),
+        ("  ${devicename}  ", "devicename"),
+        ("kitchen", None),
+        ("$1bad", None),  # name must start with letter / underscore
+        ("my-${suffix}", None),  # mixed value, not a pure ref
+        ("${a}${b}", None),  # multiple refs
+        ("", None),
+    ],
+)
+def test_parse_substitution_ref(value: str, expected: str | None) -> None:
+    """Pin the variable-name parser's accept / reject contract.
+
+    Pure references (``$var`` / ``${var}`` optionally quoted)
+    return the variable name; anything with extra glue or a
+    malformed identifier returns ``None`` so the caller falls
+    back to a literal rewrite rather than wreck a partial match.
+    """
+    assert parse_substitution_ref(value) == expected
+
+
+def test_rewrite_name_or_substitution_redirects_through_substitution() -> None:
+    """The wizard / dashboard_import shape: name lives in substitutions.
+
+    ``esphome.name: ${devicename}`` paired with
+    ``substitutions.devicename: kitchen`` is the canonical pattern
+    ESPHome's wizard emits. Rewriting the leaf with a literal
+    would orphan the substitution and break any other consumer
+    (a sensor named ``${devicename}_temp``, etc.). Pin that the
+    rewrite walks to the substitution definition instead.
+    """
+    yaml = (
+        "substitutions:\n"
+        "  devicename: acfloatmonitor32\n"
+        "  friendly_name: AC Float Monitor 32\n"
+        "esphome:\n"
+        "  name: ${devicename}\n"
+        "  friendly_name: ${friendly_name}\n"
+    )
+    out = rewrite_name_or_substitution(yaml, ("esphome", "name"), "bedroom-bulb")
+    # Substitution definition flipped, leaf still references the var.
+    assert "  devicename: bedroom-bulb\n" in out
+    assert "  name: ${devicename}\n" in out
+    # Other substitutions untouched.
+    assert "  friendly_name: AC Float Monitor 32\n" in out
+
+
+def test_rewrite_name_or_substitution_falls_through_to_literal() -> None:
+    """A literal value gets rewritten on the leaf line directly."""
+    yaml = "esphome:\n  name: kitchen\n"
+    out = rewrite_name_or_substitution(yaml, ("esphome", "name"), "bedroom-bulb")
+    assert out == "esphome:\n  name: bedroom-bulb\n"
+
+
+def test_rewrite_name_or_substitution_handles_dollar_form() -> None:
+    """Both ``$var`` and ``${var}`` reference shapes redirect."""
+    yaml = "substitutions:\n  devicename: kitchen\nesphome:\n  name: $devicename\n"
+    out = rewrite_name_or_substitution(yaml, ("esphome", "name"), "bedroom-bulb")
+    assert "  devicename: bedroom-bulb\n" in out
+    assert "  name: $devicename\n" in out
+
+
+def test_rewrite_name_or_substitution_falls_through_when_substitution_not_local() -> None:
+    """A leaf that references an unresolved variable rewrites the leaf.
+
+    The substitutions block is in a package / ``!include``d file
+    we can't see — better to land the literal on the leaf than
+    silently no-op. The user can then edit the package definition
+    if they want substitution-driven cloning.
+    """
+    yaml = "esphome:\n  name: ${devicename}\n"
+    out = rewrite_name_or_substitution(yaml, ("esphome", "name"), "bedroom-bulb")
+    assert "  name: bedroom-bulb\n" in out
+
+
+def test_rewrite_name_or_substitution_handles_mixed_value_via_leaf() -> None:
+    """Partial reference (``${prefix}-suffix``) rewrites the leaf, not the prefix.
+
+    Splitting ``${prefix}-suffix`` into a substitution rewrite +
+    suffix preservation isn't possible without changing what
+    ``${prefix}`` resolves to elsewhere. Land the new value as a
+    literal on the leaf and let the user clean up.
+    """
+    yaml = "substitutions:\n  prefix: my\nesphome:\n  name: ${prefix}-suffix\n"
+    out = rewrite_name_or_substitution(yaml, ("esphome", "name"), "bedroom-bulb")
+    assert "  prefix: my\n" in out  # untouched
+    assert "  name: bedroom-bulb\n" in out  # leaf flipped to literal
+
+
+# ---------------------------------------------------------------------------
+# read_yaml_scalar
+# ---------------------------------------------------------------------------
+
+
+def test_read_yaml_scalar_returns_raw_value_with_quotes_intact() -> None:
+    """``read_yaml_scalar`` returns what the rewrite transform would see."""
+    yaml = 'esphome:\n  name: "kitchen"  # primary\n'
+    assert read_yaml_scalar(yaml, ("esphome", "name")) == '"kitchen"'
+
+
+def test_read_yaml_scalar_returns_none_when_path_missing() -> None:
+    """Missing path → ``None``."""
+    yaml = "esphome:\n  name: kitchen\n"
+    assert read_yaml_scalar(yaml, ("api", "encryption", "key")) is None
+
+
+def test_read_yaml_scalar_returns_empty_string_for_empty_value() -> None:
+    """Empty scalar → ``""`` (distinguishable from missing path's ``None``)."""
+    yaml = "esphome:\n  name: \n"
+    assert read_yaml_scalar(yaml, ("esphome", "name")) == ""
+
+
+# ---------------------------------------------------------------------------
+# rewrite_yaml_scalar (the generic walker)
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_yaml_scalar_rejects_off_path_nested_match() -> None:
+    """A leaf at the right depth but wrong ancestor chain doesn't match.
+
+    Pin the soundness fix for an earlier bug: tracking only on-path
+    ancestors meant a YAML like ``api: {something: {encryption:
+    {key: ...}}}`` would falsely satisfy the path
+    ``("api", "encryption", "key")`` because ``something`` was
+    invisible to the ancestor check. The walker now pushes every
+    mapping key — on-path or not — so off-path branches show up in
+    the ancestor chain and the comparison fails correctly.
+    """
+    yaml = (
+        "api:\n"
+        "  something:\n"
+        "    encryption:\n"
+        '      key: "off-path-value"\n'
+        "  encryption:\n"
+        '    key: "real-value"\n'
+    )
+    out = rewrite_yaml_scalar(yaml, ("api", "encryption", "key"), lambda _raw: '"new-key"')
+    # Off-path leaf untouched.
+    assert '      key: "off-path-value"' in out
+    # On-path leaf rewritten.
+    assert '    key: "new-key"' in out
+    assert "real-value" not in out
+
+
+def test_rewrite_yaml_scalar_walks_arbitrary_path() -> None:
+    """The walker locates a leaf at any nested path the caller supplies.
+
+    Pin that the abstraction isn't hardcoded to the three known
+    callers — a future caller (``logger:`` log levels,
+    ``substitutions:`` keys, etc.) gets the same machinery for free.
+    """
+    yaml = "logger:\n  level: INFO\n  logs:\n    api: WARN\n    wifi: VERBOSE\n"
+    out = rewrite_yaml_scalar(yaml, ("logger", "logs", "api"), lambda _: "DEBUG")
+    assert "    api: DEBUG\n" in out
+    # Sibling untouched.
+    assert "    wifi: VERBOSE\n" in out
+
+
+def test_rewrite_yaml_scalar_transform_returning_none_is_a_noop() -> None:
+    """A transform that returns ``None`` leaves the file unchanged.
+
+    Callers signal "matched but don't rewrite" (e.g. the encryption
+    key path skips ``!secret`` indirections) by returning ``None``;
+    the helper must round-trip the input verbatim then.
+    """
+    yaml = "esphome:\n  name: kitchen\n"
+    assert rewrite_yaml_scalar(yaml, ("esphome", "name"), lambda _: None) == yaml
+
+
+def test_rewrite_yaml_scalar_ignores_lookalike_at_wrong_path() -> None:
+    """A leaf key that matches name but lives elsewhere stays put.
+
+    ``name:`` under ``wifi:`` shares the leaf key with
+    ``esphome.name`` — the path-aware walker must reject the wrong
+    parent chain.
+    """
+    yaml = "esphome:\n  name: kitchen\nwifi:\n  name: home_network\n"
+    out = rewrite_yaml_scalar(yaml, ("esphome", "name"), lambda _: "kitchen-2")
+    assert "  name: kitchen-2\n" in out
+    assert "  name: home_network\n" in out  # untouched
+
+
+def test_rewrite_yaml_scalar_only_rewrites_first_match() -> None:
+    """Pathological YAMLs with two sibling keys: only the first is touched.
+
+    Well-formed configs declare each path once, but the helper's
+    behaviour on duplicates is documented as "first match wins" so
+    callers don't have to defend against it.
+    """
+    yaml = "esphome:\n  name: first\n  name: second\n"
+    out = rewrite_yaml_scalar(yaml, ("esphome", "name"), lambda _: "renamed")
+    assert "  name: renamed\n" in out
+    # Second occurrence stays put (and would still be rejected by
+    # ESPHome at compile time — the helper doesn't fix duplicate
+    # keys, just doesn't make them worse).
+    assert "  name: second\n" in out
+
+
+def test_rewrite_yaml_scalar_empty_path_is_a_noop() -> None:
+    """An empty path is meaningless; helper returns the input unchanged."""
+    yaml = "esphome:\n  name: kitchen\n"
+    assert rewrite_yaml_scalar(yaml, (), lambda _: "x") == yaml
+
+
+def test_rewrite_yaml_scalar_skips_list_items() -> None:
+    """A ``- key: value`` line under a mapping doesn't satisfy the path.
+
+    The walker only matches plain mapping nesting — the path
+    ``("sensor", "name")`` shouldn't accidentally rewrite a sensor
+    list-item's ``name:``. (List support would land as a separate
+    feature with explicit semantics.)
+    """
+    yaml = "sensor:\n  - platform: dht\n    name: first\n"
+    out = rewrite_yaml_scalar(yaml, ("sensor", "name"), lambda _: "x")
+    assert out == yaml
+
+
+def test_rewrite_yaml_scalar_pops_deeper_frames_at_next_list_item() -> None:
+    """A list-item line at indent N pops every frame at indent ≥ N.
+
+    Pin the inner-pop branch in the list-item handling: when the
+    walker encounters a second list item at the same indent as the
+    first, the first item's contents (which got pushed onto the
+    stack as ``(indent, key)`` frames) must be popped so the new
+    item starts with a clean ancestor chain. Without this, a leaf
+    inside the second item would inherit the previous item's
+    keys in its ancestor check.
+    """
+    # Two ``sensor:`` list items. After processing item 1's
+    # ``name: first``, the stack has ``[(0,"sensor"), (2,"-list-"),
+    # (4,"name")]``. The next item's ``- platform: bme280`` at
+    # indent 2 must pop both ``name`` and the previous list frame
+    # before pushing a fresh list frame.
+    yaml = "sensor:\n  - platform: dht\n    name: first\n  - platform: bme280\n    name: second\n"
+    captured: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        captured.append(raw)
+        return None
+
+    # Path that doesn't match anything walks the whole document
+    # without an early return — exercises the full pop-then-push
+    # sequence at every list item without short-circuiting on the
+    # first match.
+    rewrite_yaml_scalar(yaml, ("never", "matches"), _capture)
+    assert captured == []  # no leaf at the off-path target
+
+
+def test_rewrite_yaml_scalar_skips_block_scalar_continuation_lines() -> None:
+    """Lines inside a ``|`` block scalar don't match the mapping-key regex.
+
+    Pin the ``not m: continue`` branch: a block scalar's
+    continuation lines (like ``multi-line content`` here) don't
+    satisfy ``_MAPPING_KEY_LINE``'s anchor and aren't list items
+    either, so the walker just skips them without touching the
+    stack. The leaf at the right path further down should still
+    match correctly.
+    """
+    yaml = (
+        "esphome:\n"
+        "  name: kitchen\n"
+        "  comment: |\n"
+        "    multi-line description\n"
+        "    spanning two lines\n"
+        "wifi:\n"
+        "  ssid: home\n"
+    )
+    out = rewrite_yaml_scalar(yaml, ("wifi", "ssid"), lambda _: "renamed")
+    assert "  ssid: renamed\n" in out
+    # Block scalar contents are pure text — must not be modified.
+    assert "    multi-line description\n" in out
+    assert "    spanning two lines\n" in out
+
+
+def test_rewrite_yaml_scalar_honours_hash_inside_quoted_value() -> None:
+    r"""A ``#`` inside a quoted scalar is part of the value, not a comment.
+
+    Earlier draft used ``re.compile(r"^(.*?)(\s+#.*)?$")`` which
+    splits at the first ``\s+#`` regardless of quote state.
+    Reading ``friendly_name: "Bedroom #2"`` would then yield raw
+    value ``"Bedroom`` (truncated) and any subsequent rewrite
+    would corrupt the line. Pin that the splitter walks through
+    quoted strings without splitting.
+    """
+    captured: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        captured.append(raw)
+        return None
+
+    rewrite_yaml_scalar(
+        'esphome:\n  friendly_name: "Bedroom #2"  # the bedroom\n',
+        ("esphome", "friendly_name"),
+        _capture,
+    )
+    assert captured == ['"Bedroom #2"']
+
+
+def test_rewrite_yaml_scalar_honours_double_quoted_backslash_escape() -> None:
+    r"""``\"`` inside a double-quoted scalar doesn't end the quote.
+
+    Our own ``_quote`` emits ``\"`` for friendly names that
+    contain a literal ``"`` (``Lamp "Bright"`` → ``"Lamp
+    \"Bright\""``). On a *re*-clone of such a value, the splitter
+    needs to skip the escape body so the inner ``"`` doesn't read
+    as the closer and a later ``\s+#`` doesn't get treated as a
+    trailing comment.
+    """
+    captured: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        captured.append(raw)
+        return None
+
+    rewrite_yaml_scalar(
+        # The full quoted value includes ``\"`` escapes around
+        # ``Bright`` and an embedded ``#`` after the closing
+        # quote-escape. Without escape handling the splitter would
+        # exit quote mode at the first ``\"``, treat ``Bright`` as
+        # plain text, and split at `` #`` — corrupting the value.
+        'esphome:\n  friendly_name: "Lamp \\"Bright\\" #2"  # tag\n',
+        ("esphome", "friendly_name"),
+        _capture,
+    )
+    assert captured == ['"Lamp \\"Bright\\" #2"']
+
+
+def test_rewrite_yaml_scalar_honours_single_quoted_doubled_quote_escape() -> None:
+    """``''`` inside a single-quoted scalar is a literal quote, not the closer.
+
+    YAML's single-quote escape is ``''`` (doubled). The splitter
+    must recognise the doubled-quote pattern as "stay in the
+    string" rather than treating the first quote as the closer.
+    """
+    captured: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        captured.append(raw)
+        return None
+
+    rewrite_yaml_scalar(
+        "esphome:\n  friendly_name: 'Bob''s Lamp #1'  # primary\n",
+        ("esphome", "friendly_name"),
+        _capture,
+    )
+    assert captured == ["'Bob''s Lamp #1'"]
+
+
+def test_rewrite_yaml_scalar_preserves_quoted_value_on_rewrite_with_trailing_comment() -> None:
+    """Rewriting a quoted-with-hash value preserves the trailing comment.
+
+    Pin the round-trip: the value ``"Bedroom #2"`` reads back as
+    a single quoted scalar, gets rewritten to a new quoted
+    scalar, and the trailing ``# the bedroom`` comment survives.
+    """
+    yaml = 'esphome:\n  friendly_name: "Bedroom #2"  # the bedroom\n'
+    out = rewrite_yaml_scalar(
+        yaml,
+        ("esphome", "friendly_name"),
+        lambda _raw: '"Bedroom #3"',
+    )
+    assert out == 'esphome:\n  friendly_name: "Bedroom #3"  # the bedroom\n'
+
+
+def test_rewrite_yaml_scalar_passes_raw_value_to_transform() -> None:
+    """Transform sees the value with quotes intact, comment stripped.
+
+    ``rewrite_api_encryption_key`` relies on the
+    ``!secret`` / ``${`` prefix check working on the raw value;
+    if the helper stripped quotes for the transform, ``!secret``
+    would still parse but a future caller looking for a quoted
+    sentinel would fail. Pin the contract.
+    """
+    seen: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        seen.append(raw)
+        return None
+
+    rewrite_yaml_scalar(
+        'esphome:\n  name: "kitchen"  # primary device\n',
+        ("esphome", "name"),
+        _capture,
+    )
+    assert seen == ['"kitchen"']
+
+
+# ---------------------------------------------------------------------------
+# _safe_yaml_scalar / _strip_yaml_quotes
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        # Plain identifiers / slugs round-trip unquoted.
+        ("Kitchen", "Kitchen"),
+        ("my-device", "my-device"),
+        ("acfloatmonitor32", "acfloatmonitor32"),
+        # Embedded sequences that flip a plain scalar into something
+        # else MUST be quoted: ``# comment`` (the value would become
+        # a comment) and ``: `` (would split into a key/value pair).
+        ("Bedroom #2", '"Bedroom #2"'),
+        ("Lamp: Bedroom", '"Lamp: Bedroom"'),
+        # Leading indicator characters force quoting.
+        ("!escaped", '"!escaped"'),
+        ("- danger", '"- danger"'),
+        ("@host", '"@host"'),
+        # Trailing colon would parse as a key with empty value.
+        ("Kitchen:", '"Kitchen:"'),
+        # Reserved bool / null plain scalars must be quoted to stay strings.
+        ("yes", '"yes"'),
+        ("Off", '"Off"'),
+        ("null", '"null"'),
+        ("", '""'),
+        # Embedded quotes / backslashes ARE valid in plain scalars
+        # (YAML parses them as literal characters). We don't quote
+        # for them; only leading indicators / comment markers /
+        # key-value splits force quoting.
+        ('Lamp "Bright"', 'Lamp "Bright"'),
+        ("path\\sub", "path\\sub"),
+        # Newlines / tabs become escape sequences inside quotes.
+        ("line1\nline2", '"line1\\nline2"'),
+    ],
+)
+def test_safe_yaml_scalar(value: str, expected: str) -> None:
+    """Pin the plain-vs-quoted rendering decisions on the user-facing values.
+
+    ``rewrite_friendly_name`` and ``rewrite_name_or_substitution``
+    accept arbitrary strings — including ones a YAML parser would
+    interpret as comments / structure markers / reserved words.
+    Without this normalisation a friendly name like ``Bedroom #2``
+    would round-trip as ``Bedroom`` (everything after `` #`` becomes
+    a comment) and ``yes`` would parse back as a boolean.
+    """
+    assert _safe_yaml_scalar(value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("kitchen", "kitchen"),
+        ('"kitchen"', "kitchen"),
+        ("'kitchen'", "kitchen"),
+        ("  kitchen  ", "kitchen"),
+        ('  "kitchen"  ', "kitchen"),
+        # Mismatched / single quote is not stripped.
+        ('"kitchen', '"kitchen'),
+        ("'kitchen\"", "'kitchen\""),
+    ],
+)
+def test_strip_yaml_quotes(value: str, expected: str) -> None:
+    """Pin the quote-strip helper's accept / reject contract.
+
+    Used by ``parse_substitution_ref`` and the rename gate to
+    compare an inline value against an unquoted target without
+    crashing on unquoted values or eating partial quotes.
+    """
+    assert _strip_yaml_quotes(value) == expected
+
+
+# ---------------------------------------------------------------------------
+# rewrite_api_encryption_key
+# ---------------------------------------------------------------------------
+
+
+def test_rewrite_api_encryption_key_swaps_literal_value() -> None:
+    """Literal key under ``api: -> encryption:`` gets replaced.
+
+    The replacement is rendered double-quoted so a base64 value
+    that happens to start with a YAML special character
+    (``!``/``%``/``@``/``-``/``?``/``&``/``*``) parses cleanly.
+    """
+    yaml = 'api:\n  encryption:\n    key: "OLDKEYBASE64=="\n'
+    out = rewrite_api_encryption_key(yaml, "NEWKEYBASE64==")
+    assert out == ('api:\n  encryption:\n    key: "NEWKEYBASE64=="\n')
+
+
+def test_rewrite_api_encryption_key_no_api_block_returns_input() -> None:
+    """No ``api:`` block at all → no-op."""
+    yaml = "esphome:\n  name: kitchen\nwifi:\n  ssid: home\n"
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_no_encryption_block_returns_input() -> None:
+    """``api:`` exists but plaintext (no encryption block) → no-op."""
+    yaml = "api:\n  password: hunter2\n"
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_skips_secret_indirection() -> None:
+    """``key: !secret api_key`` stays untouched.
+
+    The indirection points at content the clone shares with its
+    source on disk. Replacing the indirection name with a literal
+    here would silently desync the rendered config from
+    ``secrets.yaml``.
+    """
+    yaml = "api:\n  encryption:\n    key: !secret api_key\n"
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_skips_substitution_indirection() -> None:
+    """``key: ${api_key}`` stays untouched, same reasoning as ``!secret``."""
+    yaml = "api:\n  encryption:\n    key: ${api_key}\n"
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_skips_quoted_substitution_indirection() -> None:
+    """``key: "${api_key}"`` stays untouched.
+
+    Same intent as the unquoted ``${...}`` case — the value points
+    at a substitution defined elsewhere, so swapping it for a
+    fresh literal would silently desync the rendered config.
+    Earlier versions only matched the ``${`` prefix on the raw
+    quoted value (``"${api_key}"`` doesn't start with ``${``) and
+    would falsely overwrite. Strip quotes before the prefix check.
+    """
+    yaml = 'api:\n  encryption:\n    key: "${api_key}"\n'
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_skips_quoted_secret_indirection() -> None:
+    """``key: "!secret api_key"`` stays untouched.
+
+    Same fix as the substitution case — a quoted ``!secret``
+    indirection is unusual but valid YAML, and rewriting it would
+    desync from the secrets file the source pointed at.
+    """
+    yaml = 'api:\n  encryption:\n    key: "!secret api_key"\n'
+    assert rewrite_api_encryption_key(yaml, "NEW==") == yaml
+
+
+def test_rewrite_api_encryption_key_ignores_lookalike_outside_encryption() -> None:
+    """A ``key:`` under another block (remote_receiver button code) doesn't flip."""
+    yaml = (
+        "api:\n"
+        "  encryption:\n"
+        '    key: "OLDKEYBASE64=="\n'
+        "remote_receiver:\n"
+        "  - platform: rc_switch\n"
+        "    key: 0xABCDEF12\n"
+    )
+    out = rewrite_api_encryption_key(yaml, "NEW==")
+    assert 'key: "NEW=="' in out
+    assert "key: 0xABCDEF12" in out
+
+
+def test_rewrite_api_encryption_key_handles_block_with_comments() -> None:
+    """Comment-only / blank lines inside ``api: encryption:`` don't confuse the walker."""
+    yaml = (
+        "api:\n"
+        "  # encryption block — generated by the wizard\n"
+        "  encryption:\n"
+        "\n"
+        '    key: "OLDKEYBASE64=="  # do not share\n'
+    )
+    out = rewrite_api_encryption_key(yaml, "NEW==")
+    assert 'key: "NEW=="  # do not share' in out
+
+
+def test_generate_api_encryption_key_yields_distinct_base64_values() -> None:
+    """Two consecutive calls must return different keys (cryptographic randomness)."""
+    a = generate_api_encryption_key()
+    b = generate_api_encryption_key()
+    assert a != b
+    # 32 raw bytes → 44 base64 chars including padding.
+    assert len(a) == 44
+    assert len(b) == 44
 
 
 # ---------------------------------------------------------------------------

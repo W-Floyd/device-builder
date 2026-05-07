@@ -38,7 +38,14 @@ from ...helpers.json import JSONDecodeError, dumps_indent, loads
 from ...helpers.mac_addresses import derive_interface_macs
 from ...helpers.process import kill_quietly
 from ...helpers.subprocess import create_subprocess_exec, iter_lines_with_progress
-from ...helpers.yaml import merge_component_yaml, rewrite_esphome_name
+from ...helpers.yaml import (
+    generate_api_encryption_key,
+    merge_component_yaml,
+    read_yaml_scalar,
+    rewrite_api_encryption_key,
+    rewrite_esphome_name,
+    rewrite_name_or_substitution,
+)
 from ...models import (
     AddComponentResponse,
     AdoptableDevice,
@@ -735,6 +742,181 @@ class DevicesController:
             raise CommandError(ErrorCode.INTERNAL_ERROR, msg)
         job = await self._db.firmware.rename(configuration=configuration, new_name=new_name)
         return {"configuration": new_filename, "job": job.to_dict()}
+
+    @api_command("devices/clone")
+    async def clone_device(
+        self,
+        *,
+        configuration: str,
+        new_name: str,
+        new_friendly_name: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, str]:
+        """
+        Duplicate an existing device YAML under a fresh hostname.
+
+        Designed for "I bought 10 of the same bulb" workflows: the
+        clone copies the source YAML's components and wiring intact
+        but takes a fresh ``esphome.name`` (and therefore a fresh
+        mDNS hostname / API endpoint), a fresh ``friendly_name``,
+        and a freshly-generated ``api.encryption.key`` so two
+        siblings forked from the same source don't share encryption
+        material — compromise of one device must not compromise
+        the others.
+
+        ``new_friendly_name`` is optional: when omitted, defaults
+        to ``friendly_name_slugify(new_name)`` to mirror how
+        ``devices/create`` derives the wizard friendly_name. Pass
+        a blank string to leave the source's ``friendly_name:``
+        line untouched (rare — most callers want a per-clone label).
+
+        Indirections (``key: !secret api_key`` /
+        ``key: ${api_key}``) are deliberately preserved on the
+        clone — the indirection target is shared with the source
+        on disk, so rewriting the indirection name to a fresh
+        literal would silently desync the rendered config from
+        whatever ``secrets.yaml`` / substitutions block actually
+        drives the encryption.
+
+        Returns ``{"configuration": "<new_filename>"}``. Errors
+        propagate as ``INVALID_ARGS`` for collisions / empty
+        names; the source file failing to load surfaces as
+        ``INTERNAL_ERROR``.
+        """
+        new_name = new_name.strip()
+        if not new_name:
+            raise CommandError(ErrorCode.INVALID_ARGS, "new_name is required")
+        new_filename = f"{new_name}.yaml"
+        # Compare on the *stem*, not the filename, so cloning
+        # ``kitchen.yml`` to ``new_name=kitchen`` is rejected even
+        # though the filenames differ — both files would still carry
+        # the same ``esphome.name`` and collide on mDNS.
+        source_stem = configuration.removesuffix(".yaml").removesuffix(".yml")
+        if new_name == source_stem:
+            raise CommandError(
+                ErrorCode.INVALID_ARGS,
+                "new_name must differ from the source device name",
+            )
+
+        loop = asyncio.get_running_loop()
+        source_path = self._db.settings.rel_path(configuration)
+        new_path = self._db.settings.rel_path(new_filename)
+        config_dir = self._db.settings.config_dir
+        # Default the friendly_name to a slug-derived fallback so
+        # the dashboard list doesn't show two entries with the same
+        # label after a clone. Explicit blank string opts out.
+        if new_friendly_name is None:
+            new_friendly_name = friendly_name_slugify(new_name)
+        # Fresh encryption material per clone — generated up here
+        # rather than inside the executor so the off-loop work is
+        # purely I/O.
+        new_key = generate_api_encryption_key()
+
+        # All blocking I/O bundled into one executor hop. Returns the
+        # (raw_source_content, source_metadata, target_existed_at_start)
+        # triple — the caller maps each into either a typed
+        # ``CommandError`` or the rewrite + write step that follows.
+        # ``ext_storage_path`` / metadata helpers / file I/O are all
+        # ``Path``-walking syscalls under the hood; no point in five
+        # round-trips through ``run_in_executor`` when one will do.
+        def _gather() -> tuple[str | None, dict | None, bool]:
+            if new_path.exists():
+                return None, None, True
+            if not source_path.exists():
+                return None, None, False
+            content = source_path.read_text(encoding="utf-8")
+            meta = get_device_metadata(config_dir, configuration)
+            return content, meta, False
+
+        source_content, source_meta, target_existed = await loop.run_in_executor(None, _gather)
+        if target_existed:
+            msg = f"A device named {new_filename} already exists"
+            raise CommandError(ErrorCode.INVALID_ARGS, msg)
+        if source_content is None:
+            msg = f"Source device {configuration} not found"
+            raise CommandError(ErrorCode.INVALID_ARGS, msg)
+
+        # Land the new identity on whichever line the source actually
+        # uses to drive the value. Two patterns appear in real configs:
+        #
+        # 1. **Direct literal** — ``esphome.name: kitchen``. Rewrite
+        #    the leaf line.
+        # 2. **Substitution reference** — ``esphome.name: ${devicename}``
+        #    with ``substitutions.devicename: kitchen``. This is the
+        #    standard ESPHome wizard / dashboard_import shape. Here
+        #    the *leaf* line carries an indirection name; the actual
+        #    value lives in the substitutions block. Rewriting the
+        #    leaf would land a literal name and silently orphan the
+        #    substitution, breaking any other consumer of the same
+        #    variable (a sensor named ``${devicename}_temp``, etc.).
+        #    Rewrite the substitution definition instead so every
+        #    reference re-targets atomically.
+        #
+        # Mixed values (``${prefix}-suffix``) aren't pure references
+        # and fall through to the leaf rewrite — we have no way to
+        # split the prefix without changing the suffix's meaning.
+        # Precondition: there has to be an ``esphome.name`` leaf in
+        # *this* file for us to rewrite. A package-driven config
+        # (``packages: { base: !include common/base.yaml }`` with the
+        # ``esphome:`` block defined upstream) has no in-file leaf to
+        # touch — the rewrite would silently no-op and the clone
+        # would flash under the source's hostname. Reject up-front
+        # with a typed error so the dialog can show a real message
+        # instead of producing a duplicate device.
+        if read_yaml_scalar(source_content, ("esphome", "name")) is None:
+            raise CommandError(
+                ErrorCode.INVALID_ARGS,
+                "Source has no inline esphome.name to rewrite — clone "
+                "needs an explicit name in this file (move the name "
+                "out of the package or add an esphome: name: line "
+                "before cloning).",
+            )
+
+        new_content = rewrite_name_or_substitution(source_content, ("esphome", "name"), new_name)
+        if new_friendly_name:
+            new_content = rewrite_name_or_substitution(
+                new_content, ("esphome", "friendly_name"), new_friendly_name
+            )
+        # ``rewrite_api_encryption_key`` is a no-op when the source
+        # uses ``!secret`` / ``${...}`` for the key — those
+        # indirections stay shared with the source on purpose.
+        new_content = rewrite_api_encryption_key(new_content, new_key)
+
+        # Carry forward only the source's ``board_id`` — that's the
+        # one piece of dashboard state the scanner can't recover from
+        # the YAML (it's a catalog-key indirection the user picked at
+        # wizard time). Friendly name lives in the YAML we just
+        # wrote, so ``load_device_from_storage`` reads it back on the
+        # next scan; copying to metadata too would just duplicate
+        # truth. ``ip`` is deliberately not carried — the clone
+        # hasn't booted yet, and inheriting the source's address
+        # would mis-route ``devices/logs`` until the first mDNS
+        # announce corrects it. StorageJSON is skipped entirely: it's
+        # a build artefact, the next compile writes a real one, and
+        # ``load_device_from_storage`` handles a missing sidecar by
+        # reading from YAML alone.
+        carry_board_id = source_meta.get("board_id") if source_meta else None
+
+        def _commit() -> None:
+            with open(new_path, "x", encoding="utf-8") as f:
+                f.write(new_content)
+            if carry_board_id:
+                set_device_metadata(config_dir, new_filename, board_id=carry_board_id)
+
+        try:
+            await loop.run_in_executor(None, _commit)
+        except FileExistsError as exc:
+            # Race: another caller created the file between our
+            # gather pass and the ``open(... "x")``. Surface as the
+            # same INVALID_ARGS the preflight produces so the
+            # frontend renders a single message.
+            msg = f"A device named {new_filename} already exists"
+            raise CommandError(ErrorCode.INVALID_ARGS, msg) from exc
+        # Rescan so the scanner indexes the new YAML and fires the
+        # ADDED event the WS subscribers expect. ``probe_device``
+        # runs from the scan-change handler — no double-probe here.
+        await self._scanner.scan()
+        return {"configuration": new_filename}
 
     async def _yaml_validates(self, config_path: str) -> bool:
         """``esphome config`` precheck.
@@ -2339,7 +2521,12 @@ class DevicesController:
 
         old_name = configuration.removesuffix(".yaml").removesuffix(".yml")
         content = old_path.read_text(encoding="utf-8")
-        new_content = rewrite_esphome_name(content, old_name, new_name)
+        # File-level rename gates the YAML rewrite on the existing
+        # ``esphome.name`` matching the filename — when they've
+        # drifted (hand-edited YAML, substituted name) we'd rather
+        # leave the line alone than silently flip a value the user
+        # may have set deliberately.
+        new_content = rewrite_esphome_name(content, new_name, only_if_current=old_name)
         new_path.write_text(new_content, encoding="utf-8")
         old_path.unlink()
 

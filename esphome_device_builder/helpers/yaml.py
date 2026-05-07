@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import base64
 import re
+import secrets
 from typing import TYPE_CHECKING, Any
 
 import yaml
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from ..models import ComponentCatalogEntry
 
 # Prefer the libyaml-backed C loader when PyYAML was built against
@@ -93,42 +97,430 @@ _ENTITY_CATEGORIES = {
 # ---------------------------------------------------------------------------
 
 
-def rewrite_esphome_name(yaml_text: str, old_name: str, new_name: str) -> str:
+# Mapping-key line: optional leading whitespace, an unquoted scalar
+# key, ``:``, optional whitespace, optional value, optional trailing
+# comment. List items (``- foo: bar``) are excluded — none of the
+# rewrite paths we care about land inside a list, and the key stack
+# below assumes parent → child mapping nesting only.
+_MAPPING_KEY_LINE = re.compile(r"^(?P<indent>\s*)(?P<key>[A-Za-z_][\w-]*):\s*(?P<rest>.*)$")
+
+
+def _split_value_and_comment(rest: str) -> tuple[str, str]:
+    r"""
+    Split *rest* into ``(value, comment)`` at a real ``\s+#`` separator.
+
+    A ``#`` only opens a comment when preceded by whitespace
+    *and* outside any quoted scalar. Without the quote-state
+    check, ``friendly_name: "Bedroom #2"`` would mis-split as
+    ``"Bedroom`` (value) + ``" #2"`` (comment).
+
+    Honours both YAML quote-escape conventions so the splitter
+    survives a round-trip through our own ``_quote`` (which emits
+    ``\"`` inside double-quoted output for friendly names that
+    contain ``"``):
+
+    - Double-quoted: ``\"`` escapes a literal quote. Skip the
+      escape sequence body so the quote-flip stays accurate.
+    - Single-quoted: ``''`` is YAML's escape for a literal single
+      quote inside a single-quoted scalar. A doubled closer means
+      "stay in the string"; only an unpaired ``'`` ends the scalar.
+
+    *value* keeps the surrounding quotes intact and is stripped
+    of trailing whitespace (the comment owns its leading run).
+    *comment* includes the leading whitespace + ``#`` so the
+    rewriter pastes it back verbatim. Empty *comment* means no
+    trailing comment was found.
+    """
+    quote: str | None = None
+    i = 0
+    n = len(rest)
+    while i < n:
+        ch = rest[i]
+        if quote is not None:
+            if ch == "\\" and quote == '"' and i + 1 < n:
+                # Double-quoted escape — skip the escape body so a
+                # ``\"`` doesn't read as the closing quote.
+                i += 2
+                continue
+            if ch == quote:
+                if quote == "'" and i + 1 < n and rest[i + 1] == "'":
+                    # Single-quoted ``''`` is a literal quote, not
+                    # the closer — stay inside the scalar.
+                    i += 2
+                    continue
+                quote = None
+        elif ch in ('"', "'"):
+            quote = ch
+        elif ch == "#" and i > 0 and rest[i - 1] in " \t":
+            value = rest[:i].rstrip(" \t")
+            return value, rest[len(value) :]
+        i += 1
+    return rest, ""
+
+
+# Sentinel pushed onto the path stack when we descend into a list
+# item. Picked as a string that can't collide with a real YAML key
+# (the leading ``-`` prevents a match against the mapping-key regex's
+# ``[A-Za-z_]`` anchor).
+_LIST_FRAME = "-list-"
+
+
+def rewrite_yaml_scalar(
+    yaml_text: str,
+    path: Sequence[str],
+    transform: Callable[[str], str | None],
+) -> str:
+    """
+    Rewrite the scalar at the YAML mapping *path* in *yaml_text*.
+
+    *path* is the ancestor → leaf chain of mapping keys
+    (e.g. ``("esphome", "name")``, ``("api", "encryption", "key")``).
+    The walker tracks the open ancestor stack by indent and only
+    rewrites a leaf line whose ancestor chain matches *path[:-1]*
+    and whose own key equals *path[-1]*.
+
+    *transform* receives the leaf's *raw value* — the substring
+    between the colon's trailing whitespace and any trailing
+    ``# comment``, with surrounding whitespace stripped but quotes
+    kept. It returns the rendered replacement (caller decides
+    whether to wrap in quotes, regenerate from scratch, etc.) or
+    ``None`` to leave the line untouched.
+
+    Indentation and trailing comments survive the rewrite. Only the
+    first matching leaf is rewritten; pathological YAMLs with the
+    same path appearing twice get only the first one touched —
+    matches our callers' expectation that a well-formed config
+    declares each path once. Returns the input string unchanged when
+    no leaf is found or when *transform* returns ``None``.
+
+    Walker only handles unquoted plain mapping keys nested via
+    indentation (``foo:`` / ``  bar:`` …) — the shape every path
+    our callers care about uses. List items (``- platform: …``)
+    and quoted keys (``"foo": …``) are skipped; supporting them
+    would change the meaning of "the scalar at *path*" in ways that
+    don't match how ESPHome configs are written by hand.
+    """
+    if not path:
+        return yaml_text
+    target_parents = tuple(path[:-1])
+    leaf_key = path[-1]
+    lines = yaml_text.splitlines(keepends=True)
+    # ``stack`` holds (indent, key) for *every* enclosing frame —
+    # mapping keys (on-path or off) push their name, list items
+    # push the ``_LIST_FRAME`` sentinel. Tracking off-path keys
+    # too keeps the path comparison sound: for path
+    # ``("api", "encryption", "key")``, YAML ``api: { something:
+    # { encryption: { key: ... } } }`` would otherwise falsely
+    # match because ``something`` would be invisible to the
+    # ancestor check.
+    stack: list[tuple[int, str]] = []
+    for i, line in enumerate(lines):
+        body = line.rstrip("\n\r")
+        head = body.lstrip(" ")
+        # Blank / comment-only lines stay inside whatever block
+        # they appear in — popping on whitespace would close blocks
+        # that have a blank between the parent and the first child.
+        if not head or head.startswith("#"):
+            continue
+        indent = len(body) - len(head)
+        # Pop every frame at this indent or shallower before we
+        # decide what this line is. The new line lives at a
+        # sibling-or-shallower position, so deeper frames are
+        # closed regardless of which branch follows.
+        while stack and stack[-1][0] >= indent:
+            stack.pop()
+        if head.startswith("- ") or head == "-":
+            # List items break the mapping path — anything nested
+            # inside is "in a list", not a direct child of the
+            # parent mapping. Push the opaque frame so deeper keys
+            # can't satisfy a plain-mapping path.
+            stack.append((indent, _LIST_FRAME))
+            continue
+        m = _MAPPING_KEY_LINE.match(body)
+        if not m:
+            # Block-scalar continuation, plain-scalar list element
+            # without a key, … — not on any supported path.
+            continue
+        key = m.group("key")
+        if key == leaf_key and tuple(k for _, k in stack) == target_parents:
+            value_part, comment = _split_value_and_comment(m.group("rest"))
+            replacement = transform(value_part.strip())
+            if replacement is None:
+                return yaml_text
+            ending = line[len(body) :]  # preserves "\n" / "\r\n" / ""
+            lines[i] = f"{m.group('indent')}{key}: {replacement}{comment}{ending}"
+            return "".join(lines)
+        stack.append((indent, key))
+    return yaml_text
+
+
+def read_yaml_scalar(yaml_text: str, path: Sequence[str]) -> str | None:
+    """
+    Return the raw scalar at the YAML mapping *path*, or ``None``.
+
+    Same walker as :func:`rewrite_yaml_scalar` — same path
+    semantics, same list-item / quoted-key skip rules. The
+    returned value is the substring between the colon's trailing
+    whitespace and any trailing ``# comment``, with surrounding
+    whitespace stripped but quotes intact (the same shape the
+    rewrite transform receives). ``None`` distinguishes "key not
+    present" from "key present, value is empty string".
+    """
+    captured: list[str] = []
+
+    def _capture(raw: str) -> str | None:
+        captured.append(raw)
+        return None  # Don't actually rewrite.
+
+    rewrite_yaml_scalar(yaml_text, path, _capture)
+    return captured[0] if captured else None
+
+
+# Plain (unquoted) YAML scalars accept most printable characters,
+# but a small set of leading bytes and embedded sequences make the
+# parser interpret the value as something other than a plain
+# string. ``_PLAIN_SCALAR_INDICATOR_LEAD`` covers the YAML
+# indicator characters that, when leading, change scalar shape;
+# ``_PLAIN_SCALAR_FORBIDDEN_SUBSTR`` covers the embedded sequences
+# that flip a plain scalar into a key/value or comment. ``_RESERVED_PLAIN``
+# is the set of plain scalars YAML interprets as bool / null —
+# emitting one of these unquoted would round-trip as a non-string.
+_PLAIN_SCALAR_INDICATOR_LEAD = set("!&*?|>%@`#-,[]{}\"'")
+_PLAIN_SCALAR_FORBIDDEN_SUBSTR = (": ", " #")
+_RESERVED_PLAIN = frozenset(
+    {
+        "true",
+        "false",
+        "null",
+        "yes",
+        "no",
+        "on",
+        "off",
+        "~",
+        "",
+    }
+)
+
+
+def _safe_yaml_scalar(value: str) -> str:
+    r"""
+    Render *value* as a YAML scalar — plain when safe, double-quoted otherwise.
+
+    Used by rewriters that accept arbitrary user-supplied strings
+    (friendly_name, comments, mqtt topics, etc.) where a value
+    like ``"Bedroom #2"`` would otherwise become a comment or
+    ``"Lamp: Bedroom"`` would split into a key/value pair on round
+    trip. Plain identifiers (``"Kitchen"``, ``"my-device"``) round
+    trip without quotes; values get double-quoted (with embedded
+    ``"`` and ``\\`` escaped) when any of these holds:
+
+    - empty string or matches a reserved plain scalar
+      (``true`` / ``false`` / ``null`` / ``yes`` / ``no`` /
+      ``on`` / ``off`` / ``~``);
+    - starts with a YAML indicator character (``! & * ? | > %
+      @ ` # - , [ ] { } " '``);
+    - ends in ``:`` (would parse as a key with empty value) or in
+      whitespace (would lose the trailing space on round trip);
+    - contains ``: `` (key/value split) or `` #`` (comment marker);
+    - contains a control character (``\\n`` / ``\\r`` / ``\\t``).
+    """
+    if not value or value.lower() in _RESERVED_PLAIN:
+        return f'"{value}"'
+    if value[0] in _PLAIN_SCALAR_INDICATOR_LEAD:
+        return _quote(value)
+    if value.endswith(":") or value.endswith(" "):
+        return _quote(value)
+    if any(s in value for s in _PLAIN_SCALAR_FORBIDDEN_SUBSTR):
+        return _quote(value)
+    # ``\n``, ``\r``, and ``\t`` would either be silently stripped
+    # (tab) or split into multiple YAML lines. Quote and escape.
+    if any(c in value for c in "\n\r\t"):
+        return _quote(value)
+    return value
+
+
+# YAML double-quoted scalar escapes for the five characters that
+# would otherwise break round-trip: ``\`` and ``"`` need escaping
+# because the closing quote / escape leader; the three control
+# characters need escaping because plain-text rendering would split
+# the value across lines or eat the tab.
+_QUOTE_ESCAPES = str.maketrans(
+    {
+        "\\": r"\\",
+        '"': r"\"",
+        "\n": r"\n",
+        "\r": r"\r",
+        "\t": r"\t",
+    }
+)
+
+
+def _quote(value: str) -> str:
+    """Render *value* as a double-quoted YAML scalar with minimal escapes."""
+    return f'"{value.translate(_QUOTE_ESCAPES)}"'
+
+
+def _strip_yaml_quotes(value: str) -> str:
+    """
+    Strip a single matched pair of surrounding quotes from *value*.
+
+    YAML scalars accept ``"..."`` and ``'...'`` quoting; both shapes
+    appear in real configs. Helpers that compare against an unquoted
+    target (rename's value gate, the substitution-ref parser) need
+    to peel the wrapper before comparing without crashing on
+    unquoted values.
+    """
+    stripped = value.strip()
+    if len(stripped) >= 2 and stripped[0] == stripped[-1] and stripped[0] in ('"', "'"):
+        return stripped[1:-1]
+    return stripped
+
+
+# ESPHome substitutions are referenced as ``$name`` or ``${name}`` —
+# the ``${name}`` form is the canonical one the wizard emits and
+# what users following the upstream docs will write. We only treat
+# a value as a substitution reference when the *entire* value is
+# the reference (``"$devicename"`` / ``"${devicename}"``); a
+# value with extra glue (``"my-${suffix}"``) stays as a literal
+# rewrite target — replacing the substitution there would replace
+# the suffix's expansion across every other consumer.
+_PURE_SUBSTITUTION_REF = re.compile(r"\A(?:\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*))\Z")
+
+
+def parse_substitution_ref(value: str) -> str | None:
+    """
+    Return the substitution name when *value* is a pure ``$var``.
+
+    Also accepts ``${var}``. Surrounding whitespace and matched
+    quotes are stripped before the test. ``"my-${suffix}"`` returns
+    ``None`` because only part of the value is the substitution.
+    """
+    m = _PURE_SUBSTITUTION_REF.match(_strip_yaml_quotes(value))
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
+def rewrite_name_or_substitution(
+    yaml_text: str,
+    leaf_path: Sequence[str],
+    new_value: str,
+) -> str:
+    """
+    Land *new_value* at *leaf_path* or at the substitution it references.
+
+    Two real-world ESPHome patterns drive this:
+
+    1. **Direct literal** — ``esphome.name: kitchen``. The leaf
+       line carries the value directly; rewrite it.
+    2. **Substitution reference** — ``esphome.name: ${devicename}``
+       paired with ``substitutions.devicename: kitchen`` (the
+       standard wizard / ``dashboard_import`` shape). The leaf
+       carries the indirection name; the actual value lives in
+       the substitutions block. Rewriting the leaf with a literal
+       would silently orphan the substitution and break any other
+       consumer (sensor named ``${devicename}_temp``, etc.).
+
+    When the leaf's current value is a *pure* substitution
+    reference (``$var`` / ``${var}`` with no surrounding glue) the
+    helper walks to ``substitutions.<var>`` and rewrites that
+    leaf instead. Mixed values (``${prefix}-suffix``) and any
+    other shape fall through to the leaf rewrite — we have no
+    way to split a partial reference without changing what the
+    other half resolves to elsewhere.
+
+    Returns the original text unchanged when neither the leaf
+    nor the substitution leaf exists.
+    """
+    rendered = _safe_yaml_scalar(new_value)
+    raw = read_yaml_scalar(yaml_text, leaf_path)
+    var = parse_substitution_ref(raw) if raw is not None else None
+    if var is not None:
+        sub_path: tuple[str, ...] = ("substitutions", var)
+        # Only redirect when the substitution definition is in
+        # *this* file's top-level ``substitutions:`` block. A
+        # ``!include``d substitutions file or a package-supplied
+        # variable wouldn't be visible here; falling through to the
+        # leaf lands the literal in our YAML and leaves the
+        # remote definition untouched.
+        if read_yaml_scalar(yaml_text, sub_path) is not None:
+            return rewrite_yaml_scalar(yaml_text, sub_path, lambda _raw: rendered)
+    return rewrite_yaml_scalar(yaml_text, leaf_path, lambda _raw: rendered)
+
+
+def rewrite_esphome_name(
+    yaml_text: str,
+    new_name: str,
+    *,
+    only_if_current: str | None = None,
+) -> str:
     """
     Replace ``name:`` under the top-level ``esphome:`` block.
 
-    Only changes lines inside the ``esphome:`` section whose value
-    equals *old_name* (with optional surrounding quotes). Indentation
-    and trailing comments are preserved. Returns the original text
-    unchanged when nothing matches so callers can detect a no-op.
+    By default the rewrite is unconditional — every caller that
+    knows the new name to land on wants the line replaced
+    regardless of what the source had (clone path, future
+    create-then-edit flows). Pass *only_if_current* to gate the
+    rewrite on the existing leaf value matching that string —
+    used by ``_manual_rename``'s file-level fallback as a hedge
+    against renaming a config whose YAML ``name:`` no longer
+    matches its filename. The gate is opt-in because the
+    common case (filename and ``esphome.name`` agree) is the
+    same outcome either way; the gate only matters for
+    drift between the two, where clone wants "force the
+    rename" and rename's fallback wants "leave it alone".
+
+    Indentation and trailing comments are preserved. Returns the
+    original text unchanged when nothing matches the path or the
+    gate.
     """
-    lines = yaml_text.splitlines(keepends=True)
-    in_esphome = False
-    changed = False
-    for i, line in enumerate(lines):
-        stripped = line.rstrip("\n\r")
-        # Enter `esphome:` block
-        if re.match(r"^esphome:\s*(#.*)?$", stripped):
-            in_esphome = True
-            continue
-        # A new top-level key (col 0, starts with letter) closes the block
-        if stripped and stripped[0].isalpha():
-            in_esphome = False
-            continue
-        if not in_esphome:
-            continue
-        m = re.match(r"^(\s+)name:\s*(.+?)(\s*#.*)?$", stripped)
-        if not m:
-            continue
-        value = m.group(2).strip().strip('"').strip("'")
-        if value != old_name:
-            continue
-        indent, _, comment = m.groups()
-        ending = "\n" if line.endswith("\n") else ""
-        lines[i] = f"{indent}name: {new_name}{comment or ''}{ending}"
-        changed = True
-        break
-    return "".join(lines) if changed else yaml_text
+
+    def _swap(raw: str) -> str | None:
+        if only_if_current is not None and _strip_yaml_quotes(raw) != only_if_current:
+            return None
+        return new_name
+
+    return rewrite_yaml_scalar(yaml_text, ("esphome", "name"), _swap)
+
+
+def generate_api_encryption_key() -> str:
+    """Return a fresh 32-byte ESPHome API encryption key, base64-encoded."""
+    return base64.b64encode(secrets.token_bytes(32)).decode()
+
+
+def rewrite_api_encryption_key(yaml_text: str, new_key: str) -> str:
+    """
+    Replace the literal ``key:`` value under ``api: -> encryption:``.
+
+    Used by the clone path so two devices forked from the same
+    source don't share API encryption material — compromise of one
+    device must not compromise its siblings. Only rewrites a
+    *literal* key value; lines whose value is an indirection
+    (``!secret …`` / ``${…}``) are left untouched, because the
+    indirection target is shared on disk and stomping on the key
+    here would silently desync the clone from whatever
+    ``secrets.yaml`` / substitutions block actually drives the
+    encryption. Returns the original text unchanged when no
+    in-scope ``key:`` is found or when the value is an indirection.
+
+    The replacement is rendered double-quoted so a base64 value
+    that happens to start with a YAML special character
+    (``!``/``%``/``@``/``-``/``?``/``&``/``*``) parses cleanly.
+    """
+    rendered = _quote(new_key)
+
+    def _swap(raw: str) -> str | None:
+        # Strip quotes before checking for indirection markers — both
+        # ``key: !secret api_key`` and ``key: "${api_key}"`` are
+        # valid YAML, and the second form's quotes would otherwise
+        # mask the ``${`` prefix and cause us to rewrite a value the
+        # user explicitly indirected.
+        unquoted = _strip_yaml_quotes(raw)
+        if unquoted.startswith("!secret") or unquoted.startswith("${"):
+            return None
+        return rendered
+
+    return rewrite_yaml_scalar(yaml_text, ("api", "encryption", "key"), _swap)
 
 
 def merge_component_yaml(
