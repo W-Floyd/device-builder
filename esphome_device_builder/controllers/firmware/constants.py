@@ -2,18 +2,24 @@
 Static configuration for the firmware controller.
 
 Error-pattern regexes used to flag failures even when the
-subprocess exit code is 0, terminal job-state sets shared by the
-runner and the persistence/prune paths, and the queue/cleanup
-tunables. Pure data — no I/O, no controller state. Imported
-unchanged into ``controller.py``; tests reach for individual
-constants from this module directly.
+subprocess exit code is 0, history-retention pool sizes, and the
+queue/cleanup tunables. Pure data — no I/O, no controller state.
+Imported unchanged into ``controller.py``; tests reach for
+individual constants from this module directly.
+
+Terminal job state / event sets — needed by both the firmware
+controller and external callers like ``api/legacy.py`` — live in
+``models/firmware.py`` next to ``JobStatus`` (exported as
+``TERMINAL_JOB_STATUSES`` / ``TERMINAL_JOB_EVENTS``) so consumers
+across both layers can import them through the same public
+interface.
 """
 
 from __future__ import annotations
 
 import re
 
-from ...models import EventType, JobStatus, JobType
+from ...models import JobType
 
 # Metadata key under which the firmware queue persists itself in
 # ``.device-builder.json``.
@@ -87,25 +93,6 @@ _MAX_PRIMARY_TERMINAL_JOBS = 50
 _MAX_AUX_TERMINAL_JOBS = 5
 _PRIMARY_JOB_TYPES: frozenset[JobType] = frozenset(
     {JobType.COMPILE, JobType.UPLOAD, JobType.INSTALL}
-)
-
-# Terminal job states — a job in any of these isn't running and
-# isn't waiting to run. Used by ``_mark_job_terminal`` to validate
-# its argument and by the prune / clear / restore paths to identify
-# completed jobs.
-_TERMINAL_JOB_STATUSES: frozenset[JobStatus] = frozenset(
-    {JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED}
-)
-
-# Lifecycle events that end a follower's tail. Subscribed alongside
-# ``JOB_OUTPUT`` in ``follow_job`` so the follower's queue receives
-# the terminal sentinel for any of the three terminal states. The
-# runner fires exactly one of these per job, matching the
-# ``_TERMINAL_JOB_STATUSES`` set above — keeping them as separate
-# constants because subscriptions key off ``EventType`` while
-# state checks key off ``JobStatus``.
-_JOB_TERMINAL_EVENTS: frozenset[EventType] = frozenset(
-    {EventType.JOB_COMPLETED, EventType.JOB_FAILED, EventType.JOB_CANCELLED}
 )
 
 # Per-job output cap for retained terminal jobs. Compile output for a
