@@ -9,6 +9,17 @@ esphome:
   board: esp32-h2-devkitm-1
   variant: esp32h2
   framework: esp-idf
+# ESP32-H2 has no native Wi-Fi; the radio supports IEEE 802.15.4
+# (Thread / Zigbee) and Bluetooth LE only. Listing the actual
+# capabilities here documents what the chip supports and pins the
+# wizard's wifi-block decision to the manifest rather than the
+# generator's variant-aware fallback inference — keeps the data
+# self-describing for future readers.
+hardware:
+  connectivity:
+  - bluetooth
+  - openthread
+  - zigbee
 tags: []
 docs_url: https://esphome.io/components/esp32.html
 pins:

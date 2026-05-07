@@ -11,8 +11,11 @@ from typing import Any, ClassVar
 
 import pytest
 
+from esphome_device_builder.helpers import device_yaml
 from esphome_device_builder.helpers.device_yaml import (
+    _fallback_has_native_wifi,
     _parse_inline_value,
+    _select_wifi_helper,
     compute_has_pending_changes,
     configuration_stem,
     detect_platform_from_yaml,
@@ -697,6 +700,274 @@ def test_generate_yaml_emits_explicit_wifi_credentials_when_provided() -> None:
     secret = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
     assert "  ssid: !secret wifi_ssid\n" in secret
     assert "  password: !secret wifi_password\n" in secret
+
+
+# ---------------------------------------------------------------------------
+# generate_device_yaml — wifi-block inference for boards without an
+# explicit ``connectivity`` claim. Preempts the silent generation of
+# a ``wifi:`` block on chips that have no native Wi-Fi PHY (the
+# original report: ESP32-H2 picked up ``WiFi requires component
+# esp32_hosted on ESP32H2`` from ESPHome's validator).
+# ---------------------------------------------------------------------------
+
+
+def _make_board(
+    *,
+    platform: Platform,
+    variant: Esp32Variant | None = None,
+    pio_board: str = "",
+    connectivity: list[Connectivity] | None = None,
+) -> BoardCatalogEntry:
+    """Minimal ``BoardCatalogEntry`` for the wifi-inference tests.
+
+    ``connectivity=None`` produces a board whose ``hardware``
+    object is present but its ``connectivity`` list is empty —
+    the case the inference path covers. Tests that want to pin
+    the explicit-claim short-circuit pass a list directly.
+    """
+    return BoardCatalogEntry(
+        id=f"{platform.value}-test",
+        name=f"{platform.value} Test",
+        description="",
+        manufacturer="Test",
+        esphome=BoardEsphomeConfig(
+            platform=platform,
+            board=pio_board,
+            variant=variant,
+        ),
+        hardware=BoardHardware(connectivity=connectivity or []),
+    )
+
+
+def test_generate_yaml_omits_wifi_for_esp32h2_without_explicit_connectivity() -> None:
+    """ESP32-H2 with no connectivity claim → no ``wifi:`` block.
+
+    The H2's radio supports IEEE 802.15.4 + BLE only — using
+    ``wifi:`` requires the ``esp32_hosted`` co-processor, and
+    ESPHome rejects a plain ``wifi:`` block with
+    ``"WiFi requires component esp32_hosted on ESP32H2"``. The
+    inference walks ESPHome's own ``NO_WIFI_VARIANTS`` list so a
+    future no-Wi-Fi variant added upstream is picked up
+    automatically.
+    """
+    board = _make_board(platform=Platform.ESP32, variant=Esp32Variant.ESP32H2)
+    yaml = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    assert "wifi:" not in yaml
+
+
+def test_generate_yaml_emits_wifi_for_esp32c3_without_explicit_connectivity() -> None:
+    """ESP32-C3 with no connectivity claim → ``wifi:`` block emitted.
+
+    Catches the regression class where the inference is too eager
+    and treats every empty-connectivity board as no-Wi-Fi —
+    contributors adding a new generic ESP32 variant manifest
+    without spelling out the connectivity list still get a
+    compilable basic config.
+    """
+    board = _make_board(platform=Platform.ESP32, variant=Esp32Variant.ESP32C3)
+    yaml = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    assert "wifi:" in yaml
+
+
+def test_generate_yaml_omits_wifi_for_plain_rp2040_pico() -> None:
+    """RP2040 ``rpipico`` board → no ``wifi:`` block.
+
+    The plain Pico has no CYW43; only the W variants do. The
+    inference reads ``esphome.components.rp2040.boards.BOARDS`` so
+    we don't carry a hand-maintained list parallel to upstream.
+    """
+    board = _make_board(platform=Platform.RP2040, pio_board="rpipico")
+    yaml = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    assert "wifi:" not in yaml
+
+
+def test_generate_yaml_emits_wifi_for_rp2040_pico_w() -> None:
+    """RP2040 ``rpipicow`` board → ``wifi:`` block emitted.
+
+    Pin the positive RP2040 case so a regression in the upstream
+    BOARDS lookup (typo in the key, accidentally querying ``mcu``
+    instead of ``wifi``, etc.) surfaces here.
+    """
+    board = _make_board(platform=Platform.RP2040, pio_board="rpipicow")
+    yaml = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    assert "wifi:" in yaml
+
+
+def test_generate_yaml_emits_wifi_for_esp8266_without_explicit_connectivity() -> None:
+    """ESP8266 with no connectivity claim → ``wifi:`` block emitted.
+
+    Pins the catch-all "Wi-Fi-first platform" branch of the
+    inference (anything not ESP32 / RP2040 / nrf52). ESP8266
+    always has Wi-Fi natively; same for bk72xx / rtl87xx /
+    ln882x. A regression that flipped the catch-all to "no Wi-Fi"
+    would silently break every ESP8266 board the wizard touches.
+    """
+    board = _make_board(platform=Platform.ESP8266, pio_board="esp01_1m")
+    yaml = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    assert "wifi:" in yaml
+
+
+def test_generate_yaml_explicit_connectivity_overrides_inference() -> None:
+    """Manifest-supplied ``connectivity`` always wins over the inference.
+
+    A future H2 product that ships an integrated co-processor and
+    wants the wizard to emit ``wifi:`` can opt in by listing
+    ``wifi`` in its manifest; an ESP32 board that's wired without
+    a Wi-Fi antenna can opt out by listing only ``ethernet``. The
+    inference is the *fallback*, not an override.
+    """
+    # Inference says no wifi (H2 in NO_WIFI_VARIANTS), explicit claim wins.
+    h2_with_wifi = _make_board(
+        platform=Platform.ESP32,
+        variant=Esp32Variant.ESP32H2,
+        connectivity=[Connectivity.WIFI],
+    )
+    yaml = generate_device_yaml("kitchen", "Kitchen", h2_with_wifi, ssid="", psk="")
+    assert "wifi:" in yaml
+
+    # Inference says wifi (plain ESP32), explicit ethernet-only opts out.
+    eth_only = _make_board(
+        platform=Platform.ESP32,
+        variant=Esp32Variant.ESP32,
+        connectivity=[Connectivity.ETHERNET],
+    )
+    yaml = generate_device_yaml("kitchen", "Kitchen", eth_only, ssid="", psk="")
+    assert "wifi:" not in yaml
+
+
+# ---------------------------------------------------------------------------
+# Fallback wifi-helpers — exercise the pure-Python implementations the
+# inference falls back on when upstream esphome doesn't ship the new
+# ``wifi.variant_has_wifi`` / ``rp2040.board_id_has_wifi`` helpers
+# (esphome/esphome#16300). Direct calls so the fallback's correctness
+# gets pinned even on a CI run that imported the upstream helpers and
+# is therefore exercising the new path through ``_infer_native_wifi``.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "expected"),
+    [
+        # ESP32: variants with native PHY → True; H2 / P4 → False;
+        # upper-case round-trips (upstream stores the tags
+        # uppercased).
+        ({"platform": "esp32", "variant": "esp32"}, True),
+        ({"platform": "esp32", "variant": "esp32s3"}, True),
+        ({"platform": "esp32", "variant": "esp32c3"}, True),
+        ({"platform": "esp32", "variant": "esp32c6"}, True),
+        ({"platform": "esp32", "variant": "esp32h2"}, False),
+        ({"platform": "esp32", "variant": "esp32p4"}, False),
+        ({"platform": "esp32", "variant": "ESP32H2"}, False),
+        ({"platform": "esp32", "variant": None}, True),
+        # RP2040: W variants in upstream's BOARDS table → True;
+        # plain Pico / XIAO / etc. → False; unknown ids fail open.
+        ({"platform": "rp2040", "board": "rpipicow"}, True),
+        ({"platform": "rp2040", "board": "rpipico2w"}, True),
+        ({"platform": "rp2040", "board": "rpipico"}, False),
+        ({"platform": "rp2040", "board": "seeed_xiao_rp2040"}, False),
+        ({"platform": "rp2040", "board": "not-a-real-board"}, True),
+        ({"platform": "rp2040", "board": None}, True),
+        # Wi-Fi-first families default to True regardless of board /
+        # variant; nRF52 is BLE-only; ``host`` compiles ESPHome to a
+        # host binary with no radio at all; unknown platforms fail
+        # closed so a future ESPHome platform missed here doesn't
+        # silently emit a wifi: block the new platform's component
+        # would reject.
+        ({"platform": "esp8266"}, True),
+        ({"platform": "bk72xx"}, True),
+        ({"platform": "rtl87xx"}, True),
+        ({"platform": "ln882x"}, True),
+        # ``libretiny`` is the legacy umbrella key for the bk72xx /
+        # rtl87xx / ln882x families and counts as Wi-Fi-first.
+        ({"platform": "libretiny"}, True),
+        ({"platform": "nrf52"}, False),
+        ({"platform": "host"}, False),
+        ({"platform": "not-a-real-platform"}, False),
+    ],
+)
+@pytest.mark.skipif(
+    device_yaml._esphome_has_native_wifi is not None,
+    reason=(
+        "Fallback constants only populate when upstream's has_native_wifi is "
+        "missing — running on an esphome that ships the helper, the "
+        "implementation-detail tables aren't imported, so the fallback can't "
+        "be exercised in isolation here. Upstream's own tests pin the "
+        "active path on that branch."
+    ),
+)
+def test_fallback_has_native_wifi(kwargs: dict, expected: bool) -> None:
+    """Pin the fallback dispatcher across every platform branch.
+
+    The fallback runs whenever the upstream
+    ``esphome.components.wifi.has_native_wifi`` is missing — that's
+    every ESPHome we currently support, and stays the path until
+    esphome/esphome#16300 ships in a release we depend on.
+    """
+    assert _fallback_has_native_wifi(**kwargs) is expected
+
+
+def test_select_wifi_helper_prefers_upstream_when_available() -> None:
+    """When esphome ships ``has_native_wifi``, the alias binds to it.
+
+    Simulates esphome/esphome#16300 having landed by passing the
+    upstream callable explicitly. ``_select_wifi_helper`` must
+    prefer it over the fallback so the wizard reads through the
+    upstream-tested dispatcher once available.
+    """
+    upstream = lambda **_: True  # noqa: E731
+
+    selected = _select_wifi_helper(upstream)
+
+    assert selected is upstream
+
+
+def test_select_wifi_helper_falls_back_when_upstream_missing() -> None:
+    """When ``has_native_wifi`` isn't importable, the alias binds to the fallback.
+
+    Simulates the pre-#16300 esphome we ship against today.
+    ``None`` is exactly what the module-level ``try/except``
+    produces when ``ImportError`` fires.
+
+    Look the fallback up through the live module attr rather than
+    the test-time imported binding — ``tests/test_api_key.py``
+    calls ``importlib.reload(device_yaml)``, which orphans any
+    test-module binding captured at import time. The live attr
+    survives the reload.
+    """
+    selected = _select_wifi_helper(None)
+
+    assert selected is device_yaml._fallback_has_native_wifi
+
+
+def test_infer_native_wifi_routes_through_module_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_infer_native_wifi`` reads through ``_has_native_wifi``, not the upstream tables.
+
+    Pin the indirection so a regression that re-inlined the lookup
+    against ``_ESP32_NO_WIFI_VARIANTS`` / ``_ESPHOME_RP2040_BOARDS``
+    surfaces here — the inline form would silently bypass the
+    upstream dispatcher once esphome/esphome#16300 ships, defeating
+    the whole point of the alias.
+    """
+    calls: list[dict] = []
+
+    def _stub(**kwargs: object) -> bool:
+        calls.append(kwargs)
+        return False
+
+    monkeypatch.setattr(device_yaml, "_has_native_wifi", _stub)
+
+    esp32_board = _make_board(platform=Platform.ESP32, variant=Esp32Variant.ESP32C3)
+    rp2040_board = _make_board(platform=Platform.RP2040, pio_board="rpipicow")
+
+    assert device_yaml._infer_native_wifi(esp32_board) is False
+    assert device_yaml._infer_native_wifi(rp2040_board) is False
+
+    assert calls == [
+        {"platform": "esp32", "board": "", "variant": "esp32c3"},
+        {"platform": "rp2040", "board": "rpipicow", "variant": None},
+    ]
 
 
 # ---------------------------------------------------------------------------
