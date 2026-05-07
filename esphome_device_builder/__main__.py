@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
+import threading
 from contextlib import suppress
 from logging.handlers import RotatingFileHandler
 from typing import TYPE_CHECKING
@@ -78,6 +80,12 @@ def _setup_logging(log_level: str, log_file: str | None = None) -> None:
     logging.getLogger("asyncio").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
     logging.getLogger("zeroconf").setLevel(logging.WARNING)
+
+    # Route uncaught main-thread and worker-thread exceptions through
+    # the logging system so they hit the same console + rotating-file
+    # destinations as everything else, instead of going to bare stderr.
+    sys.excepthook = _log_uncaught_exception
+    threading.excepthook = _log_uncaught_thread_exception
 
     # Has to be the last step — handlers added after this run inline
     # on the calling thread instead of being offloaded to the listener.
@@ -193,6 +201,25 @@ def main() -> None:
 
     device_builder = DeviceBuilder(settings)
     device_builder.run()
+
+
+def _log_uncaught_exception(
+    exc_type: type[BaseException],
+    exc_value: BaseException,
+    exc_traceback: object,
+) -> None:
+    """Forward an uncaught main-thread exception into ``logger.exception``."""
+    logging.getLogger().exception(
+        "Uncaught exception", exc_info=(exc_type, exc_value, exc_traceback)
+    )
+
+
+def _log_uncaught_thread_exception(args: threading.ExceptHookArgs) -> None:
+    """Forward an uncaught worker-thread exception into ``logger.exception``."""
+    logging.getLogger().exception(
+        "Uncaught thread exception",
+        exc_info=(args.exc_type, args.exc_value, args.exc_traceback),
+    )
 
 
 def _esphome_version() -> str | None:
