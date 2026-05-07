@@ -14,6 +14,7 @@ Covers two regressions discovered while wiring up the adoption flow:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock
@@ -42,6 +43,31 @@ def _seed_import_state(controller: DevicesController) -> None:
     controller.import_result = {}
 
 
+def _import_config_stub(
+    captured: dict[str, Any] | None = None,
+) -> Callable[..., None]:
+    """Stub for ``import_config`` that mirrors its on-disk write.
+
+    The real ``import_config`` writes a YAML to ``args[0]``. The
+    ``import_device`` post-write validation step then reads it
+    back, so a stub that only records call args trips the read
+    with ``FileNotFoundError``. This helper writes a minimal
+    syntactically-valid YAML (parseable, but deliberately not
+    ESPHome-schema-valid — there's no platform block, so the
+    fake validator we mock around it is the source of pass/fail
+    truth) at the destination path and optionally records the
+    call args into *captured* (for tests that assert on what got
+    forwarded to upstream).
+    """
+
+    def _stub(*args: Any, **_kw: Any) -> None:
+        if captured is not None:
+            captured.setdefault("args", args)
+        args[0].write_text(f"esphome:\n  name: {args[1]}\n", encoding="utf-8")
+
+    return _stub
+
+
 def test_import_config_resolves_at_import_time() -> None:
     """Regression guard for the import path move.
 
@@ -63,11 +89,7 @@ async def test_import_device_invokes_import_config_and_returns_path(
 ) -> None:
     """Happy path: write the YAML, run a scan, return the configuration name."""
     captured: dict[str, Any] = {}
-
-    def fake_import_config(*args: Any, **_kwargs: Any) -> None:
-        captured["args"] = args
-
-    monkeypatch.setattr(devices_module, "import_config", fake_import_config)
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub(captured))
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
 
@@ -112,9 +134,7 @@ async def test_import_device_passes_ethernet_network_through_to_import_config(
     ``network`` field to ``import_config``.
     """
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        devices_module, "import_config", lambda *args, **_kw: captured.setdefault("args", args)
-    )
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub(captured))
 
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
@@ -160,9 +180,7 @@ async def test_import_device_uses_direct_name_lookup_with_duplicate_products(
     the imported YAML got.
     """
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        devices_module, "import_config", lambda *args, **_kw: captured.setdefault("args", args)
-    )
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub(captured))
 
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
@@ -213,9 +231,7 @@ async def test_import_device_falls_back_to_wifi_for_old_factory_firmware(
     dashboard wrote.
     """
     captured: dict[str, Any] = {}
-    monkeypatch.setattr(
-        devices_module, "import_config", lambda *args, **_kw: captured.setdefault("args", args)
-    )
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub(captured))
 
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
@@ -273,6 +289,193 @@ async def test_import_device_translates_file_exists_to_command_error(
     assert ctrl._scanner.calls == []
 
 
+async def test_import_device_rejects_when_imported_yaml_does_not_validate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_controller: MakeControllerFactory,
+) -> None:
+    """Imported YAML failing schema validation is deleted + raises.
+
+    ``import_config`` produces a wizard-style YAML by construction,
+    but a regression upstream — or a project YAML whose
+    ``packages:`` reference doesn't resolve cleanly — would
+    otherwise leave an unflashable file on disk that every
+    downstream operation refuses. After ``import_config`` returns
+    we read the file back, validate, and on failure delete it
+    and surface the editor errors so the user can fix the source
+    project (or pick a different one) and retry without a
+    leftover ``FileExistsError`` blocking them.
+    """
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
+    ctrl = make_controller(tmp_path, with_state_monitor=True)
+    _seed_import_state(ctrl)
+    ctrl._db.editor.validate_yaml = AsyncMock(
+        return_value={
+            "yaml_errors": [],
+            "validation_errors": [
+                {"message": "[esphome] required key not provided: a platform"},
+            ],
+        }
+    )
+
+    with pytest.raises(CommandError) as excinfo:
+        await ctrl.import_device(
+            name="kitchen",
+            project_name="x",
+            package_import_url="github://x",
+        )
+
+    assert excinfo.value.code == ErrorCode.INVALID_ARGS
+    assert "required key not provided: a platform" in excinfo.value.message
+    # YAML rolled back so a retry doesn't trip ``FileExistsError``.
+    assert not (tmp_path / "kitchen.yaml").exists()
+    # Scanner must NOT have been notified of the half-imported device.
+    assert ctrl._scanner.calls == []
+
+
+async def test_import_device_rolls_back_on_unicode_decode_error_from_read(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_controller: MakeControllerFactory,
+) -> None:
+    """Non-UTF-8 bytes in the freshly-written YAML still trigger rollback.
+
+    ``Path.read_text(encoding='utf-8')`` raises ``UnicodeDecodeError``
+    (which is *not* an ``OSError``) when ``import_config`` somehow
+    landed bytes that aren't valid UTF-8. Without an explicit
+    catch, the rollback would skip and the half-imported file
+    would block every retry with ``FileExistsError``.
+    """
+
+    def write_garbage(*args: Any, **_kw: Any) -> None:
+        # Write a byte that isn't a valid UTF-8 leading byte so
+        # ``read_text(encoding='utf-8')`` chokes on it.
+        args[0].write_bytes(b"\xff garbage")
+
+    monkeypatch.setattr(devices_module, "import_config", write_garbage)
+    ctrl = make_controller(tmp_path, with_state_monitor=True)
+    _seed_import_state(ctrl)
+
+    with pytest.raises(UnicodeDecodeError):
+        await ctrl.import_device(
+            name="kitchen",
+            project_name="x",
+            package_import_url="github://x",
+        )
+
+    assert not (tmp_path / "kitchen.yaml").exists()
+    assert ctrl._scanner.calls == []
+
+
+async def test_import_device_preserves_original_error_when_cleanup_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_controller: MakeControllerFactory,
+) -> None:
+    """A failing rollback doesn't replace the validation diagnostic.
+
+    If the YAML's permissions changed between write and cleanup
+    (``unlink`` raises ``PermissionError``), the user should
+    still see the actual validation rejection — not a confusing
+    "permission denied" trace from the rollback path. The
+    cleanup hook's exception is swallowed and logged; the
+    original ``CommandError`` propagates.
+    """
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
+    ctrl = make_controller(tmp_path, with_state_monitor=True)
+    _seed_import_state(ctrl)
+    ctrl._db.editor.validate_yaml = AsyncMock(
+        return_value={
+            "yaml_errors": [],
+            "validation_errors": [{"message": "[esphome] required key not provided: a platform"}],
+        }
+    )
+
+    # Make ``Path.unlink`` raise on the imported YAML so the
+    # cleanup hook's executor call surfaces an exception inside
+    # the helper's ``finally``.
+    real_unlink = Path.unlink
+
+    def boom_unlink(self: Path, *, missing_ok: bool = False) -> None:
+        if self.name == "kitchen.yaml":
+            raise PermissionError("rollback denied")
+        real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", boom_unlink)
+
+    with pytest.raises(CommandError) as excinfo:
+        await ctrl.import_device(
+            name="kitchen",
+            project_name="x",
+            package_import_url="github://x",
+        )
+
+    # Original validation error survives — not a PermissionError
+    # from the rollback path.
+    assert excinfo.value.code == ErrorCode.INVALID_ARGS
+    assert "required key not provided: a platform" in excinfo.value.message
+
+
+async def test_import_device_rolls_back_on_validator_subprocess_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_controller: MakeControllerFactory,
+) -> None:
+    """A non-CommandError failure from the validator still rolls the YAML back.
+
+    The validator subprocess can raise ``TimeoutError`` /
+    ``RuntimeError`` / ``BrokenPipeError`` (or even an
+    ``OSError`` from the post-write read) without going through
+    ``CommandError``. Without a broad ``except`` the rollback
+    would skip and the half-imported YAML would stick around,
+    tripping ``FileExistsError`` on every retry — exactly the
+    foot-gun this PR is meant to prevent.
+    """
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
+    ctrl = make_controller(tmp_path, with_state_monitor=True)
+    _seed_import_state(ctrl)
+    ctrl._db.editor.validate_yaml = AsyncMock(side_effect=TimeoutError("subprocess wedged"))
+
+    with pytest.raises(TimeoutError):
+        await ctrl.import_device(
+            name="kitchen",
+            project_name="x",
+            package_import_url="github://x",
+        )
+
+    # YAML must be unlinked even though the failure wasn't a CommandError.
+    assert not (tmp_path / "kitchen.yaml").exists()
+    assert ctrl._scanner.calls == []
+
+
+async def test_import_device_skips_validation_when_editor_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_controller: MakeControllerFactory,
+) -> None:
+    """Editor not yet started → import proceeds without validation.
+
+    Mirrors the boot-window guard the create / clone /
+    edit_friendly_name paths already have. If the editor
+    subprocess is unavailable, refusing every adoption for the
+    lifetime of the process would be worse than landing the
+    YAML and letting the next compile surface any schema issues.
+    """
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
+    ctrl = make_controller(tmp_path, with_state_monitor=True)
+    _seed_import_state(ctrl)
+    ctrl._db.editor = None
+
+    result = await ctrl.import_device(
+        name="kitchen",
+        project_name="x",
+        package_import_url="github://x",
+    )
+
+    assert result == {"configuration": "kitchen.yaml"}
+    assert (tmp_path / "kitchen.yaml").exists()
+
+
 async def test_import_device_returns_even_when_post_scan_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -285,7 +488,7 @@ async def test_import_device_returns_even_when_post_scan_fails(
     nothing being wrong. Best-effort scan; the periodic poll picks up
     whatever this attempt missed.
     """
-    monkeypatch.setattr(devices_module, "import_config", lambda *a, **kw: None)
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
     ctrl._scanner.scan = AsyncMock(side_effect=RuntimeError("transient"))
@@ -313,7 +516,7 @@ async def test_import_device_seeds_online_state_from_zeroconf_cache(
     can't clobber it) and pulls the cached IP out of zeroconf so the
     new card has an address right away.
     """
-    monkeypatch.setattr(devices_module, "import_config", lambda *a, **kw: None)
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
     ctrl = make_controller(tmp_path)
     _seed_import_state(ctrl)
     ctrl._state_monitor = RecordingStateMonitor(
@@ -342,7 +545,7 @@ async def test_import_device_skips_apply_ip_when_zeroconf_cache_misses(
     make_controller: MakeControllerFactory,
 ) -> None:
     """No cached IP → state still flips ONLINE, just no apply_ip call."""
-    monkeypatch.setattr(devices_module, "import_config", lambda *a, **kw: None)
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
     ctrl = make_controller(tmp_path)
     _seed_import_state(ctrl)
     ctrl._state_monitor = RecordingStateMonitor()  # no cached addresses
@@ -374,7 +577,7 @@ async def test_import_device_drops_matching_import_result_entry(
     so we drop the right entry even when the user typed a different
     YAML name in the dialog.
     """
-    monkeypatch.setattr(devices_module, "import_config", lambda *a, **kw: None)
+    monkeypatch.setattr(devices_module, "import_config", _import_config_stub())
     ctrl = make_controller(tmp_path, with_state_monitor=True)
     _seed_import_state(ctrl)
     captured = capture_devices_events(ctrl, EventType.IMPORTABLE_DEVICE_REMOVED)

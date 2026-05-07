@@ -1199,6 +1199,7 @@ class DevicesController:
         *,
         action: str,
         on_failure: ErrorCode = ErrorCode.INVALID_ARGS,
+        on_error_cleanup: Callable[[], None] | None = None,
     ) -> None:
         """
         Schema-validate *content* via the editor; raise if invalid.
@@ -1233,35 +1234,63 @@ class DevicesController:
         but report it. The error list is capped at three entries so
         a long error pile collapses to "first three + (+N more)"
         rather than overflowing the toast.
+
+        *on_error_cleanup* is a sync callback that runs in a
+        ``finally`` if validation didn't reach a clean success
+        (rejected, subprocess-wedged, anything). For commands that
+        write the YAML *before* calling this helper (currently
+        ``import_device``, where upstream ``import_config`` writes
+        unconditionally), the callback unlinks the half-imported
+        file so a retry doesn't trip ``FileExistsError``. Unset
+        for commands that haven't written yet (``create_device``,
+        ``clone_device``, ``edit_friendly_name``) — there's
+        nothing to roll back. Runs through ``run_in_executor`` so
+        ``blockbuster`` doesn't flag the sync syscall in tests.
         """
         editor = self._db.editor
         if editor is None:
             return
-        result = await editor.validate_yaml(configuration=configuration, content=content)
-        errors = [
-            *(err.get("message", "") for err in result.get("yaml_errors", [])),
-            *(err.get("message", "") for err in result.get("validation_errors", [])),
-        ]
-        errors = [msg for msg in errors if msg]
-        if not errors:
-            return
-        shown = errors[:3]
-        suffix = f" (+{len(errors) - len(shown)} more)" if len(errors) > len(shown) else ""
-        message_tail = (
-            ". Please report this with a redacted snippet of just the "
-            "esphome: / substitutions: blocks (strip Wi-Fi credentials, "
-            "API keys, and static IPs) so the dashboard generator can "
-            "be fixed."
-            if on_failure is ErrorCode.INTERNAL_ERROR
-            else ". Fix the errors in the editor and try again."
-        )
-        raise CommandError(
-            on_failure,
-            f"Can't {action} — config doesn't validate: "
-            + "; ".join(shown)
-            + suffix
-            + message_tail,
-        )
+        succeeded = False
+        try:
+            result = await editor.validate_yaml(configuration=configuration, content=content)
+            errors = [
+                *(err.get("message", "") for err in result.get("yaml_errors", [])),
+                *(err.get("message", "") for err in result.get("validation_errors", [])),
+            ]
+            errors = [msg for msg in errors if msg]
+            if not errors:
+                succeeded = True
+                return
+            shown = errors[:3]
+            suffix = f" (+{len(errors) - len(shown)} more)" if len(errors) > len(shown) else ""
+            message_tail = (
+                ". Please report this with a redacted snippet of just the "
+                "esphome: / substitutions: blocks (strip Wi-Fi credentials, "
+                "API keys, and static IPs) so the dashboard generator can "
+                "be fixed."
+                if on_failure is ErrorCode.INTERNAL_ERROR
+                else ". Fix the errors in the editor and try again."
+            )
+            raise CommandError(
+                on_failure,
+                f"Can't {action} — config doesn't validate: "
+                + "; ".join(shown)
+                + suffix
+                + message_tail,
+            )
+        finally:
+            if not succeeded and on_error_cleanup is not None:
+                # Swallow + log cleanup failures so a permission /
+                # FS error during rollback doesn't replace the
+                # original validation diagnostic (or the validator
+                # subprocess error) the caller is about to see. The
+                # leftover YAML is the lesser foot-gun here — the
+                # user can ``devices/delete`` it once they understand
+                # what failed.
+                try:
+                    await asyncio.get_running_loop().run_in_executor(None, on_error_cleanup)
+                except Exception:
+                    _LOGGER.exception("on_error_cleanup raised; original error preserved")
 
     @api_command("devices/delete")
     async def delete_device(self, *, configuration: str, **kwargs: Any) -> None:
@@ -1823,6 +1852,39 @@ class DevicesController:
             # the WS layer's generic "Command failed".
             msg = f"Configuration {configuration} already exists"
             raise CommandError(ErrorCode.INVALID_ARGS, msg) from exc
+
+        # Validate the freshly-written YAML before announcing it.
+        # ``import_config`` produces a wizard-style YAML by
+        # construction, but a regression upstream — or a project
+        # whose ``packages:`` reference doesn't resolve cleanly
+        # against the current esphome / zeroconf state — would
+        # otherwise leave an unflashable YAML on disk that every
+        # downstream operation refuses. Hand the helper an
+        # ``on_error_cleanup`` so any non-success path (validation
+        # rejection, validator subprocess wedged, ...) unlinks
+        # the half-imported file before re-raising — without it
+        # a retry would trip ``FileExistsError`` on the leftover
+        # YAML. The window between ``import_config`` and the
+        # cleanup is short and the scanner only runs on poll (no
+        # inotify watcher), so no half-imported device leaks
+        # into ``devices/list``.
+        def _read() -> str:
+            return path.read_text(encoding="utf-8")
+
+        def _cleanup() -> None:
+            path.unlink(missing_ok=True)
+
+        try:
+            content = await loop.run_in_executor(None, _read)
+        except (OSError, UnicodeDecodeError):
+            # Transient FS error or non-UTF-8 bytes in what we
+            # just wrote via ``import_config``. Roll back either
+            # way so a retry doesn't see a leftover file.
+            await loop.run_in_executor(None, _cleanup)
+            raise
+        await self._validate_rewritten_yaml_or_raise(
+            configuration, content, action="import", on_error_cleanup=_cleanup
+        )
 
         # Picking up the new YAML is best-effort — if the scanner
         # hiccups (e.g. a transient stat error on a network mount),
