@@ -32,11 +32,14 @@ from esphome.storage_json import StorageJSON, ext_storage_path
 
 from ...helpers.api import CommandError
 from ...helpers.hostname import is_local_hostname, normalize_hostname
+from ...helpers.yaml import read_yaml_scalar, rewrite_name_or_substitution
 from ...models import ConfigEntryType, Device, ErrorCode
 from ..config import clear_volatile_device_metadata, remove_device_metadata
 from .constants import _CONCEALED_SECRET_RE
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from ...models import ComponentCatalogEntry, ConfigEntry
     from .._device_state_monitor import DeviceStateMonitor
     from ..components import _FeaturedRecord
@@ -57,12 +60,58 @@ __all__ = [
     "_normalize_pin_value",
     "_redact_concealed_secrets",
     "_remove_device_sidecars",
+    "_rewrite_required_yaml_leaf",
     "_validate_archive_configuration",
     "_wipe_device_build_dir",
     "friendly_name_slugify",
 ]
 
+
 _LOGGER = logging.getLogger(__name__)
+
+
+def _rewrite_required_yaml_leaf(
+    content: str,
+    leaf_path: Sequence[str],
+    new_value: str,
+) -> str:
+    """
+    Rewrite the leaf scalar at *leaf_path* in *content* — raise if missing.
+
+    Thin wrapper around :func:`rewrite_name_or_substitution` that
+    folds in the precondition the clone path needs: the leaf has
+    to actually exist in *this* file. Silently no-op'ing on a
+    missing leaf would let the clone produce a duplicate device
+    under the source's hostname (no in-file ``esphome.name`` to
+    rewrite ⇒ rewrite is a no-op ⇒ clone keeps the source's
+    hostname).
+
+    Friendly-name edit (``devices/edit_friendly_name``) doesn't
+    use this helper — it goes through
+    :func:`upsert_yaml_leaf_under_top_block` instead, which
+    *inserts* a missing leaf rather than rejecting. That's the
+    right choice for a display-label edit (ESPHome's package
+    merge gives the local leaf precedence over the included
+    one); for a hostname rewrite a duplicate would collide on
+    mDNS, so reject is correct there.
+
+    The leaf can be missing for two reasons that look the same to
+    us — either the field is genuinely absent from this YAML or
+    it lives in a ``packages:`` / ``!include``d file. The error
+    message names the missing path and points at both fixes
+    ("add it here, or edit the included source") so the dialog
+    can surface something concrete the user can act on without
+    us having to disambiguate.
+    """
+    if read_yaml_scalar(content, leaf_path) is None:
+        leaf_dotted = ".".join(leaf_path)
+        raise CommandError(
+            ErrorCode.INVALID_ARGS,
+            f"No {leaf_dotted} line found in this YAML — add one "
+            "directly, or edit the package / !include where it's "
+            "defined.",
+        )
+    return rewrite_name_or_substitution(content, leaf_path, new_value)
 
 
 def _wipe_device_build_dir(configuration: str) -> None:

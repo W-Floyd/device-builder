@@ -40,12 +40,13 @@ from ...helpers.mac_addresses import derive_interface_macs
 from ...helpers.process import kill_quietly
 from ...helpers.subprocess import create_subprocess_exec, iter_lines_with_progress
 from ...helpers.yaml import (
+    YamlUpsertNotSupportedError,
     generate_api_encryption_key,
     merge_component_yaml,
-    read_yaml_scalar,
     rewrite_api_encryption_key,
     rewrite_esphome_name,
     rewrite_name_or_substitution,
+    upsert_yaml_leaf_under_top_block,
 )
 from ...models import (
     AddComponentResponse,
@@ -87,6 +88,7 @@ from .helpers import (
     _drop_unconfigured_dependent_fields,
     _redact_concealed_secrets,
     _remove_device_sidecars,
+    _rewrite_required_yaml_leaf,
     _validate_archive_configuration,
     _wipe_device_build_dir,
     friendly_name_slugify,
@@ -856,24 +858,21 @@ class DevicesController:
         # Mixed values (``${prefix}-suffix``) aren't pure references
         # and fall through to the leaf rewrite — we have no way to
         # split the prefix without changing the suffix's meaning.
-        # Precondition: there has to be an ``esphome.name`` leaf in
-        # *this* file for us to rewrite. A package-driven config
-        # (``packages: { base: !include common/base.yaml }`` with the
-        # ``esphome:`` block defined upstream) has no in-file leaf to
-        # touch — the rewrite would silently no-op and the clone
-        # would flash under the source's hostname. Reject up-front
-        # with a typed error so the dialog can show a real message
-        # instead of producing a duplicate device.
-        if read_yaml_scalar(source_content, ("esphome", "name")) is None:
-            raise CommandError(
-                ErrorCode.INVALID_ARGS,
-                "Source has no inline esphome.name to rewrite — clone "
-                "needs an explicit name in this file (move the name "
-                "out of the package or add an esphome: name: line "
-                "before cloning).",
-            )
-
-        new_content = rewrite_name_or_substitution(source_content, ("esphome", "name"), new_name)
+        # ``_rewrite_required_yaml_leaf`` folds in the "leaf must
+        # exist in this file" precondition + the rewrite. Reject
+        # is the right behaviour for clone — a hostname rewrite
+        # that silently no-ops on a package-driven source would
+        # produce a duplicate device under the source's hostname
+        # and collide on mDNS. (The friendly-name editor takes the
+        # opposite call via ``upsert_yaml_leaf_under_top_block``
+        # — for a display label, ESPHome's package merge means
+        # *inserting* a local leaf is what the user wants.)
+        new_content = _rewrite_required_yaml_leaf(source_content, ("esphome", "name"), new_name)
+        # ``friendly_name`` is optional on the clone path — when
+        # the source doesn't have an inline leaf the clone just
+        # ships without one (vs. ``name`` which we hard-require).
+        # Skip the helper here; the underlying ``rewrite_name_or_substitution``
+        # is already a no-op when the leaf is missing.
         if new_friendly_name:
             new_content = rewrite_name_or_substitution(
                 new_content, ("esphome", "friendly_name"), new_friendly_name
@@ -918,6 +917,263 @@ class DevicesController:
         # runs from the scan-change handler — no double-probe here.
         await self._scanner.scan()
         return {"configuration": new_filename}
+
+    @api_command("devices/edit_friendly_name")
+    async def edit_friendly_name(
+        self,
+        *,
+        configuration: str,
+        new_friendly_name: str,
+        **kwargs: Any,
+    ) -> dict[str, str | bool]:
+        """
+        Rewrite ``esphome.friendly_name:`` in the device YAML.
+
+        Targeted at the "I just want to call my bulb something
+        different" workflow — beginners shouldn't have to open the
+        YAML editor and find the right line to change a label.
+
+        The YAML is the source of truth: sidecar-only updates would
+        let the dashboard label drift from what the running firmware
+        broadcasts (every reboot would announce the YAML's value via
+        mDNS, the next compile bakes the YAML in, dashboard and
+        device disagree). Reuses the
+        :func:`rewrite_name_or_substitution` helper from the clone
+        path so the substitution-redirect / safe-quoting / list-
+        item-aware machinery stays in one place.
+
+        Doesn't touch firmware — the frontend already owns the
+        install-flow UX (opens the command-dialog, follows the
+        streaming job, surfaces toasts) so a separate
+        ``firmware/install`` call after this one composes
+        naturally with the existing rename / install paths and
+        keeps this command's responsibility narrow.
+
+        Returns ``{"configuration": …, "rewritten": bool}``.
+        ``rewritten`` is False when the leaf already matched the
+        requested value (no-op rewrite); the caller can use that
+        to skip a redundant follow-up install.
+
+        Insertion behaviour for absent leaves:
+        - Existing ``esphome.friendly_name`` line → rewritten in
+          place (substitution-aware via
+          :func:`rewrite_name_or_substitution`).
+        - Existing ``esphome:`` block but no ``friendly_name:``
+          child → ``friendly_name:`` is inserted into the block.
+        - No ``esphome:`` block at all (package / ``!include``-
+          driven config) → a new ``esphome:`` block is prepended
+          with just ``friendly_name:``. ESPHome's package merge
+          gives our local leaf precedence over the package's
+          value, so the user's intended override actually lands.
+          ``esphome.name`` is intentionally not synthesised — a
+          literal-text check can't see a name supplied by
+          ``packages:`` / ``!include`` / substitutions, and a
+          synthesised slug here would silently override the
+          package-supplied hostname (breaking API discovery,
+          OTA, and mDNS). Configs that genuinely lack ``name:``
+          from any source are already invalid and ESPHome's
+          schema check will report it on the next compile.
+
+        User-correctable failures raise typed
+        ``CommandError(INVALID_ARGS, …)``:
+        - blank ``new_friendly_name``
+        - source not found
+        - source's ``esphome:`` is in flow-style
+          (``esphome: { … }``) or a tagged value
+          (``esphome: !include …``); the line-based upsert can't
+          safely edit either shape, so the user has to convert
+          to block style first.
+        - the rewritten YAML doesn't pass ESPHome's config
+          validation. The friendly_name only reaches the device
+          via the next install, so writing a YAML that won't
+          compile would leave the dashboard stuck displaying the
+          old label forever (no fresh mDNS broadcast to update
+          the running firmware's announced name). Refusing the
+          write here is the only way to keep dashboard label and
+          device hostname in sync; the dialog surfaces the
+          validation errors so the user can fix them in the
+          editor and retry.
+        """
+        new_friendly_name = new_friendly_name.strip()
+        if not new_friendly_name:
+            raise CommandError(ErrorCode.INVALID_ARGS, "new_friendly_name is required")
+
+        loop = asyncio.get_running_loop()
+        config_path = self._db.settings.rel_path(configuration)
+
+        def _read() -> str | None:
+            # Single ``read_text`` call — no preceding ``exists()``
+            # check, since a file deleted between the two would
+            # leak ``FileNotFoundError`` past us as an unhandled
+            # exception (surfaces as ``INTERNAL_ERROR`` instead of
+            # the typed ``INVALID_ARGS`` we want for "device gone").
+            # Catching here folds the race + the genuinely-missing
+            # case into the same branch.
+            try:
+                return config_path.read_text(encoding="utf-8")
+            except FileNotFoundError:
+                return None
+
+        content = await loop.run_in_executor(None, _read)
+        if content is None:
+            raise CommandError(
+                ErrorCode.INVALID_ARGS,
+                f"Device {configuration} not found",
+            )
+
+        # ``upsert_yaml_leaf_under_top_block`` handles three shapes:
+        # rewrite an existing leaf (substitution-aware), insert
+        # ``friendly_name:`` into an existing ``esphome:`` block,
+        # or prepend a new ``esphome:`` block when the YAML doesn't
+        # have one (package / ``!include``-driven configs). For a
+        # display label the override-from-package case is exactly
+        # what the user wants — they're saying "call THIS device
+        # something different" — and ESPHome's package merge gives
+        # our local leaf precedence over the included one.
+        #
+        # We deliberately don't try to synthesise ``esphome.name``
+        # for configs where the literal YAML doesn't have one. A
+        # text-level check can't see ``name:`` supplied by
+        # ``packages:`` / ``!include`` / substitutions, and a
+        # synthesised slug landing here would silently override
+        # the package-supplied hostname — breaking API discovery,
+        # OTA, and mDNS without warning. If a config genuinely
+        # has no ``name:`` from any source, ESPHome's schema will
+        # surface "required key not provided" on the next compile,
+        # which the user can address explicitly.
+        try:
+            new_content = upsert_yaml_leaf_under_top_block(
+                content, "esphome", "friendly_name", new_friendly_name
+            )
+        except YamlUpsertNotSupportedError as exc:
+            # Flow-style ``esphome: { ... }`` or a tagged value
+            # (``esphome: !include …``). The line-based walker
+            # can't safely insert into either shape — surface as
+            # an actionable error so the dialog tells the user to
+            # switch to block style rather than landing a
+            # duplicate ``esphome:`` key.
+            raise CommandError(ErrorCode.INVALID_ARGS, str(exc)) from exc
+
+        # Round-trip check: parse the rewritten YAML through the
+        # same reader the scanner uses (``parse_esphome_meta``) and
+        # verify it sees the new ``friendly_name``. Cheap defence
+        # against the line-based upsert producing a YAML shape that
+        # serializes fine but the reader misinterprets — a real bug
+        # we shipped once where wizard-emitted column-0 ``# Board:``
+        # / ``# Definition:`` comments ended up between an inserted
+        # ``name:`` and ``friendly_name:``, the reader hit ``# Board:``
+        # at column 0, treated it as a fresh top-level key, dropped
+        # the ``esphome:`` context, and silently lost
+        # ``friendly_name`` on every subsequent load. The user saw
+        # "renamed but the dashboard still shows the old name." Run
+        # the verification before writing so a future rewriter bug
+        # surfaces as a typed error instead of silently corrupting
+        # the user's config.
+        _, parsed_friendly, _, _ = parse_esphome_meta(new_content)
+        if parsed_friendly != new_friendly_name:
+            raise CommandError(
+                ErrorCode.INTERNAL_ERROR,
+                "Edited YAML doesn't round-trip through the reader — "
+                "the line-based upsert produced a shape the parser "
+                "misinterprets. This is a dashboard bug; please file "
+                "an issue with a redacted snippet of just the "
+                "esphome: / substitutions: blocks (strip Wi-Fi "
+                "credentials, API keys, and static IPs) so we can "
+                "extend the rewriter's coverage.",
+            )
+        if new_content == content:
+            # Idempotent — user submitted the same value (or the
+            # leaf was already that value). Skip the write and
+            # signal to the caller that no install is needed
+            # either; the dialog can close without queuing a
+            # redundant OTA job. Skip the validation pass too —
+            # the file isn't changing, so revalidating just to
+            # mirror its existing state would burn ~hundreds of
+            # ms on the editor subprocess for nothing.
+            return {"configuration": configuration, "rewritten": False}
+
+        # Same-shape rewrites that don't actually change anything
+        # in the YAML aren't worth the validator round-trip — see
+        # ``_validate_rewritten_yaml_or_raise``. Run validation
+        # here, before the write, so a YAML that won't compile is
+        # rejected with the editor's actual errors instead of
+        # silently landing on disk for an install that will never
+        # take effect.
+        await self._validate_rewritten_yaml_or_raise(configuration, new_content, action="rename")
+
+        # Atomic write — ``Path.write_text`` truncates the
+        # destination before writing, so a crash mid-write leaves
+        # a partial / corrupt YAML. ``esphome.helpers.write_file``
+        # already implements the canonical
+        # "stage-in-sibling-tempfile + atomic rename" pattern
+        # (NamedTemporaryFile in the destination directory so the
+        # rename stays within one filesystem, then ``shutil.move``
+        # which uses ``os.rename`` for same-FS targets). Lean on
+        # that helper here so this code path matches everywhere
+        # else in the upstream codebase that writes user-editable
+        # YAML.
+        await loop.run_in_executor(None, atomic_write_file, config_path, new_content)
+        await self._scanner.scan()
+        return {"configuration": configuration, "rewritten": True}
+
+    async def _validate_rewritten_yaml_or_raise(
+        self,
+        configuration: str,
+        content: str,
+        *,
+        action: str,
+    ) -> None:
+        """
+        Schema-validate *content* via the editor; raise if invalid.
+
+        Used by commands that rewrite a device's YAML and depend on
+        a follow-up install to apply the change (``edit_friendly_name``
+        today, future rename / save / mass-edit handlers). The
+        rewritten YAML only takes effect once an install lands the
+        new firmware, so a YAML that won't validate means the
+        install fails and the running device keeps its old state —
+        the dashboard ends up showing a half-finished change that
+        will never reach the device. Refusing the write here keeps
+        on-disk state and live state in lockstep.
+
+        Reuses :class:`EditorController`'s warm validator subprocess
+        (one per configuration), so the cost is single-digit hundreds
+        of ms when the session is warm. ``self._db.editor`` is None
+        during dashboard boot before
+        :meth:`EditorController.start` finishes; that window is
+        too narrow for a user to hit in practice, but the guard
+        means the controller still behaves coherently if the
+        editor is unavailable for any reason (e.g. the ``esphome``
+        CLI not on PATH) — better to skip validation than reject
+        every rewrite.
+
+        *action* is interpolated into the error message ("Can't
+        <action> — config doesn't validate: …"); pass the
+        user-facing verb the dialog will show ("rename",
+        "save"). The error list is capped at three entries so a
+        long error pile collapses to "first three + (+N more)"
+        rather than overflowing the toast.
+        """
+        editor = self._db.editor
+        if editor is None:
+            return
+        result = await editor.validate_yaml(configuration=configuration, content=content)
+        errors = [
+            *(err.get("message", "") for err in result.get("yaml_errors", [])),
+            *(err.get("message", "") for err in result.get("validation_errors", [])),
+        ]
+        errors = [msg for msg in errors if msg]
+        if not errors:
+            return
+        shown = errors[:3]
+        suffix = f" (+{len(errors) - len(shown)} more)" if len(errors) > len(shown) else ""
+        raise CommandError(
+            ErrorCode.INVALID_ARGS,
+            f"Can't {action} — config doesn't validate: "
+            + "; ".join(shown)
+            + suffix
+            + ". Fix the errors in the editor and try again.",
+        )
 
     async def _yaml_validates(self, config_path: str) -> bool:
         """``esphome config`` precheck.
