@@ -880,6 +880,17 @@ class DevicesController:
             msg = f"Source device {configuration} not found"
             raise CommandError(ErrorCode.INVALID_ARGS, msg)
 
+        # Validate the *source* before doing any rewrite work. The
+        # leaf-line rewrites that follow (name / friendly_name / api
+        # key) are structure-preserving, so a valid source always
+        # produces a valid clone — and an invalid source always
+        # produces an invalid clone. Bail early on a broken source
+        # with a message that points at the source's actual schema
+        # errors, so the user fixes the source first and retries.
+        # Surfacing this here also means we don't burn the rewrite
+        # work just to re-discover the source was unflashable.
+        await self._validate_rewritten_yaml_or_raise(configuration, source_content, action="clone")
+
         # Land the new identity on whichever line the source actually
         # uses to drive the value. Two patterns appear in real configs:
         #
