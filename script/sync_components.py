@@ -1598,6 +1598,7 @@ def build_component_entry(
     _apply_platform_defaults(config_entries, introspection.get("platform_defaults") or {})
     _apply_refined_types(config_entries, introspection.get("refined_types") or {})
     _apply_unit_of_measurement_options(config_entries)
+    _apply_field_platform_overrides(component_id, config_entries)
 
     return {
         "id": component_id,
@@ -3133,6 +3134,68 @@ def _apply_platform_defaults(
             pd = platform_defaults.get(sub_path)
             if pd:
                 entry["platform_defaults"] = pd
+            inner = entry.get("config_entries")
+            if inner:
+                walk(inner, sub_path)
+
+    walk(entries, ())
+
+
+# Per-(component_id, *path) override for ``ConfigEntry.supported_platforms``
+# — fields that are valid only on a subset of the platforms the
+# *component* runs on. The schema bundle doesn't carry this signal
+# in a uniform way (some fields live behind ``cv.SplitDefault``,
+# others behind component-side ``if CORE.is_esp32`` branches that
+# the schema dump can't see), so we maintain a small explicit map
+# until upstream surfaces it. Keep the list short and targeted —
+# every entry is a workaround for a foot-gun a user actually hit
+# in the visual editor (compile failing because they filled in a
+# field their MCU doesn't support).
+#
+# Path format: ``(component_id, *parent_keys, field_key)``. For
+# ``sensor.debug.psram`` the path is
+# ``("sensor.debug", "psram")`` because ``psram`` is a top-level
+# entry under the ``sensor.debug`` component (one of the optional
+# nested sub-sensors). Sub-fields nested deeper (e.g. the
+# ``name`` inside ``psram``) inherit the parent's gate at render
+# time on the frontend; we don't repeat the entry per child.
+_FIELD_PLATFORM_OVERRIDES: dict[tuple[str, ...], list[str]] = {
+    # Heap fragmentation reporting is ESP8266-only; the upstream
+    # debug component's fragmentation sub-sensor is wrapped in a
+    # ``CORE.is_esp8266`` guard at codegen time.
+    ("sensor.debug", "fragmentation"): ["esp8266"],
+    # PSRAM stats only make sense on ESP32 variants with PSRAM
+    # support enabled. The upstream component checks
+    # ``CORE.is_esp32`` at codegen and refuses on ESP8266 / RP2040
+    # / etc. Keeping the gate at the catalog level means the form
+    # never offers the field on the wrong board, instead of the
+    # current "fill it in, compile fails three minutes later"
+    # foot-gun (issue #417).
+    ("sensor.debug", "psram"): ["esp32"],
+}
+
+
+def _apply_field_platform_overrides(
+    component_id: str,
+    entries: list[dict],
+) -> None:
+    """Stamp ``supported_platforms`` onto fields listed in the override map.
+
+    The schema bundle doesn't reliably surface per-field platform
+    constraints (they're often hidden behind component-side
+    ``CORE.is_esp32`` branches that don't show up in the static
+    dump), so we maintain a small explicit override list. The
+    frontend's form renderer hides entries whose
+    ``supported_platforms`` is non-empty and doesn't include the
+    device's target chip.
+    """
+
+    def walk(items: list[dict], path: tuple[str, ...]) -> None:
+        for entry in items:
+            sub_path = (*path, entry["key"])
+            override = _FIELD_PLATFORM_OVERRIDES.get((component_id, *sub_path))
+            if override:
+                entry["supported_platforms"] = list(override)
             inner = entry.get("config_entries")
             if inner:
                 walk(inner, sub_path)

@@ -294,6 +294,24 @@ class ConfigEntry(DataClassORJSONMixin):
     # commonly used there).
     platform_defaults: dict[str, ConfigPrimitive] | None = None
 
+    # Target chips this field is valid on. Empty list means "all
+    # platforms" (the common case). Non-empty restricts the field
+    # to the named chips — e.g. ``sensor.debug.psram`` is
+    # ``["esp32"]`` because PSRAM stats only exist on ESP32 with
+    # PSRAM-enabled variants, and ``sensor.debug.fragmentation``
+    # is ``["esp8266"]`` because heap-fragmentation reporting is
+    # ESP8266-specific. The form renderer hides entries whose
+    # ``supported_platforms`` is non-empty and doesn't include
+    # the device's target chip; a preemptive filter beats the
+    # current behaviour where the user fills the field, compiles,
+    # and then sees a "doesn't apply on this platform" error well
+    # after they've left the dialog. Sibling-but-different from
+    # the catalog-entry-level ``supported_platforms`` on
+    # :class:`ComponentCatalogEntry` (that one gates the *whole
+    # component*; this one gates a single config entry within an
+    # otherwise platform-portable component).
+    supported_platforms: list[str] = field(default_factory=list)
+
     # === value constraints ===
 
     # Constrains the value to a fixed set of choices. When populated the
