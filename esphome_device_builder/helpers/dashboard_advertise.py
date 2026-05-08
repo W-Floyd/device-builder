@@ -1,0 +1,460 @@
+"""
+Publish the dashboard's own ``_esphomebuilder._tcp.local.`` service.
+
+Phase 1 of the remote-build offload feature (issue #106). Dashboards
+that browse this service type can list every other dashboard reachable
+on the LAN — used by the eventual "Remote build" settings page on the
+offloader and by the ESPHome Desktop welcome screen's "we found a
+dashboard, want to connect?" detection.
+
+The service-type label is ``_esphomebuilder`` rather than the
+``_esphomedashboard`` named in the original design proposal: RFC
+6335 §5.1 caps the label at 15 characters, ``esphomedashboard`` is
+16, and ``esphomebuilder`` (14) is the closest project-identifying
+alternative that fits. Parallels the existing ``_esphomelib._tcp.local.``
+device service type so a packet capture shows both ESPHome surfaces
+in the same ``_esphome*`` namespace.
+
+The TXT record carries the two version fields a peer can't derive
+from the browse response on its own:
+
+* ``server_version`` — this dashboard's own package version, so a
+  peer can flag a release-skew warning before pairing.
+* ``esphome_version`` — the ``esphome`` library version this
+  dashboard would compile against, so the version-mismatch warning
+  in phase 7 can fire on the listing page rather than waiting for
+  an upload to come back with a surprise build.
+
+A friendly label and the host's mDNS name are *not* in TXT — both
+are already on the wire. python-zeroconf exposes the service
+instance name (the leftmost label of the published name, e.g.
+``MacBook-Pro``) and the SRV record's target (the FQDN, e.g.
+``MacBook-Pro.local.``) directly on the resolved ``ServiceInfo``;
+duplicating them in TXT just bloats the packet.
+
+The advertise reuses the existing ``AsyncEsphomeZeroconf`` instance
+owned by :class:`~esphome_device_builder.controllers._device_state_monitor.DeviceStateMonitor`
+so the dashboard ships one mDNS responder per process. When that
+zeroconf failed to start (e.g. the port is held by avahi /
+``mDNSResponder`` and we couldn't bind), the advertise is a no-op
+rather than a hard failure — device discovery is the load-bearing
+mDNS feature; the dashboard advertise is a nice-to-have.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import ipaddress
+import logging
+import socket
+from typing import TYPE_CHECKING
+
+import ifaddr
+from zeroconf import ServiceInfo
+
+if TYPE_CHECKING:
+    from esphome.zeroconf import AsyncEsphomeZeroconf
+
+_LOGGER = logging.getLogger(__name__)
+
+SERVICE_TYPE = "_esphomebuilder._tcp.local."
+
+# Cadence at which the advertiser polls ``_local_addresses`` for
+# changes and re-publishes via ``async_update_service`` if the set
+# differs from what's currently on the wire. Five minutes balances
+# "DHCP renewal / WiFi reconnect should be picked up before a peer's
+# pairing breaks for too long" against "don't burn CPU walking
+# adapters every minute". Refresh is a no-op when the address set
+# hasn't changed (see :meth:`DashboardAdvertiser.refresh`), so the
+# steady-state cost is one ``ifaddr.get_adapters`` call per tick
+# with zero wire traffic.
+_REFRESH_INTERVAL_SECONDS = 300
+
+
+def _default_friendly_name() -> str:
+    """
+    Best-effort friendly label for the dashboard host.
+
+    Uses the leftmost label of ``socket.gethostname()`` so a host
+    that returns ``desktop.local`` advertises as ``desktop`` (this
+    label is what becomes the mDNS service-instance name, i.e. the
+    bit before ``._esphomebuilder._tcp.local.``; the FQDN is
+    carried separately as the ``ServiceInfo.server`` SRV target).
+    Falls back to ``"esphome-dashboard"`` when the system can't
+    report a hostname at all.
+    """
+    raw = socket.gethostname() or ""
+    label = raw.split(".", 1)[0].strip()
+    return label or "esphome-dashboard"
+
+
+def _is_loopback_adapter(adapter: ifaddr.Adapter) -> bool:
+    """
+    Return ``True`` when *adapter* is the host's loopback interface.
+
+    Matches by interface name (``lo`` / ``lo0``) rather than by
+    inspecting individual addresses: macOS configures ``fe80::1``
+    on ``lo0``, which is a real link-local address as far as
+    :mod:`ipaddress` is concerned (``is_loopback`` returns ``False``,
+    ``is_link_local`` returns ``True``) but routes to nothing
+    useful — advertising it would be misleading. Filtering the
+    interface out wholesale catches every loopback IP in one
+    place.
+    """
+    name = (adapter.name or "").lower()
+    nice = (adapter.nice_name or "").lower()
+    return name.startswith("lo") or "loopback" in nice
+
+
+def _local_addresses() -> list[str]:
+    """
+    Return the IPv4 / IPv6 addresses to advertise.
+
+    Enumerates every adapter via :mod:`ifaddr` (already a
+    python-zeroconf dependency) and returns the bare addresses as
+    plain strings suitable for :class:`~zeroconf.ServiceInfo`'s
+    ``parsed_addresses`` keyword. Drops three classes of addresses
+    that would land on the wire but never help a peer:
+
+    * **Loopback interfaces.** Filtering by interface (``lo`` /
+      ``lo0``) catches macOS's ``fe80::1``-on-``lo0`` link-local
+      that wouldn't be caught by an ``ip.is_loopback`` check alone.
+    * **Loopback IPs on non-loopback interfaces.** Defense in depth
+      for hosts where the OS aliases ``127.0.0.1`` onto a real
+      interface for some reason.
+    * **Link-local addresses** — both IPv6 (``fe80::/10``) and
+      IPv4 (``169.254.0.0/16``). IPv6 link-local is useless once
+      the scope_id is dropped (which the mDNS wire format
+      requires) — a peer receiving a bare ``fe80::xxx`` has no way
+      to know which interface to send the packet out on. IPv4
+      link-local (APIPA) only appears when DHCP has failed; a
+      dashboard advertising itself on ``169.254.x.x`` would just
+      attract pairings that immediately break the next time DHCP
+      comes back. Hosts with many virtual interfaces (VPN, awdl,
+      utun*) can carry a dozen link-local addresses that just
+      inflate the announcement without adding reachability.
+
+    Setting ``parsed_addresses`` explicitly is what fixes the
+    "127.0.0.1 / ::1 / fe80::1 only" advertise we saw on macOS:
+    when ``ServiceInfo`` is constructed with no addresses, peers
+    fall back to A/AAAA lookups against the SRV target. On macOS
+    that lookup is answered by ``mDNSResponder``, which can drop
+    to loopback while the system's network state is in flux.
+    Publishing the addresses ourselves takes that path out of the
+    loop.
+
+    .. note::
+
+       :func:`ifaddr.get_adapters` does blocking I/O — reads
+       ``/proc/net`` on Linux, calls ``GetAdaptersAddresses`` on
+       Windows. Async callers must run this via
+       :meth:`asyncio.AbstractEventLoop.run_in_executor` rather
+       than calling it directly on the event loop. The
+       :class:`DashboardAdvertiser`'s :meth:`~DashboardAdvertiser.register`
+       method handles that for production use; tests that call this
+       function synchronously off the loop don't need to.
+    """
+    seen: set[str] = set()
+    out: list[str] = []
+    for adapter in ifaddr.get_adapters():
+        if _is_loopback_adapter(adapter):
+            continue
+        for ip in adapter.ips:
+            # ``ifaddr.IP.ip`` is a ``str`` for IPv4 and a 3-tuple
+            # ``(addr, flowinfo, scope_id)`` for IPv6. The ServiceInfo
+            # wire format only carries the bare address — drop the
+            # tuple framing.
+            raw = ip.ip
+            addr_str = raw[0] if isinstance(raw, tuple) else raw
+            try:
+                parsed = ipaddress.ip_address(addr_str)
+            except ValueError:
+                continue
+            if parsed.is_loopback or parsed.is_link_local:
+                continue
+            # De-duplicate while preserving discovery order: an IP
+            # bound to multiple adapters (e.g. a primary + an alias
+            # on the same NIC) would otherwise appear twice in the
+            # advertise and trigger spurious ``refresh`` updates if
+            # the duplicate flickers in/out between enumerations.
+            if addr_str in seen:
+                continue
+            seen.add(addr_str)
+            out.append(addr_str)
+    return out
+
+
+def _default_hostname() -> str:
+    """
+    System mDNS hostname for the ``ServiceInfo.server`` SRV target.
+
+    Returns ``socket.gethostname()`` with ``.local`` appended when
+    the result has no dot. Doesn't use ``socket.getfqdn()``: on
+    macOS that resolver can return the reverse-DNS arpa form (e.g.
+    ``...ip6.arpa``) when reverse lookup fails, which is worse
+    than no hostname at all.
+    """
+    raw = (socket.gethostname() or "").strip()
+    if not raw:
+        return ""
+    if "." in raw:
+        return raw
+    return f"{raw}.local"
+
+
+class DashboardAdvertiser:
+    """
+    Publish the dashboard's ``_esphomebuilder._tcp.local.`` service.
+
+    Constructed once per :class:`DeviceBuilder` lifetime. The
+    :meth:`register` / :meth:`unregister` pair runs from the
+    dashboard's start / stop hooks. Idempotent on both sides — calling
+    ``register`` twice (or ``unregister`` without a prior register) is
+    safe and logged at debug level.
+    """
+
+    def __init__(
+        self,
+        *,
+        port: int,
+        server_version: str,
+        esphome_version: str,
+        name: str | None = None,
+        hostname: str | None = None,
+    ) -> None:
+        """
+        Capture the static fields used in the published ``ServiceInfo``.
+
+        ``port`` is the dashboard's HTTP listen port — what a peer
+        connects to once it's chosen this advertisement from a
+        browse. ``name`` defaults to the system hostname's leftmost
+        label and is used as the mDNS service-instance name (the
+        bit before ``._esphomebuilder._tcp.local.``). ``hostname``
+        defaults to the system's mDNS hostname and lands in the SRV
+        record's target. Neither is duplicated in TXT — peers read
+        them off ``ServiceInfo.name`` / ``ServiceInfo.server`` for
+        free.
+        """
+        friendly = (name or "").strip() or _default_friendly_name()
+        host = (hostname or "").strip() or _default_hostname()
+        self._port = int(port)
+        self._name = friendly
+        self._hostname = host
+        self._server_version = server_version
+        self._esphome_version = esphome_version
+        self._info: ServiceInfo | None = None
+        self._zeroconf: AsyncEsphomeZeroconf | None = None
+        # Background tick that calls :meth:`refresh` on
+        # ``_REFRESH_INTERVAL_SECONDS`` so DHCP renewals / WiFi
+        # reconnects pick up new addresses without a dashboard
+        # restart. Started in :meth:`register`, cancelled in
+        # :meth:`unregister`.
+        self._refresh_task: asyncio.Task[None] | None = None
+
+    @property
+    def service_type(self) -> str:
+        """The mDNS service type this advertiser publishes under."""
+        return SERVICE_TYPE
+
+    @property
+    def registered(self) -> bool:
+        """True between a successful :meth:`register` and :meth:`unregister`."""
+        return self._info is not None
+
+    def build_service_info(self, addresses: list[str] | None = None) -> ServiceInfo:
+        """
+        Construct the ``ServiceInfo`` that will be published on register.
+
+        *addresses* is the list of IP strings to publish in the A /
+        AAAA records. ``None`` (the default) calls
+        :func:`_local_addresses` synchronously, which is convenient
+        for tests but does blocking I/O — :meth:`register` resolves
+        the list via :meth:`asyncio.AbstractEventLoop.run_in_executor`
+        and passes it in explicitly, keeping the event loop clean.
+
+        Exposed (rather than inlined into :meth:`register`) so tests
+        can introspect the payload without driving the full zeroconf
+        register/unregister cycle.
+        """
+        if addresses is None:
+            addresses = _local_addresses()
+        instance = f"{self._name}.{SERVICE_TYPE}"
+        # TXT carries only what isn't already on the wire. The
+        # service-instance label (``self._name``) and the SRV
+        # target (``server`` below) are returned by every browse;
+        # peers read them directly off ``ServiceInfo.name`` /
+        # ``ServiceInfo.server`` rather than parsing TXT.
+        properties = {
+            "server_version": self._server_version,
+            "esphome_version": self._esphome_version,
+        }
+        # ``server`` is the SRV record's target. Zeroconf appends
+        # ``.local.`` if missing; pass the FQDN through as-is so a
+        # host already advertising e.g. ``desktop.local`` keeps the
+        # same answer it does for every other service. When
+        # ``_default_hostname`` returned ``""`` (rare — minimal
+        # containers / blank ``gethostname``), fall back to the
+        # friendly name + ``.local`` so the SRV target is a valid
+        # name rather than the bare ``.``.
+        host = self._hostname or f"{self._name}.local"
+        server = host if host.endswith(".") else f"{host}."
+        # Publishing the host's addresses explicitly avoids relying
+        # on the receiver's A/AAAA lookup against ``server``, which
+        # on macOS can return loopback while mDNSResponder is in a
+        # transient state. See ``_local_addresses``.
+        return ServiceInfo(
+            SERVICE_TYPE,
+            instance,
+            port=self._port,
+            properties=properties,
+            server=server,
+            parsed_addresses=addresses,
+        )
+
+    async def register(self, zeroconf: AsyncEsphomeZeroconf) -> None:
+        """
+        Publish the service via *zeroconf*.
+
+        ``allow_name_change=True`` lets python-zeroconf disambiguate
+        two dashboards on the same hostname (rare in practice, but
+        the rename-on-conflict cost is one register call so the
+        protection is essentially free).
+
+        Address enumeration runs in the default executor:
+        :func:`ifaddr.get_adapters` does blocking syscalls, which
+        would trip blockbuster on Linux and stall the loop in
+        production. The result is passed into
+        :meth:`build_service_info` so the rest of the construction
+        stays sync.
+        """
+        if self._info is not None:
+            _LOGGER.debug("Dashboard advertise already registered; skipping")
+            return
+        loop = asyncio.get_running_loop()
+        addresses = await loop.run_in_executor(None, _local_addresses)
+        info = self.build_service_info(addresses)
+        try:
+            await zeroconf.async_register_service(info, allow_name_change=True)
+        except Exception:
+            _LOGGER.exception(
+                "Failed to advertise dashboard on %s — peer discovery disabled",
+                SERVICE_TYPE,
+            )
+            return
+        self._info = info
+        self._zeroconf = zeroconf
+        _LOGGER.info(
+            "Advertising dashboard on %s as %r (port %d, esphome %s)",
+            SERVICE_TYPE,
+            info.name,
+            self._port,
+            self._esphome_version,
+        )
+        self._refresh_task = asyncio.create_task(
+            self._refresh_loop(), name="dashboard-advertise-refresh"
+        )
+
+    async def _refresh_loop(self) -> None:
+        """
+        Background task that polls :meth:`refresh` on a fixed cadence.
+
+        Sleeps ``_REFRESH_INTERVAL_SECONDS`` between checks. Exits
+        cleanly on cancellation (the ``CancelledError`` raised by
+        :func:`asyncio.sleep` propagates out of the loop and the
+        task finishes) so :meth:`unregister` can drain it without
+        special handling.
+
+        Refresh exceptions are caught and logged at debug level —
+        a transient zeroconf glitch shouldn't kill the whole
+        refresh loop and leave the advertise stuck on stale
+        addresses until the dashboard restarts. The next tick
+        retries.
+        """
+        while True:
+            await asyncio.sleep(_REFRESH_INTERVAL_SECONDS)
+            try:
+                await self.refresh()
+            except Exception:
+                _LOGGER.debug(
+                    "Dashboard advertise refresh tick raised; will retry next interval",
+                    exc_info=True,
+                )
+
+    async def refresh(self) -> bool:
+        """
+        Re-publish the advertise if the local-address set has changed.
+
+        Re-runs :func:`_local_addresses` (via the executor — see
+        :meth:`register`), compares the result against the address
+        list that's currently on the wire, and calls
+        :meth:`AsyncEsphomeZeroconf.async_update_service` only when the
+        sorted sets differ. The no-op return path keeps callers
+        free to invoke this on a tick / interface-change event
+        without flooding the network with unchanged updates.
+
+        Returns ``True`` if a re-publish actually fired, ``False``
+        when the cached and freshly-enumerated address sets matched
+        (or when the advertiser isn't currently registered, in
+        which case there's nothing to refresh against).
+        """
+        info = self._info
+        zeroconf = self._zeroconf
+        if info is None or zeroconf is None:
+            return False
+        loop = asyncio.get_running_loop()
+        new_addresses = await loop.run_in_executor(None, _local_addresses)
+        # Compare normalized sets so the order ifaddr returns
+        # interfaces in (which can shift between calls on some
+        # platforms) doesn't trigger a spurious re-publish.
+        if sorted(new_addresses) == sorted(info.parsed_addresses()):
+            return False
+        new_info = self.build_service_info(new_addresses)
+        try:
+            await zeroconf.async_update_service(new_info)
+        except Exception:
+            _LOGGER.debug("Dashboard advertise refresh failed", exc_info=True)
+            return False
+        self._info = new_info
+        _LOGGER.debug(
+            "Refreshed dashboard advertise — addresses changed (%d → %d)",
+            len(info.parsed_addresses()),
+            len(new_addresses),
+        )
+        return True
+
+    async def unregister(self) -> None:
+        """
+        Withdraw the service.
+
+        No-op when never registered or already unregistered. Failures
+        are logged but not re-raised so dashboard shutdown stays clean
+        even if the zeroconf socket is already gone.
+        """
+        info = self._info
+        zeroconf = self._zeroconf
+        refresh_task = self._refresh_task
+        self._info = None
+        self._zeroconf = None
+        self._refresh_task = None
+        # Cancel the periodic refresh first so a tick already in
+        # flight can't race the ``async_unregister_service`` call
+        # below (refresh's ``async_update_service`` after we tore
+        # down would either fail or race with the unregister).
+        # Always drain — even an already-``done`` task may have
+        # ended with an exception we want to surface to the
+        # debug log instead of dropping silently.
+        if refresh_task is not None:
+            if not refresh_task.done():
+                refresh_task.cancel()
+            try:
+                await refresh_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                _LOGGER.debug("Dashboard advertise refresh task drain failed", exc_info=True)
+        if info is None or zeroconf is None:
+            return
+        try:
+            await zeroconf.async_unregister_service(info)
+        except Exception:
+            _LOGGER.debug("Dashboard advertise unregister failed", exc_info=True)

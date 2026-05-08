@@ -23,6 +23,7 @@ from esphome import const
 from esphome.components.dashboard_import import import_config
 from esphome.helpers import write_file as atomic_write_file
 from esphome.storage_json import StorageJSON, ext_storage_path, ignored_devices_storage_path
+from esphome.zeroconf import AsyncEsphomeZeroconf
 
 from ...helpers.api import CommandError, api_command
 from ...helpers.build_size import coerce_sidecar_int
@@ -237,6 +238,18 @@ class DevicesController:
             on_state_change=lambda n, s: self._state_monitor.apply(n, s, "mqtt"),
             on_ip_change=self._state_monitor.apply_ip,
         )
+
+    @property
+    def zeroconf(self) -> AsyncEsphomeZeroconf | None:
+        """
+        The mDNS responder owned by the state monitor, or ``None``.
+
+        Surfaced so the dashboard's own ``_esphomebuilder._tcp.local.``
+        advertiser can reuse the existing instance instead of standing
+        up a second responder. ``None`` when zeroconf failed to start —
+        callers skip their advertise.
+        """
+        return self._state_monitor.zeroconf
 
     # ------------------------------------------------------------------
     # Lifecycle
