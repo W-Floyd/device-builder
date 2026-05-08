@@ -1603,6 +1603,7 @@ def build_component_entry(
     _apply_field_ranges(config_entries, introspection.get("field_ranges") or {})
     _apply_refined_types(config_entries, introspection.get("refined_types") or {})
     _apply_unit_of_measurement_options(config_entries)
+    _promote_multi_value_keys(config_entries)
 
     return {
         "id": component_id,
@@ -3448,6 +3449,59 @@ def _apply_unit_of_measurement_options(entries: list[dict]) -> None:
                 walk(inner)
 
     walk(entries)
+
+
+def _promote_multi_value_keys(entries: list[dict]) -> None:
+    """
+    Promote ``id`` / ``*_id`` children off Advanced for list rows.
+
+    Acts on ``id`` and ``*_id`` children of ``multi_value=True``
+    NESTED parents (``esphome.devices``, ``esphome.areas``, …):
+    demotes them off the Advanced toggle, and promotes the
+    parent's own ``id`` to *required*. ``_id`` references
+    (``area_id``) stay optional — a device with no area is a
+    valid config; a device with no id is not.
+
+    The upstream schema marks own-id fields advanced because
+    ESPHome's id system auto-generates one for top-level
+    components like ``sensor.dht``. For repeatable nested
+    mappings the id IS the cross-reference primary key — without
+    it nothing else can point at the row — so the visual editor
+    needs it on the main form, not behind the Advanced toggle.
+    Without this fix a fresh row from the renderer's Add button
+    looks like it accepts only ``name`` (issue #434).
+    """
+
+    def visit(entry: dict, _path: tuple[str, ...]) -> None:
+        if not entry.get("multi_value") or entry.get("type") != "nested":
+            return
+        inner = entry.get("config_entries") or []
+        mutated = False
+        for child in inner:
+            is_own_id = child["key"] == "id" and child.get("type") == "id"
+            if not (is_own_id or child["key"].endswith("_id")):
+                continue
+            # Flip the ``mutated`` flag only when a flag actually
+            # changes — if a future upstream-schema release already
+            # marks ``id`` non-advanced + required we'd otherwise
+            # re-sort a list that's already correct, potentially
+            # disturbing an order the schema authors picked
+            # deliberately.
+            if child.get("advanced"):
+                child["advanced"] = False
+                mutated = True
+            if is_own_id and not child.get("required"):
+                child["required"] = True
+                mutated = True
+        # Demoting from advanced changes ``_sort_entries``' sort key
+        # (non-advanced first, then by ``_IMPORTANT_KEY_ORDER``), so
+        # an advanced sibling like ``comment`` would otherwise stay
+        # ahead of the now-non-advanced ``id``. Re-sort to keep the
+        # form's ordering invariant.
+        if mutated:
+            entry["config_entries"] = _sort_entries(inner)
+
+    _walk_catalog_entries(entries, visit)
 
 
 def _load_unit_of_measurement_options() -> list[dict[str, str]]:
