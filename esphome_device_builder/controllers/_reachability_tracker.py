@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from ..models import DeviceState
 
@@ -63,7 +63,8 @@ ObservationCallback = Callable[[str], None]
 
 @dataclass(frozen=True, slots=True)
 class MdnsCacheInfo:
-    """Truthful mDNS freshness derived from the zeroconf cache.
+    """
+    Truthful mDNS freshness derived from the zeroconf cache.
 
     ``age_seconds`` is the elapsed time since the device's most
     recent ``_esphomelib._tcp.local.`` SRV record was received,
@@ -78,10 +79,44 @@ class MdnsCacheInfo:
     fresh announce. The drawer surfaces it beside the row so the
     user can see whether the device is "due to re-announce" or
     "missed several windows already."
+
+    ``txt_records`` is the parsed ``key -> value`` pairs from the
+    device's ``TXT`` record at ``<name>._esphomelib._tcp.local.``
+    — the same payload the dashboard already mines for
+    ``version`` / ``config_hash`` / ``mac`` / ``api_encryption``.
+    Surfaced wholesale to the drawer so the user can see exactly
+    what the device is broadcasting (debugging "why is the
+    dashboard reading the wrong version?" / "did my OTA actually
+    refresh the TXT?").
+
+    Bare keys (``foo`` with no ``=``), empty-value entries
+    (``foo=``), and entries whose value failed UTF-8 decode all
+    surface as ``""``-valued keys — zeroconf collapses the three
+    cases to a single ``None`` in ``decoded_properties`` and the
+    diagnostic value is the same regardless ("the key IS being
+    broadcast, even if there's nothing useful on the right-hand
+    side"). The empty string is the same signal the upstream
+    ``api_encryption`` tri-state already uses for "device
+    confirmed plaintext" (issue #437). Keys themselves are
+    dropped only when they fail UTF-8 decode (zeroconf surfaces
+    those as non-string keys in ``decoded_properties``); we
+    mirror the live-apply path's contract there.
+
+    Order is alphabetical by key — the decode pass sorts the
+    output so the wire format is deterministic across consecutive
+    snapshots regardless of zeroconf's bytes-order, which lets
+    downstream consumers compare with plain equality /
+    ``JSON.stringify`` instead of comparing dicts set-wise.
+
+    Empty mapping when no TXT record is cached at all (or the
+    cached record's bytes are missing); the snapshot serialiser
+    upstream maps ``{}`` to ``None`` on the wire so the drawer
+    hides the section entirely.
     """
 
     age_seconds: float
     ttl_remaining_seconds: float
+    txt_records: dict[str, str] = field(default_factory=dict)
 
 
 # Reads the mDNS cache for a device name and returns the freshness
@@ -215,11 +250,24 @@ class ReachabilityTracker:
 
         mdns_age: float | None = None
         mdns_ttl_remaining: float | None = None
+        # ``None`` means "no TXT data the drawer should render". An
+        # empty dict would let the renderer mount a chevron with
+        # zero rows, which is just visual noise — so we collapse
+        # *both* "no TXT cached" and "TXT cached but every key
+        # decoded to nothing useful" to ``None`` here. The
+        # frontend hides the section entirely with a single
+        # null-check.
+        mdns_txt_records: dict[str, str] | None = None
         if self._mdns_cache_reader is not None:
             info = self._mdns_cache_reader(name)
             if info is not None:
                 mdns_age = info.age_seconds
                 mdns_ttl_remaining = info.ttl_remaining_seconds
+                # Send a fresh dict on the wire — the cache reader
+                # may hand us a reference into a cached structure;
+                # don't let downstream mutation reach back into
+                # zeroconf's internals.
+                mdns_txt_records = dict(info.txt_records) if info.txt_records else None
 
         return {
             "device": name,
@@ -228,6 +276,7 @@ class ReachabilityTracker:
             "ip": ip,
             "mdns_last_seen_seconds_ago": mdns_age,
             "mdns_ttl_remaining_seconds": mdns_ttl_remaining,
+            "mdns_txt_records": mdns_txt_records,
             "ping_last_seen_seconds_ago": _ago(self._ping_last_seen.get(name)),
             "mqtt_last_seen_seconds_ago": _ago(self._mqtt_last_seen.get(name)),
             "ping_rtt_ms": self._ping_rtt_ms.get(name),

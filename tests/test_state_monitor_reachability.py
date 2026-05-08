@@ -32,15 +32,17 @@ import pytest
 from zeroconf import (
     DNSAddress,
     DNSPointer,
+    DNSText,
     ServiceStateChange,
     Zeroconf,
     current_time_millis,
 )
-from zeroconf.const import _CLASS_IN, _TYPE_A, _TYPE_AAAA, _TYPE_PTR
+from zeroconf.const import _CLASS_IN, _TYPE_A, _TYPE_AAAA, _TYPE_PTR, _TYPE_TXT
 
 import esphome_device_builder.controllers._device_state_monitor as state_monitor_module
 from esphome_device_builder.controllers._device_state_monitor import (
     DeviceStateMonitor,
+    _decode_txt_bytes_to_sorted_pairs,
 )
 from esphome_device_builder.controllers._reachability_tracker import (
     MdnsCacheInfo,
@@ -451,6 +453,291 @@ def test_get_mdns_cache_info_picks_latest_across_record_types() -> None:
         assert info is not None
         # PTR (5s ago) is fresher than A (110s ago) → PTR wins.
         assert info.age_seconds == pytest.approx(5.0, abs=0.5)
+    finally:
+        zc.close()
+
+
+def test_get_mdns_cache_info_decodes_txt_records() -> None:
+    """
+    Cached ``DNSText`` → parsed ``key=value`` mapping for the drawer.
+
+    The drawer's "show TXT records" debug collapsible needs the
+    decoded key/value pairs the device actually broadcast, not the
+    raw RFC-6763 length-prefixed bytes. Pin the round-trip via a
+    real ``Zeroconf`` cache: the monitor reads the cached
+    ``DNSText`` record, hands its bytes to ``ServiceInfo.text``,
+    and surfaces ``decoded_properties`` as ``str``-valued entries
+    (collapsing zeroconf's ``None`` — which covers both bare keys
+    and empty values — to ``""`` so the user can still see the
+    key is present, which is the meaningful diagnostic for the
+    ``api_encryption`` tri-state).
+    """
+    zc = Zeroconf(interfaces=["127.0.0.1"])
+    try:
+        # RFC-6763 length-prefixed TXT entries. ``decoded_properties``
+        # already handles UTF-8 decode + ``None`` for bad bytes; we
+        # just need to make sure the bytes-to-dict path runs.
+        txt_entries = [
+            b"version=2025.4.0",
+            b"config_hash=5a94a12d",
+            b"mac=aabbccddeeff",
+            b"api_encryption=Noise_NNpsk0_25519_ChaChaPoly_SHA256",
+        ]
+        txt_payload = b"".join(bytes([len(e)]) + e for e in txt_entries)
+        txt_rec = DNSText(
+            name="kitchen._esphomelib._tcp.local.",
+            type_=_TYPE_TXT,
+            class_=_CLASS_IN,
+            ttl=120,
+            text=txt_payload,
+            created=current_time_millis() - 2_000,
+        )
+        # An A record so ``records`` is non-empty (otherwise the
+        # method returns ``None`` before the TXT path runs).
+        a_rec = DNSAddress(
+            name="kitchen.local.",
+            type_=_TYPE_A,
+            class_=_CLASS_IN,
+            ttl=120,
+            address=socket.inet_aton("10.0.0.42"),
+            created=current_time_millis() - 2_000,
+        )
+        zc.cache.async_add_records([a_rec, txt_rec])
+
+        monitor = _make_monitor([_make_device()], None)
+        monitor._zeroconf = MagicMock(zeroconf=zc)
+
+        info = monitor.get_mdns_cache_info("kitchen")
+        assert info is not None
+        assert info.txt_records == {
+            "version": "2025.4.0",
+            "config_hash": "5a94a12d",
+            "mac": "aabbccddeeff",
+            "api_encryption": "Noise_NNpsk0_25519_ChaChaPoly_SHA256",
+        }
+    finally:
+        zc.close()
+
+
+def test_get_mdns_cache_info_sorts_txt_records_for_wire_stability() -> None:
+    """
+    Identical TXT content in any input order produces the same dict.
+
+    The reachability subscription pushes one snapshot per
+    observation. If the backend's TXT decode walked the cached
+    bytes in the order zeroconf decoded them — which can shift
+    on a fresh announce, or if zeroconf rebuilds the cached
+    entry — every reorder would surface as a "different"
+    snapshot. Downstream consumers (dedupe layers, the
+    frontend's per-device renderer) would either churn or have
+    to compare dicts set-wise. Sorting at the source keeps the
+    wire deterministic. Pin the contract via two devices whose
+    TXT byte payloads carry the same key/value pairs in
+    different orders and assert ``info.txt_records`` round-trips
+    to the same dict.
+    """
+    zc = Zeroconf(interfaces=["127.0.0.1"])
+    try:
+        # Same payload, different bytes order. After decoding
+        # both should land in the same dict shape on the wire.
+        ascending = b"".join(
+            bytes([len(e)]) + e
+            for e in (
+                b"api_encryption=Noise",
+                b"config_hash=abc",
+                b"mac=aa",
+                b"version=1",
+            )
+        )
+        descending = b"".join(
+            bytes([len(e)]) + e
+            for e in (
+                b"version=1",
+                b"mac=aa",
+                b"config_hash=abc",
+                b"api_encryption=Noise",
+            )
+        )
+
+        a_rec = DNSAddress(
+            name="kitchen.local.",
+            type_=_TYPE_A,
+            class_=_CLASS_IN,
+            ttl=120,
+            address=socket.inet_aton("10.0.0.42"),
+            created=current_time_millis() - 2_000,
+        )
+        zc.cache.async_add_records([a_rec])
+        monitor = _make_monitor([_make_device()], None)
+        monitor._zeroconf = MagicMock(zeroconf=zc)
+
+        snapshots: list[dict[str, str]] = []
+        for payload, age_offset in ((ascending, 4_000), (descending, 1_000)):
+            txt_rec = DNSText(
+                name="kitchen._esphomelib._tcp.local.",
+                type_=_TYPE_TXT,
+                class_=_CLASS_IN,
+                ttl=120,
+                text=payload,
+                created=current_time_millis() - age_offset,
+            )
+            zc.cache.async_add_records([txt_rec])
+            info = monitor.get_mdns_cache_info("kitchen")
+            assert info is not None
+            snapshots.append(dict(info.txt_records))
+
+        # Both decoded snapshots are byte-identical when iterated
+        # — same keys, same values, same order. Without the sort
+        # they'd carry the bytes-order from the raw TXT payload
+        # and the second snapshot would differ from the first.
+        assert snapshots[0] == snapshots[1]
+        assert list(snapshots[0].items()) == list(snapshots[1].items())
+        # And they're actually sorted, not just stable.
+        assert list(snapshots[0]) == [
+            "api_encryption",
+            "config_hash",
+            "mac",
+            "version",
+        ]
+    finally:
+        zc.close()
+
+
+def test_get_mdns_cache_info_keeps_empty_value_keys_visible() -> None:
+    """
+    Bare keys and ``key=`` empty-value entries surface as ``""``.
+
+    zeroconf's ``decoded_properties`` collapses both ``foo`` (no
+    ``=``) and ``foo=`` (with ``=`` but empty value) to ``None``
+    — there's no public API to tell them apart. For the drawer's
+    debug view the diagnostic value is the same: the user wants
+    to see that the key IS being broadcast, even if the value is
+    empty. Pin that those entries surface as ``""`` rather than
+    being silently dropped — this is the signal the
+    ``api_encryption`` tri-state already uses for "device
+    confirmed plaintext" (issue #437) and the whole point of the
+    debug collapsible is to make those advertisements visible.
+    """
+    zc = Zeroconf(interfaces=["127.0.0.1"])
+    try:
+        # ``api_encryption=`` is the canonical empty-value case
+        # (device confirmed plaintext); ``bare_flag`` covers the
+        # other shape zeroconf collapses to the same ``None``.
+        txt_entries = [
+            b"version=2025.4.0",
+            b"api_encryption=",
+            b"bare_flag",
+        ]
+        txt_payload = b"".join(bytes([len(e)]) + e for e in txt_entries)
+        txt_rec = DNSText(
+            name="kitchen._esphomelib._tcp.local.",
+            type_=_TYPE_TXT,
+            class_=_CLASS_IN,
+            ttl=120,
+            text=txt_payload,
+            created=current_time_millis() - 2_000,
+        )
+        a_rec = DNSAddress(
+            name="kitchen.local.",
+            type_=_TYPE_A,
+            class_=_CLASS_IN,
+            ttl=120,
+            address=socket.inet_aton("10.0.0.42"),
+            created=current_time_millis() - 2_000,
+        )
+        zc.cache.async_add_records([a_rec, txt_rec])
+
+        monitor = _make_monitor([_make_device()], None)
+        monitor._zeroconf = MagicMock(zeroconf=zc)
+
+        info = monitor.get_mdns_cache_info("kitchen")
+        assert info is not None
+        assert info.txt_records == {
+            "version": "2025.4.0",
+            "api_encryption": "",
+            "bare_flag": "",
+        }
+    finally:
+        zc.close()
+
+
+def test_decode_txt_bytes_to_sorted_pairs_caches_by_bytes() -> None:
+    """
+    Repeat calls with identical bytes hit the LRU cache, not the decoder.
+
+    The reachability snapshot fires on every observation; for a
+    50-device fleet that's potentially ~50 calls/sec into the
+    decoder. Each device's TXT bytes rarely change between
+    firmware flashes, so the bytes are a near-perfect cache key.
+    Pin the contract: a second call with the same ``bytes``
+    object lands in the cache (``hits`` advances, ``misses``
+    doesn't) and returns the same tuple instance — and a caller
+    can't poison the cache by mutating their dict copy of the
+    tuple, because the cached tuple is itself immutable.
+    """
+    txt_payload = b"".join(
+        bytes([len(e)]) + e for e in (b"version=1", b"mac=aa", b"api_encryption=Noise")
+    )
+    # Reset the cache so previous tests' entries don't shift the
+    # hit / miss counts we're asserting on.
+    _decode_txt_bytes_to_sorted_pairs.cache_clear()
+
+    first = _decode_txt_bytes_to_sorted_pairs(txt_payload)
+    second = _decode_txt_bytes_to_sorted_pairs(txt_payload)
+
+    # Same tuple instance — the cache returned the memoised value.
+    assert first is second
+    # Sorted, with empty-value preserved as ``""``.
+    assert first == (
+        ("api_encryption", "Noise"),
+        ("mac", "aa"),
+        ("version", "1"),
+    )
+
+    info = _decode_txt_bytes_to_sorted_pairs.cache_info()
+    assert info.misses == 1
+    assert info.hits == 1
+
+    # A different payload misses cache; identical-content bytes
+    # objects with different identity still hit (cache key is
+    # value-equality on bytes, not identity).
+    other = b"".join(bytes([len(e)]) + e for e in (b"foo=bar",))
+    _decode_txt_bytes_to_sorted_pairs(other)
+    assert _decode_txt_bytes_to_sorted_pairs.cache_info().misses == 2
+
+    same_content_different_object = bytes(txt_payload)  # forces a new bytes object
+    third = _decode_txt_bytes_to_sorted_pairs(same_content_different_object)
+    assert third is first  # value-equal bytes hit the same cache slot
+
+
+def test_get_mdns_cache_info_no_txt_records_returns_empty_mapping() -> None:
+    """
+    Address records present but no TXT → ``txt_records == {}``.
+
+    The drawer's snapshot serialiser maps an empty mapping to
+    ``None`` on the wire (so the debug collapsible stays hidden);
+    this test pins the upstream half — the monitor itself
+    distinguishes "no TXT cached" from "TXT cached but empty"
+    only at this granularity.
+    """
+    zc = Zeroconf(interfaces=["127.0.0.1"])
+    try:
+        a_rec = DNSAddress(
+            name="kitchen.local.",
+            type_=_TYPE_A,
+            class_=_CLASS_IN,
+            ttl=120,
+            address=socket.inet_aton("10.0.0.42"),
+            created=current_time_millis() - 2_000,
+        )
+        zc.cache.async_add_records([a_rec])
+
+        monitor = _make_monitor([_make_device()], None)
+        monitor._zeroconf = MagicMock(zeroconf=zc)
+
+        info = monitor.get_mdns_cache_info("kitchen")
+        assert info is not None
+        assert info.txt_records == {}
     finally:
         zc.close()
 
