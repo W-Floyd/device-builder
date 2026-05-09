@@ -74,6 +74,30 @@ _RESPONSE_DECODE_ERRORS: tuple[type[Exception], ...] = (
 _DEFAULT_TIMEOUT_SECONDS = 10.0
 
 
+# Hard cap on a single inbound WS frame for the *control-plane*
+# round-trip driven by :func:`drive_initiator_round_trip`. Each
+# receiver response on this path is a Noise-encrypted JSON object
+# with a small fixed shape (status code, pubkey hash, optional
+# label); well under 1 KiB in practice. aiohttp's default
+# ``max_msg_size`` is 4 MiB, which is wildly generous here: a
+# malicious or buggy receiver could otherwise spend ~4 MiB of
+# offloader memory + Noise-decrypt + JSON-parse CPU per round-
+# trip. 64 KiB is two orders of magnitude above the realistic
+# max while still giving aiohttp a reasonable header-and-frame
+# slack.
+#
+# This cap explicitly does NOT apply to the future firmware-bytes
+# ``peer_link`` intent (issue #106 phase 4c onward). That payload
+# is megabytes of compiled firmware and will use a separate
+# streaming driver — Noise has a hard 65535-byte ciphertext frame
+# limit, so the firmware path will read many small frames and
+# stream them to disk, not a single ``receive_bytes()`` call.
+# When that driver lands, it gets its own ``max_msg_size``
+# tuned to one Noise frame (~64 KiB + slack); this constant
+# stays scoped to the JSON status responses.
+_CONTROL_RESPONSE_MAX_BYTES = 64 * 1024
+
+
 class PeerLinkClientError(RuntimeError):
     """Raised on transport / handshake / decrypt failure on the offloader side.
 
@@ -203,7 +227,7 @@ async def drive_initiator_round_trip(
         url = _build_ws_url(hostname, port)
         async with (
             aiohttp.ClientSession(timeout=timeout) as http,
-            http.ws_connect(url) as ws,
+            http.ws_connect(url, max_msg_size=_CONTROL_RESPONSE_MAX_BYTES) as ws,
         ):
             msg1 = _json.dumps({"intent": intent.value})
             await ws.send_bytes(sess.write_handshake_message(msg1))
@@ -276,3 +300,89 @@ async def preview_pair(
         msg = f"peer-link preview rejected with intent_response={rt.intent_response!r}"
         raise PeerLinkClientError(msg)
     return pin_sha256_for_pubkey(rt.remote_static_pub)
+
+
+@dataclass(frozen=True)
+class RequestPairResult:
+    """Outcome of an ``intent="pair_request"`` round-trip from the offloader.
+
+    Returned by :func:`request_pair` after the Noise XX
+    handshake completes and the receiver's
+    ``intent_response`` has been received.
+
+    * :attr:`status` carries the receiver's response verbatim
+      (``IntentResponse.PENDING`` for a freshly-created /
+      refreshed pending row, ``IntentResponse.APPROVED`` for a
+      re-pair against a pre-existing approved row,
+      ``IntentResponse.REJECTED`` for receiver-side decline /
+      pin mismatch, ``IntentResponse.NO_PAIRING_WINDOW`` for
+      a closed window).
+    * :attr:`pin_sha256` is the lowercase-hex hash of the
+      receiver's static X25519 pubkey actually observed on the
+      live handshake. The caller compares this against the
+      pin the user OOB-confirmed in ``preview_pair``; a
+      mismatch indicates the receiver rotated identity (or an
+      active MITM intervened) between preview and request.
+    * :attr:`remote_static_pub` is the raw 32-byte pubkey
+      itself, for storage in :class:`StoredPairing`.
+    """
+
+    status: IntentResponse
+    pin_sha256: str
+    remote_static_pub: bytes
+
+
+async def request_pair(
+    *,
+    hostname: str,
+    port: int,
+    identity_priv: bytes,
+    label: str,
+    dashboard_id: str,
+) -> RequestPairResult:
+    """Run an ``intent="pair_request"`` round-trip; return the receiver's response.
+
+    Thin wrapper around :func:`drive_initiator_round_trip`:
+    sends ``{"label": ..., "dashboard_id": ...}`` in the
+    encrypted msg3 payload (per the Noise XX wire spec, msg3 is
+    encrypted under the now-finalized cipher — safe for the
+    offloader-side identity metadata) and returns the
+    receiver's ``intent_response`` alongside the receiver's
+    captured pubkey.
+
+    The caller is responsible for the TOCTOU pin check:
+    compare the returned :attr:`RequestPairResult.pin_sha256`
+    against the value the user OOB-confirmed in
+    ``preview_pair`` *before* persisting any state. The driver
+    here completes the handshake regardless because the
+    receiver doesn't expose its pubkey otherwise — the check
+    has to happen post-handshake on the offloader side. A
+    mismatch + bail-after-handshake leaks no information to
+    the receiver beyond the fact that the offloader requested
+    pairing (which is also true on the no-mismatch path).
+
+    Maps ``IntentResponse`` strings the receiver may return —
+    ``REJECTED`` / ``NO_PAIRING_WINDOW`` / ``PENDING`` /
+    ``APPROVED`` — back to the typed enum. An unknown wire
+    value (e.g. a future receiver protocol bump) raises
+    :class:`PeerLinkClientError`; the WS-command layer above
+    should treat that as ``UNAVAILABLE``.
+    """
+    msg3_payload = _json.dumps({"label": label, "dashboard_id": dashboard_id})
+    rt = await drive_initiator_round_trip(
+        hostname=hostname,
+        port=port,
+        identity_priv=identity_priv,
+        intent=PeerLinkIntent.PAIR_REQUEST,
+        msg3_payload=msg3_payload,
+    )
+    try:
+        status = IntentResponse(rt.intent_response)
+    except ValueError as exc:
+        msg = f"peer-link pair_request: unknown intent_response={rt.intent_response!r}"
+        raise PeerLinkClientError(msg) from exc
+    return RequestPairResult(
+        status=status,
+        pin_sha256=pin_sha256_for_pubkey(rt.remote_static_pub),
+        remote_static_pub=rt.remote_static_pub,
+    )

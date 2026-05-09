@@ -62,6 +62,8 @@ import logging
 import time
 from collections.abc import Callable, Hashable
 from dataclasses import dataclass as _dataclass
+from enum import StrEnum
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from esphome.const import __version__ as esphome_version
@@ -85,6 +87,8 @@ from ..models import (
     IdentityView,
     IntentResponse,
     ManualHost,
+    OffloaderRemoteBuildSettings,
+    PairingSummary,
     PairingWindowState,
     PeerStatus,
     PeerSummary,
@@ -95,21 +99,52 @@ from ..models import (
     RemoteBuildPeerSource,
     RemoteBuildSettings,
     RemoteBuildSettingsView,
+    StoredPairing,
     StoredPeer,
 )
-from .config import load_remote_build_settings, remote_build_settings_transaction
+from .config import (
+    load_remote_build_settings,
+    offloader_remote_build_settings_transaction,
+    remote_build_settings_transaction,
+)
 from .remote_build_peer_link_client import (
     PeerLinkClientError,
 )
 from .remote_build_peer_link_client import (
     preview_pair as peer_link_preview_pair,
 )
+from .remote_build_peer_link_client import (
+    request_pair as peer_link_request_pair,
+)
 
 if TYPE_CHECKING:
     from ..device_builder import DeviceBuilder
     from ..helpers.dashboard_identity import DashboardIdentity
+    from ..helpers.peer_link_identity import PeerLinkIdentity
 
 _LOGGER = logging.getLogger(__name__)
+
+
+def _load_offloader_identities(
+    config_dir: Path,
+) -> tuple[PeerLinkIdentity, DashboardIdentity]:
+    """Load both offloader-side identities in one executor hop.
+
+    The peer-link X25519 keypair drives the Noise XX handshake;
+    the dashboard cert (phase 3a) carries the stable
+    ``dashboard_id`` we send in msg3 so the receiver's
+    ``StoredPeer`` row keys on it. The two are both lazy-create
+    on first read, both protected by per-process locks
+    in their respective helpers, and both involve disk I/O
+    (each is one file read + occasional first-call generation).
+    Bundling into a single sync helper means one
+    ``run_in_executor`` round-trip rather than two — matters
+    less for the threadpool overhead than for the
+    "two awaits where one would do" code shape; keeps the
+    caller's body tight.
+    """
+    return get_or_create_peer_link_identity(config_dir), get_or_create_identity(config_dir)
+
 
 # Timeout for the cache-miss resolve path. Longer than
 # ``DeviceStateMonitor._MDNS_RESOLVE_TIMEOUT_MS`` (2s) because peer
@@ -218,7 +253,48 @@ def _peer_from_manual_host(entry: ManualHost) -> RemoteBuildPeer:
 _HOSTNAME_MAX_CHARS = 255  # RFC 1035 §2.3.4 caps a FQDN at 253; round up to 255.
 
 
-def _validate_hostname(raw: object) -> str:
+class _HostFieldContext(StrEnum):
+    """Error-message prefix for the shared host / port validators.
+
+    The same ``_validate_hostname`` / ``_validate_port`` pair gates
+    both the receiver-side ``add_manual_host`` surface and the
+    offloader-side ``preview_pair`` / ``request_pair`` flow.
+    Hardcoding ``"manual host:"`` in the error messages would leak
+    misleading diagnostics into the WS layer when a frontend bug
+    sends a bad ``hostname`` to ``request_pair`` ("manual host:
+    'hostname' must not be empty" — but the user wasn't editing
+    a manual host). Pick the right prefix at the call site
+    instead.
+
+    StrEnum values are the message prefix verbatim; new call sites
+    that want a distinct user-facing string add a new enum member
+    rather than passing a free-form string (so the prefixes are
+    grep-able and don't drift).
+    """
+
+    MANUAL_HOST = "manual host"
+    RECEIVER = "receiver"
+
+
+class _PairLabelField(StrEnum):
+    """Wire arg name for ``_validate_pair_label`` error messages.
+
+    ``request_pair`` takes two distinct labels — ``receiver_label``
+    for local storage and ``offloader_label`` sent to the receiver
+    in msg3 — and a validation failure must name the failing arg so
+    the frontend can pin the inline error to the right input. StrEnum
+    values are the wire arg name verbatim; new call sites add a new
+    enum member rather than passing a free-form string (mirrors
+    :class:`_HostFieldContext`).
+    """
+
+    RECEIVER_LABEL = "receiver_label"
+    OFFLOADER_LABEL = "offloader_label"
+
+
+def _validate_hostname(
+    raw: object, *, context: _HostFieldContext = _HostFieldContext.MANUAL_HOST
+) -> str:
     """
     Normalise a user-entered hostname to its canonical lowercase form.
 
@@ -260,14 +336,14 @@ def _validate_hostname(raw: object) -> str:
     for later.
     """
     if not isinstance(raw, str):
-        msg = "manual host: 'hostname' must be a string"
+        msg = f"{context}: 'hostname' must be a string"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     trimmed = raw.strip().lower()
     if not trimmed:
-        msg = "manual host: 'hostname' must not be empty"
+        msg = f"{context}: 'hostname' must not be empty"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     if len(trimmed) > _HOSTNAME_MAX_CHARS:
-        msg = f"manual host: 'hostname' must be at most {_HOSTNAME_MAX_CHARS} characters"
+        msg = f"{context}: 'hostname' must be at most {_HOSTNAME_MAX_CHARS} characters"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     # The ``port=80, path="/"`` are sentinels for the build call
     # — only the host arg is being validated. yarl's host parser
@@ -277,7 +353,7 @@ def _validate_hostname(raw: object) -> str:
     try:
         URL.build(scheme="ws", host=trimmed, port=80, path="/")
     except ValueError as exc:
-        msg = f"manual host: 'hostname' is not a valid host: {exc}"
+        msg = f"{context}: 'hostname' is not a valid host: {exc}"
         raise CommandError(ErrorCode.INVALID_ARGS, msg) from exc
     return trimmed
 
@@ -314,6 +390,23 @@ def _peer_summary(peer: StoredPeer) -> PeerSummary:
     )
 
 
+def _pairing_summary(pairing: StoredPairing) -> PairingSummary:
+    """Project a :class:`StoredPairing` to wire :class:`PairingSummary`.
+
+    Mirror of :func:`_peer_summary` for the offloader side.
+    Drops the raw ``static_x25519_pub`` bytes; the rest is
+    safe to send to the frontend.
+    """
+    return PairingSummary(
+        receiver_hostname=pairing.receiver_hostname,
+        receiver_port=pairing.receiver_port,
+        pin_sha256=pairing.pin_sha256,
+        label=pairing.label,
+        paired_at=pairing.paired_at,
+        status=pairing.status,
+    )
+
+
 def _find_peer_by_dashboard_id(
     settings: RemoteBuildSettings, dashboard_id: str
 ) -> StoredPeer | None:
@@ -329,6 +422,175 @@ def _find_peer_by_dashboard_id(
     for any production-realistic peer count.
     """
     return next((peer for peer in settings.peers if peer.dashboard_id == dashboard_id), None)
+
+
+_PIN_SHA256_LEN = 64  # 32-byte SHA-256 → 64 lowercase-hex chars
+_PAIR_LABEL_MAX_CHARS = 128  # mirrors :data:`_PEER_LABEL_MAX_CHARS` on the receiver
+
+
+def _validate_pin_sha256(raw: object) -> str:
+    """Validate a wire ``pin_sha256`` value as 64 lowercase-hex chars.
+
+    Same alphabet and length the storage seam enforces in
+    :class:`StoredPairing` (and the receiver's :class:`StoredPeer`),
+    just at the WS-command boundary so a bad pin gets rejected as
+    ``INVALID_ARGS`` before the offloader opens a Noise WS only to
+    fail the TOCTOU check post-handshake.
+    """
+    if not isinstance(raw, str):
+        msg = "pin_sha256 must be a string"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    cleaned = raw.strip()
+    if (
+        len(cleaned) != _PIN_SHA256_LEN
+        or not cleaned.isascii()
+        or any(c not in "0123456789abcdef" for c in cleaned)
+    ):
+        msg = f"pin_sha256 must be {_PIN_SHA256_LEN} lowercase-hex characters"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    return cleaned
+
+
+def _validate_pair_label(raw: object, *, field: _PairLabelField) -> str:
+    """Validate a user-supplied pair-flow label.
+
+    Capped at 128 chars to match
+    :data:`controllers.remote_build_peer_link._PEER_LABEL_MAX_CHARS`
+    (the receiver's truncation cap on the same field), so a
+    label that round-trips through pair_request lands in both
+    sides' tables with identical content. Empty labels are
+    allowed; the user may legitimately not name the receiver
+    yet, and the frontend can render a placeholder.
+
+    Rejects strings containing C0 / C1 control chars (incl. null
+    bytes, ANSI escapes, newlines, DEL) via :meth:`str.isprintable`.
+    The ``offloader_label`` transits to the receiver-side admin
+    UI's pairing-requests inbox; refusing control chars here is
+    defense-in-depth against ANSI / bidi-override / null-byte
+    injection attacks against an admin terminal or log reader
+    (the load-bearing fix is on the receiver side, but symmetric
+    rejection here catches honest typos and a future
+    direct-driver caller that bypasses the receiver's normaliser).
+    Non-ASCII printables (CJK, accented Latin, emoji) pass —
+    :meth:`str.isprintable` only excludes the C0/C1 control sets
+    plus surrogates, which is the right cut for a name field.
+
+    *field* names the failing arg in the diagnostic via
+    :class:`_PairLabelField` so the frontend can pin the inline
+    error to the right input.
+    """
+    if not isinstance(raw, str):
+        msg = f"{field} must be a string"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    cleaned = raw.strip()
+    if len(cleaned) > _PAIR_LABEL_MAX_CHARS:
+        msg = f"{field} must be at most {_PAIR_LABEL_MAX_CHARS} characters"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    if not cleaned.isprintable():
+        msg = f"{field} must contain only printable characters"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    return cleaned
+
+
+# Maps non-success ``IntentResponse`` values from a peer-link
+# round-trip to the typed :class:`CommandError` the frontend
+# branches on. Used by ``request_pair`` (part 3) and
+# ``list_pool``'s pair_status polling (part 4); shared so both
+# WS commands surface receiver decisions through the same wire
+# error codes.
+_INTENT_RESPONSE_ERRORS: dict[IntentResponse, tuple[ErrorCode, str]] = {
+    IntentResponse.NO_PAIRING_WINDOW: (
+        ErrorCode.NO_PAIRING_WINDOW,
+        "receiver pairing window closed; ask the receiver-side admin to "
+        "open Settings → Build server → Pairing requests, then retry",
+    ),
+    IntentResponse.REJECTED: (
+        ErrorCode.PRECONDITION_FAILED,
+        "receiver declined the pair request",
+    ),
+}
+
+
+def _intent_response_to_command_error(status: IntentResponse) -> CommandError | None:
+    """Translate a non-success ``IntentResponse`` to a typed ``CommandError``.
+
+    Returns ``None`` for the success values
+    (``OK``, ``PENDING``, ``APPROVED``); the caller branches on
+    those for persistence. Returns a fresh ``CommandError`` (not
+    yet raised) for ``REJECTED`` / ``NO_PAIRING_WINDOW`` so the
+    caller can decide whether to attach extra context before
+    raising.
+    """
+    pair = _INTENT_RESPONSE_ERRORS.get(status)
+    if pair is None:
+        return None
+    code, msg = pair
+    return CommandError(code, msg)
+
+
+def _enforce_pin_match(*, expected: str, observed: str) -> None:
+    """Raise ``CommandError(PRECONDITION_FAILED)`` on a TOCTOU pin drift.
+
+    The offloader's ``request_pair`` (and any future
+    pin-pinned re-handshake) compares the pin the user
+    OOB-confirmed during ``preview_pair`` against the actual
+    pubkey from the live handshake. A mismatch means the
+    receiver rotated identity (or a MITM intervened) between
+    preview and request; the offloader bails before persisting
+    the row so a fresh preview round-trip is required.
+
+    The error message carries both pins in full (no
+    truncation) so the user can do a side-by-side OOB
+    comparison against the receiver's "Build server"
+    Settings card and tell which end's pin changed.
+    Truncating the displayed pin would shrink the log volume
+    but at the cost of letting an attacker who deliberately
+    collides a 16-char prefix slip the mismatch past a
+    quick visual scan; the human OOB check is the
+    load-bearing security property, so full digest wins.
+    """
+    # Plain ``==`` is fine here: the pin is a SHA-256 of a public
+    # key, broadcast in mDNS and rendered in the receiver's UI.
+    # There's no secret to leak via timing; constant-time
+    # comparison would be defending nothing.
+    if expected == observed:
+        return
+    msg = f"receiver pin changed since preview; expected {expected}, got {observed}"
+    raise CommandError(ErrorCode.PRECONDITION_FAILED, msg)
+
+
+def _upsert_pairing(settings: OffloaderRemoteBuildSettings, pairing: StoredPairing) -> None:
+    """Replace any existing row for ``(receiver_hostname, receiver_port)``.
+
+    Re-pair from the same offloader to the same receiver should
+    overwrite, not duplicate; the user's intent is "pair me
+    with this receiver again" not "give me two rows pointing
+    at the same place." Used by ``request_pair`` (part 3); a
+    future ``list_pool`` (part 4) status refresh can reuse the
+    same shape when the receiver's response flips a row's
+    status.
+
+    Security note: an upsert against an existing ``(host, port)``
+    silently replaces the stored ``pin_sha256`` and
+    ``static_x25519_pub`` even when they differ from the prior
+    row. The OOB pin check the user performs during
+    ``preview_pair`` is the load-bearing defense against an
+    attacker spoofing the receiver's address; if the user is
+    socially engineered into approving a different pin, the
+    legitimate row is overwritten without an audit trail. A
+    future hardening could require an explicit ``unpair`` step
+    before re-pairing to a different identity at the same
+    address; out of scope here.
+    """
+    settings.pairings = [
+        p
+        for p in settings.pairings
+        if not (
+            p.receiver_hostname == pairing.receiver_hostname
+            and p.receiver_port == pairing.receiver_port
+        )
+    ]
+    settings.pairings.append(pairing)
 
 
 def _validate_dashboard_id(raw: object) -> str:
@@ -360,7 +622,9 @@ def _validate_dashboard_id(raw: object) -> str:
     return cleaned
 
 
-def _validate_port(raw: object) -> int:
+def _validate_port(
+    raw: object, *, context: _HostFieldContext = _HostFieldContext.MANUAL_HOST
+) -> int:
     """
     Validate a user-entered port number.
 
@@ -369,12 +633,16 @@ def _validate_port(raw: object) -> int:
     (silently coerces to 1, which IANA reserves for tcpmux).
     Range is the IANA-registered ephemeral plus
     well-known: 1-65535.
+
+    *context* prefixes every error message; see
+    :class:`_HostFieldContext` for the rationale and the
+    list of valid prefixes.
     """
     if isinstance(raw, bool) or not isinstance(raw, int):
-        msg = "manual host: 'port' must be an integer"
+        msg = f"{context}: 'port' must be an integer"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     if not 1 <= raw <= 65535:
-        msg = "manual host: 'port' must be between 1 and 65535"
+        msg = f"{context}: 'port' must be between 1 and 65535"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     return raw
 
@@ -755,8 +1023,8 @@ class RemoteBuildController:
             timeout, malformed Noise frame, mismatched
             ``intent_response``).
         """
-        clean_host = _validate_hostname(hostname)
-        clean_port = _validate_port(port)
+        clean_host = _validate_hostname(hostname, context=_HostFieldContext.RECEIVER)
+        clean_port = _validate_port(port, context=_HostFieldContext.RECEIVER)
         loop = asyncio.get_running_loop()
         identity = await loop.run_in_executor(
             None,
@@ -772,6 +1040,151 @@ class RemoteBuildController:
         except PeerLinkClientError as exc:
             raise CommandError(ErrorCode.UNAVAILABLE, str(exc)) from exc
         return {"pin_sha256": pin}
+
+    @api_command("remote_build/request_pair")
+    async def request_pair(
+        self,
+        *,
+        hostname: str,
+        port: int,
+        pin_sha256: str,
+        receiver_label: str,
+        offloader_label: str,
+        **kwargs: Any,
+    ) -> PairingSummary:
+        """Open a Noise XX WS, send ``intent="pair_request"``, persist a local row.
+
+        The offloader's second handshake with a receiver, after
+        the user has OOB-confirmed the receiver's pin via
+        :meth:`preview_pair`. Sends ``{"label":
+        offloader_label, "dashboard_id": <ours>}`` in the
+        encrypted msg3 payload; the receiver's response decides
+        what state the local :class:`StoredPairing` row lands
+        in.
+
+        Two distinct labels because the offloader-side and
+        receiver-side rows mean different things:
+
+        * *receiver_label* — what the offloader's user calls the
+          receiver in their own settings UI (e.g. "desktop").
+          Persisted to ``StoredPairing.label``; never sent to
+          the receiver.
+        * *offloader_label* — what the offloader-side user
+          identifies *itself* as so the receiver-side admin's
+          Pairing requests inbox shows a friendly name (e.g.
+          "green-laptop"). Sent to the receiver in the
+          encrypted msg3 payload; the receiver's
+          ``record_pair_request`` lands it in
+          ``StoredPeer.label``. Never persisted on the
+          offloader side.
+
+        TOCTOU defense: the *pin_sha256* arg is the value the
+        user OOB-confirmed in preview; the live handshake
+        captures the receiver's actual pubkey. If the two don't
+        match — receiver rotated identity between preview and
+        request, or an active MITM intervened — the call
+        rejects with ``PRECONDITION_FAILED`` and persists
+        nothing. The offloader's frontend should re-run
+        preview before retrying.
+
+        Args:
+            hostname: Receiver's hostname (validated /
+                normalised by :func:`_validate_hostname`;
+                yarl-correct).
+            port: Receiver's peer-link port (1-65535).
+            pin_sha256: Lowercase-hex SHA-256 of the receiver's
+                X25519 pubkey, captured + OOB-verified during
+                ``preview_pair``.
+            receiver_label: Offloader-side display name for the
+                receiver (stored locally only).
+            offloader_label: Offloader-side self-identification
+                label (sent to the receiver, stored receiver-
+                side).
+
+        Returns:
+            :class:`PairingSummary` for the newly-created or
+            refreshed :class:`StoredPairing` row, with
+            ``status`` = ``PENDING`` (typical) or ``APPROVED``
+            (re-pair against a row the receiver already
+            approved).
+
+        Raises:
+            :class:`CommandError(INVALID_ARGS)` for bad inputs
+                (host / port / pin / label shape).
+            :class:`CommandError(UNAVAILABLE)` for transport,
+                handshake, or decode failures.
+            :class:`CommandError(PRECONDITION_FAILED)` for
+                pin mismatch (TOCTOU) or receiver-side
+                ``REJECTED`` (admin declined).
+            :class:`CommandError(NO_PAIRING_WINDOW)` when the
+                receiver returns ``no_pairing_window`` —
+                frontend prompts the user to ask the
+                receiver-side admin to open the Pairing
+                requests screen.
+        """
+        clean_host = _validate_hostname(hostname, context=_HostFieldContext.RECEIVER)
+        clean_port = _validate_port(port, context=_HostFieldContext.RECEIVER)
+        clean_pin = _validate_pin_sha256(pin_sha256)
+        clean_receiver_label = _validate_pair_label(
+            receiver_label, field=_PairLabelField.RECEIVER_LABEL
+        )
+        clean_offloader_label = _validate_pair_label(
+            offloader_label, field=_PairLabelField.OFFLOADER_LABEL
+        )
+        loop = asyncio.get_running_loop()
+        peer_link_identity, dashboard_identity = await loop.run_in_executor(
+            None, _load_offloader_identities, self._db.settings.config_dir
+        )
+
+        try:
+            result = await peer_link_request_pair(
+                hostname=clean_host,
+                port=clean_port,
+                identity_priv=peer_link_identity.private_bytes,
+                label=clean_offloader_label,
+                dashboard_id=dashboard_identity.dashboard_id,
+            )
+        except PeerLinkClientError as exc:
+            raise CommandError(ErrorCode.UNAVAILABLE, str(exc)) from exc
+
+        _enforce_pin_match(expected=clean_pin, observed=result.pin_sha256)
+        if (err := _intent_response_to_command_error(result.status)) is not None:
+            raise err
+        if result.status not in (IntentResponse.PENDING, IntentResponse.APPROVED):
+            msg = f"unexpected receiver intent_response={result.status.value!r}"
+            raise CommandError(ErrorCode.INTERNAL_ERROR, msg)
+
+        # APPROVED happens when this offloader paired with the same
+        # receiver previously and the receiver-side row is still
+        # APPROVED — the receiver short-circuits the inbox dance.
+        # ``paired_at`` reflects this re-pair attempt (last-touch
+        # semantic), not the original first-pair time. ``_upsert_pairing``
+        # below replaces the row wholesale, so any earlier ``paired_at``
+        # is overwritten. That's right for the inbox-sort use case
+        # (most recent on top) but a future "first paired on" UI would
+        # need a separate ``first_paired_at`` field.
+        pairing = StoredPairing(
+            receiver_hostname=clean_host,
+            receiver_port=clean_port,
+            pin_sha256=result.pin_sha256,
+            static_x25519_pub=result.remote_static_pub,
+            label=clean_receiver_label,
+            paired_at=time.time(),
+            status=(
+                PeerStatus.APPROVED
+                if result.status is IntentResponse.APPROVED
+                else PeerStatus.PENDING
+            ),
+        )
+
+        def _persist() -> None:
+            with offloader_remote_build_settings_transaction(
+                self._db.settings.config_dir
+            ) as settings:
+                _upsert_pairing(settings, pairing)
+
+        await loop.run_in_executor(None, _persist)
+        return _pairing_summary(pairing)
 
     # ------------------------------------------------------------------
     # Identity (phase 3c1) — surface the receiver's own dashboard_id +
