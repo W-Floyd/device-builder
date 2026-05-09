@@ -1,38 +1,43 @@
 """
-Remote-build feature; peer dashboard discovery + settings + tokens.
+Remote-build feature; peer dashboard discovery + pairing + peers.
 
 Browses ``_esphomebuilder._tcp.local.`` to list other dashboards
 reachable on the LAN; persists the receiver-side ``enabled``
 master switch, the user-supplied manual-host list for
-cross-subnet / non-multicast LANs, and the receiver-issued
-bearer-token list; merges discovery sources into a single
+cross-subnet / non-multicast LANs, and the paired-peer list;
+merges discovery sources into a single
 ``remote_build/list_hosts`` snapshot.
 
-The ``enabled`` flag gates the HTTPS receiver site
-:class:`DeviceBuilder` binds at startup (``/remote-build/v1/*``,
-default port 6055). Toggling ``enabled`` at runtime persists
-the new value but does NOT live-bind / unbind the listener;
-flipping it requires a dashboard restart for the listener
-state to follow. The 3c Settings UI surfaces this constraint;
-a future PR can wire the start / stop hooks if interactive
-toggling matters.
+The ``enabled`` flag gates the peer-link Noise WS listener
+:class:`DeviceBuilder` binds at startup
+(``/remote-build/peer-link``, default port 6055). Toggling
+``enabled`` at runtime persists the new value but does NOT
+live-bind / unbind the listener; flipping it requires a
+dashboard restart for the listener state to follow. The 3c
+Settings UI surfaces this constraint; a future PR can wire
+the start / stop hooks if interactive toggling matters.
 
-Tokens are validated by the auth middleware on that site
-against an in-memory index seeded from disk in :meth:`start`
-and refreshed on every CRUD mutation. **The frontend
-generates the bearer (token_id + secret) client-side** and
-submits only ``SHA-256(secret)`` to the backend; the
-cleartext bearer never crosses the wire from frontend to
-dashboard. This closes the leak that would otherwise occur
-when the dashboard is reachable on plain HTTP (standalone
-``--host 0.0.0.0`` without a reverse-proxy TLS terminator).
-Only the hash lands on disk; if the user loses the cleartext,
-the recovery is to remove the token and register a fresh one.
+Pairing model (phase 4a-r1):
 
-Pairing flow + peer-link WS arrive in later phases. The
-listener currently serves only ``/remote-build/v1/health`` as
-a smoke endpoint; phase 5+ adds the real bundle / build /
-firmware RPCs against the same auth surface.
+* Receiver-side state is a list of :class:`StoredPeer` rows
+  keyed on ``dashboard_id``, with X25519 ``pin_sha256`` +
+  ``static_x25519_pub`` derived from the offloader's peer-link
+  Noise handshake transcript.
+* Approval is a two-step gate: the offloader's first
+  ``pair_request`` lands a ``PENDING`` row inside the
+  receiver-controlled "pairing window"; the receiver UI
+  shows the row in the inbox and the user clicks
+  Accept, which calls the ``remote_build/approve_peer`` WS
+  command → :meth:`RemoteBuildController.approve_peer` (the
+  per-row counterpart to :meth:`record_pair_request`).
+* Approved peers can then run ``intent="peer_link"`` against
+  the same ``/remote-build/peer-link`` endpoint without
+  re-prompting the receiver-side user.
+
+Bearer-token machinery from the abandoned phase-4a (HTTPS +
+``/remote-build/v1/*`` receiver site) was rewound in #449 and
+the dormant pieces will be torn out in the planned phase 4a-r2
+follow-up; see issue #106.
 
 Manual hosts have no version / fingerprint resolution yet;
 they land in ``list_hosts`` with empty ``server_version`` /
@@ -54,7 +59,8 @@ import logging
 import re
 import time
 from collections.abc import Callable, Hashable
-from typing import TYPE_CHECKING, Any
+from dataclasses import dataclass as _dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 from esphome.const import __version__ as esphome_version
 from zeroconf import IPVersion, ServiceStateChange
@@ -73,10 +79,14 @@ from ..models import (
     ErrorCode,
     EventType,
     IdentityView,
+    IntentResponse,
     ManualHost,
     PairingWindowState,
     PeerStatus,
     PeerSummary,
+    RemoteBuildPairingWindowChangedData,
+    RemoteBuildPairRequestReceivedData,
+    RemoteBuildPairStatusChangedData,
     RemoteBuildPeer,
     RemoteBuildPeerSource,
     RemoteBuildSettings,
@@ -112,6 +122,24 @@ _RESOLVE_TIMEOUT_MS = 3000
 # pin without rushing" against "short enough that an idle tab
 # isn't an attack surface". See issue #106 design choice (c).
 _PAIRING_WINDOW_DURATION_SECONDS = 300.0
+
+
+@_dataclass
+class _PairRequestOutcome:
+    """
+    Out-param for ``record_pair_request``'s settings mutator.
+
+    The mutator runs inside a sync transaction (``_modify_settings``
+    drives it on the disk-write hop) and needs to communicate back
+    to the async caller whether the row was created / refreshed /
+    already-APPROVED / pin-mismatched. A dataclass beats a
+    ``nonlocal`` because the data flow is explicit at the call
+    site — a reader can grep for ``_PairRequestOutcome`` and find
+    the contract — and future fields (an event payload, metrics)
+    can be added without nonlocal-ing each new variable.
+    """
+
+    response: IntentResponse | None = None
 
 
 def _decode_txt_value(raw: bytes | None) -> str:
@@ -398,6 +426,23 @@ def _peer_summary(peer: StoredPeer) -> PeerSummary:
         paired_at=peer.paired_at,
         status=peer.status,
     )
+
+
+def _find_peer_by_dashboard_id(
+    settings: RemoteBuildSettings, dashboard_id: str
+) -> StoredPeer | None:
+    """Return the first :class:`StoredPeer` with this ``dashboard_id``, or ``None``.
+
+    Single-pass linear scan; ``dashboard_id`` is the table's
+    de-facto primary key (the receiver-UI WS commands key on it,
+    the peer-link dispatcher keys on it, the offloader's polling
+    loop keys on it) so a name-keyed index would just duplicate
+    state. The peer table is small (one row per paired offloader),
+    so the scan cost is fine and the convention "shape stays
+    list-of-dataclasses on disk" outweighs the O(N) -> O(1) win
+    for any production-realistic peer count.
+    """
+    return next((peer for peer in settings.peers if peer.dashboard_id == dashboard_id), None)
 
 
 def _validate_dashboard_id(raw: object) -> str:
@@ -1119,15 +1164,14 @@ class RemoteBuildController:
         clean_id = _validate_dashboard_id(dashboard_id)
 
         def _approve(settings: RemoteBuildSettings) -> None:
-            for peer in settings.peers:
-                if peer.dashboard_id == clean_id:
-                    if peer.status == PeerStatus.APPROVED:
-                        msg = f"peer is already approved: {clean_id}"
-                        raise CommandError(ErrorCode.INVALID_ARGS, msg)
-                    peer.status = PeerStatus.APPROVED
-                    return
-            msg = f"no peer with dashboard_id: {clean_id}"
-            raise CommandError(ErrorCode.NOT_FOUND, msg)
+            peer = _find_peer_by_dashboard_id(settings, clean_id)
+            if peer is None:
+                msg = f"no peer with dashboard_id: {clean_id}"
+                raise CommandError(ErrorCode.NOT_FOUND, msg)
+            if peer.status == PeerStatus.APPROVED:
+                msg = f"peer is already approved: {clean_id}"
+                raise CommandError(ErrorCode.INVALID_ARGS, msg)
+            peer.status = PeerStatus.APPROVED
 
         view = await self._modify_settings(_approve)
         self._fire_pair_status_changed(clean_id, "approved")
@@ -1160,20 +1204,213 @@ class RemoteBuildController:
 
         def _remove(settings: RemoteBuildSettings) -> None:
             nonlocal previous_status
-            for peer in settings.peers:
-                if peer.dashboard_id == clean_id:
-                    previous_status = peer.status
-                    break
-            kept = [peer for peer in settings.peers if peer.dashboard_id != clean_id]
-            if len(kept) == len(settings.peers):
+            peer = _find_peer_by_dashboard_id(settings, clean_id)
+            if peer is None:
                 msg = f"no peer with dashboard_id: {clean_id}"
                 raise CommandError(ErrorCode.NOT_FOUND, msg)
-            settings.peers = kept
+            previous_status = peer.status
+            settings.peers = [p for p in settings.peers if p.dashboard_id != clean_id]
 
         view = await self._modify_settings(_remove)
         if previous_status == PeerStatus.APPROVED:
             self._fire_pair_status_changed(clean_id, "removed")
         return view
+
+    # ------------------------------------------------------------------
+    # Peer-link Noise WS dispatch helpers (phase 4a-r1 part 4) — called
+    # by the post-handshake intent dispatcher in
+    # :mod:`controllers.remote_build_peer_link`. These methods own the
+    # storage / event-firing side; the dispatcher owns the wire side.
+    # ------------------------------------------------------------------
+
+    async def record_pair_request(
+        self,
+        *,
+        dashboard_id: str,
+        pin_sha256: str,
+        static_x25519_pub: bytes,
+        label: str,
+        peer_ip: str,
+    ) -> IntentResponse:
+        """
+        Process an ``intent="pair_request"`` Noise session.
+
+        Caller is expected to have already gated on
+        :meth:`is_pairing_window_open` — this method does NOT
+        re-check, so a window-closed dispatch should never reach
+        here.
+
+        Returns:
+        * :attr:`IntentResponse.PENDING` — created a new
+          ``StoredPeer`` (or refreshed an existing PENDING row's
+          pin / label / paired_at). Fires
+          :attr:`EventType.REMOTE_BUILD_PAIR_REQUEST_RECEIVED` so
+          the receiver UI surfaces the request in the inbox.
+        * :attr:`IntentResponse.APPROVED` — a row already exists
+          for this ``dashboard_id`` with status APPROVED **and**
+          its stored pin matches the handshake's. Returns
+          ``APPROVED`` without changing the row or firing the
+          event; demoting an already-trusted peer back to PENDING
+          on every stray pair_request would force the receiving
+          dashboard's user to re-approve on every offloader
+          hiccup, which is hostile UX.
+        * :attr:`IntentResponse.REJECTED` — a row exists for this
+          ``dashboard_id`` with status APPROVED but the
+          handshake's pin doesn't match the stored pin. Either
+          the offloader rotated their identity under us, or
+          someone is presenting a fresh keypair and claiming
+          Alice's ``dashboard_id``. Refuse the operation; the
+          receiver-side user has to remove the peer and re-pair
+          if the rotation is legitimate.
+        """
+        outcome = _PairRequestOutcome()
+
+        def _record(settings: RemoteBuildSettings) -> None:
+            now = time.time()
+            peer = _find_peer_by_dashboard_id(settings, dashboard_id)
+            if peer is None:
+                settings.peers.append(
+                    StoredPeer(
+                        dashboard_id=dashboard_id,
+                        pin_sha256=pin_sha256,
+                        static_x25519_pub=static_x25519_pub,
+                        label=label,
+                        paired_at=now,
+                        status=PeerStatus.PENDING,
+                    )
+                )
+                outcome.response = IntentResponse.PENDING
+                return
+            if peer.status == PeerStatus.APPROVED:
+                if peer.pin_sha256 != pin_sha256:
+                    # Pin mismatch on an APPROVED row is a
+                    # rotation-or-impersonation signal; refuse
+                    # rather than silently re-approve under the
+                    # new identity.
+                    outcome.response = IntentResponse.REJECTED
+                    return
+                outcome.response = IntentResponse.APPROVED
+                return
+            # PENDING: refresh in place. The pin / pubkey may
+            # have changed (offloader rotated), the label may
+            # have changed (user renamed the dashboard before
+            # they clicked Accept). Keep the row's status =
+            # PENDING; the user re-Accepts when ready.
+            peer.refresh_from_pair_request(
+                pin_sha256=pin_sha256,
+                static_x25519_pub=static_x25519_pub,
+                label=label,
+                paired_at=now,
+            )
+            outcome.response = IntentResponse.PENDING
+
+        await self._modify_settings(_record)
+        # Every branch of ``_record`` sets ``outcome.response``;
+        # the type narrowing is for mypy / pyright only, gated
+        # behind ``TYPE_CHECKING`` so it costs nothing at runtime.
+        if TYPE_CHECKING:
+            assert outcome.response is not None
+        if outcome.response is not IntentResponse.PENDING:
+            return outcome.response
+
+        payload: RemoteBuildPairRequestReceivedData = {
+            "dashboard_id": dashboard_id,
+            "pin_sha256": pin_sha256,
+            "label": label,
+            "peer_ip": peer_ip,
+        }
+        self._db.bus.fire(EventType.REMOTE_BUILD_PAIR_REQUEST_RECEIVED, payload)
+        return outcome.response
+
+    async def lookup_peer_for_session(
+        self,
+        *,
+        dashboard_id: str,
+        pin_sha256: str,
+    ) -> IntentResponse:
+        """
+        Resolve an ``intent="peer_link"`` request.
+
+        Returns:
+        * :attr:`IntentResponse.OK` — peer is APPROVED and the
+          handshake's pubkey hash matches the stored
+          ``pin_sha256``. Caller can keep the WS open for
+          application messages (phase 5+).
+        * :attr:`IntentResponse.PENDING` — peer's row exists but
+          status is PENDING (the receiver-side user hasn't
+          clicked Accept yet). Offloader's UI keeps polling.
+        * :attr:`IntentResponse.REJECTED` — no row matches OR the
+          row's stored ``pin_sha256`` doesn't match the
+          handshake's. Either the offloader has never paired
+          (unknown), or the offloader's peer-link identity
+          rotated under us, or someone is claiming Alice's
+          ``dashboard_id`` with their own keys. The offloader
+          treats this as "send a fresh pair_request".
+        """
+        return await self._lookup_peer_response(
+            dashboard_id=dashboard_id,
+            pin_sha256=pin_sha256,
+            approved_response=IntentResponse.OK,
+        )
+
+    async def lookup_peer_for_status(
+        self,
+        *,
+        dashboard_id: str,
+        pin_sha256: str,
+    ) -> IntentResponse:
+        """
+        Resolve an ``intent="pair_status"`` poll query.
+
+        Returns:
+        * :attr:`IntentResponse.APPROVED` — peer is APPROVED.
+        * :attr:`IntentResponse.PENDING` — peer's row exists but
+          status is PENDING.
+        * :attr:`IntentResponse.REJECTED` — no row matches OR pin
+          mismatch. Caller's frontend interprets this as "the row
+          was rejected / revoked / never existed; surface
+          ``peer_revoked`` UI".
+
+        Differs from :meth:`lookup_peer_for_session` only in the
+        APPROVED-state wire member (``APPROVED`` vs ``OK``) because
+        pair_status is informational while peer_link is
+        connection-establishing.
+        """
+        return await self._lookup_peer_response(
+            dashboard_id=dashboard_id,
+            pin_sha256=pin_sha256,
+            approved_response=IntentResponse.APPROVED,
+        )
+
+    async def _lookup_peer_response(
+        self,
+        *,
+        dashboard_id: str,
+        pin_sha256: str,
+        approved_response: IntentResponse,
+    ) -> IntentResponse:
+        """
+        Shared lookup core for the peer_link / pair_status WS dispatch paths.
+
+        Both wire intents do the same lookup ("find this
+        ``dashboard_id`` and verify its stored pin matches the
+        handshake's") and differ only in what they return for an
+        APPROVED match. Pulling that one variation out as
+        ``approved_response`` keeps the logic in one place; a
+        future change (e.g. constant-time pin compare, log
+        mismatches, fire a pin-mismatch event) lands on one
+        method, not two.
+        """
+        loop = asyncio.get_running_loop()
+        settings = await loop.run_in_executor(
+            None, load_remote_build_settings, self._db.settings.config_dir
+        )
+        peer = _find_peer_by_dashboard_id(settings, dashboard_id)
+        if peer is None or peer.pin_sha256 != pin_sha256:
+            return IntentResponse.REJECTED
+        if peer.status == PeerStatus.APPROVED:
+            return approved_response
+        return IntentResponse.PENDING
 
     # ------------------------------------------------------------------
     # Pairing window (phase 4a-r1 part 3) — in-process deadline that
@@ -1290,7 +1527,9 @@ class RemoteBuildController:
             return PairingWindowState(open=False, expires_in_seconds=None)
         return PairingWindowState(open=True, expires_in_seconds=remaining)
 
-    def _fire_pair_status_changed(self, dashboard_id: str, status: str) -> None:
+    def _fire_pair_status_changed(
+        self, dashboard_id: str, status: Literal["approved", "removed"]
+    ) -> None:
         """
         Fire ``REMOTE_BUILD_PAIR_STATUS_CHANGED`` for a peer transition.
 
@@ -1300,18 +1539,20 @@ class RemoteBuildController:
         for shape; both methods are the named-intent boundary
         between controller logic and the bus payload format.
         """
-        self._db.bus.fire(
-            EventType.REMOTE_BUILD_PAIR_STATUS_CHANGED,
-            {"dashboard_id": dashboard_id, "status": status},
-        )
+        payload: RemoteBuildPairStatusChangedData = {
+            "dashboard_id": dashboard_id,
+            "status": status,
+        }
+        self._db.bus.fire(EventType.REMOTE_BUILD_PAIR_STATUS_CHANGED, payload)
 
     def _fire_pairing_window_changed(self) -> None:
         """Fire ``REMOTE_BUILD_PAIRING_WINDOW_CHANGED`` with the current state."""
         state = self._pairing_window_state()
-        self._db.bus.fire(
-            EventType.REMOTE_BUILD_PAIRING_WINDOW_CHANGED,
-            {"open": state.open, "expires_in_seconds": state.expires_in_seconds},
-        )
+        payload: RemoteBuildPairingWindowChangedData = {
+            "open": state.open,
+            "expires_in_seconds": state.expires_in_seconds,
+        }
+        self._db.bus.fire(EventType.REMOTE_BUILD_PAIRING_WINDOW_CHANGED, payload)
 
     def _prune_stale_pairing_window_clients(self) -> None:
         """Drop client entries whose last-extend timestamp aged out."""
