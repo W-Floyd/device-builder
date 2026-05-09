@@ -16,7 +16,7 @@ from collections.abc import Awaitable, Callable
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from .helpers.peer_link_identity import PeerLinkIdentity
@@ -959,7 +959,14 @@ class DeviceBuilder:
         # lives on the started server socket.
         port = configured_port
         if configured_port == 0 and site._server is not None:
-            sockets = site._server.sockets
+            # typeshed's ``asyncio.AbstractServer`` doesn't expose
+            # ``sockets`` even though the concrete ``base_events.Server``
+            # does — the asyncio docs list it as part of the public
+            # contract on the returned server object. Cast at the
+            # access boundary; the alternative (``getattr`` + None
+            # checks) would obscure what's actually a stable
+            # documented attribute.
+            sockets = cast("asyncio.base_events.Server", site._server).sockets
             if sockets:
                 port = sockets[0].getsockname()[1]
         return runner, identity, port
