@@ -20,6 +20,19 @@ class ErrorCode(StrEnum):
     INTERNAL_ERROR = "internal_error"
     NOT_AUTHENTICATED = "not_authenticated"
     RATE_LIMITED = "rate_limited"
+    # Phase 4a additions, used by the offloader-side pair flow.
+    # ``UNAVAILABLE`` means we couldn't reach a *remote* dashboard
+    # (TLS handshake failed, host refused, timed out); distinct
+    # from INTERNAL_ERROR, which means *this* dashboard hit
+    # something unexpected. ``UNAUTHORIZED`` means a *remote*
+    # dashboard rejected our bearer — distinct from
+    # NOT_AUTHENTICATED, which is about the client's WS auth to
+    # this dashboard. ``PRECONDITION_FAILED`` covers the cert-pin
+    # mismatch at confirm-pair (the pin was valid at preview but
+    # changed before we re-handshook).
+    UNAVAILABLE = "unavailable"
+    UNAUTHORIZED = "unauthorized"
+    PRECONDITION_FAILED = "precondition_failed"
 
 
 @dataclass

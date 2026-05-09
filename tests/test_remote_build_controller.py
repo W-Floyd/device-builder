@@ -32,11 +32,19 @@ from esphome_device_builder.controllers.remote_build import (
     _decode_txt_value,
     _peer_from_manual_host,
     _peer_from_service_info,
+    _summarise_pairing,
     _validate_hostname,
+    _validate_optional_version,
+    _validate_pin_sha256,
     _validate_port,
+    _validate_token_cleartext,
 )
 from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.helpers.dashboard_advertise import SERVICE_TYPE
+from esphome_device_builder.helpers.remote_build_pairing import (
+    PairingHealthResult,
+    PinMismatchError,
+)
 from esphome_device_builder.models import (
     ErrorCode,
     EventType,
@@ -45,6 +53,7 @@ from esphome_device_builder.models import (
     RemoteBuildPeer,
     RemoteBuildPeerSource,
     RemoteBuildSettingsView,
+    StoredPairing,
     StoredToken,
     TokenSummary,
 )
@@ -1562,3 +1571,390 @@ async def test_rotate_identity_clears_in_flight_flag_on_failure(tmp_path: Path) 
     # Flag must be back to False; otherwise every subsequent
     # rotate attempt would 409 forever.
     assert controller._rotation_in_flight is False
+
+
+# ---------------------------------------------------------------------------
+# Phase 4a — pairing storage + WS commands
+# ---------------------------------------------------------------------------
+
+
+def _good_pin() -> str:
+    """Return a valid 64-char lowercase-hex pin_sha256 for tests."""
+    return "a" * 64
+
+
+def _good_token() -> str:
+    """Return a wire-shape token (id.secret) acceptable to _validate_token_cleartext."""
+    return f"{'a' * 11}.{'b' * 43}"
+
+
+def test_validate_pin_sha256_accepts_valid_value() -> None:
+
+    assert _validate_pin_sha256(_good_pin()) == _good_pin()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "A" * 64,  # uppercase rejected — would silently bake mismatch into storage
+        "a" * 63,
+        "a" * 65,
+        "a" * 63 + "Z",
+        "a" * 63 + ":",
+    ],
+)
+def test_validate_pin_sha256_rejects_bad_shape(raw: object) -> None:
+
+    with pytest.raises(CommandError) as exc:
+        _validate_pin_sha256(raw)
+    assert exc.value.code == ErrorCode.INVALID_ARGS
+
+
+def test_validate_token_cleartext_accepts_wire_shape() -> None:
+
+    assert _validate_token_cleartext(_good_token()) == _good_token()
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None,
+        "",
+        "   ",
+        "no-separator-here",
+        # Over the 256-char ceiling
+        "a" * 257,
+    ],
+)
+def test_validate_token_cleartext_rejects_bad_shape(raw: object) -> None:
+
+    with pytest.raises(CommandError) as exc:
+        _validate_token_cleartext(raw)
+    assert exc.value.code == ErrorCode.INVALID_ARGS
+
+
+@pytest.mark.parametrize("raw", ["", "   ", "1.2.3", "a" * 64])
+def test_validate_optional_version_accepts_blank_and_short(raw: str) -> None:
+
+    assert _validate_optional_version(raw, "field") == raw.strip()
+
+
+def test_validate_optional_version_rejects_oversized() -> None:
+
+    with pytest.raises(CommandError) as exc:
+        _validate_optional_version("a" * 65, "server_version")
+    assert exc.value.code == ErrorCode.INVALID_ARGS
+
+
+def test_summarise_pairing_drops_token_cleartext() -> None:
+    """``PairingSummary`` is the on-the-wire shape; cleartext must NOT appear."""
+    record = StoredPairing(
+        hostname="desktop",
+        port=6055,
+        label="green",
+        pin_sha256=_good_pin(),
+        token_cleartext=_good_token(),
+        dashboard_id="dash-1",
+        server_version="1.2.3",
+        esphome_version="2026.5.0",
+        paired_at=1700000000.0,
+    )
+    summary = _summarise_pairing(record)
+    # The summary fields we DO expose
+    assert summary.hostname == "desktop"
+    assert summary.label == "green"
+    assert summary.pin_sha256 == _good_pin()
+    # ...and the field we don't
+    assert not hasattr(summary, "token_cleartext")
+
+
+@pytest.mark.asyncio
+async def test_list_pool_empty(tmp_path: Path) -> None:
+    """Fresh dashboard returns an empty pool."""
+    controller = _make_controller(config_dir=tmp_path)
+    assert await controller.list_pool() == []
+
+
+@pytest.mark.asyncio
+async def test_list_pool_reads_persisted_records(tmp_path: Path) -> None:
+    """After a write, ``list_pool`` returns a wire view (no token_cleartext)."""
+    controller = _make_controller(config_dir=tmp_path)
+    record = StoredPairing(
+        hostname="desktop",
+        port=6055,
+        label="green",
+        pin_sha256=_good_pin(),
+        token_cleartext=_good_token(),
+        dashboard_id="dash-1",
+        server_version="",
+        esphome_version="",
+        paired_at=1700000000.0,
+    )
+
+    def _seed(settings: Any) -> None:
+        settings.paired_remotes = [record]
+
+    await controller._modify_settings(_seed)
+
+    pool = await controller.list_pool()
+    assert len(pool) == 1
+    assert pool[0].hostname == "desktop"
+    assert pool[0].label == "green"
+    assert not hasattr(pool[0], "token_cleartext")
+
+
+@pytest.mark.asyncio
+async def test_preview_pair_returns_observed_pin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Happy path — ``observe_remote_pin`` returns hex; preview echoes it."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    async def _fake_observe(host: str, port: int) -> str:
+        assert host == "desktop"
+        assert port == 6055
+        return _good_pin()
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.observe_remote_pin",
+        _fake_observe,
+    )
+    preview = await controller.preview_pair(hostname="desktop", port=6055)
+    assert preview.pin_sha256 == _good_pin()
+
+
+@pytest.mark.asyncio
+async def test_preview_pair_unreachable_raises_unavailable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Network failure during preview maps to ``UNAVAILABLE``."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    async def _fake_observe(host: str, port: int) -> str:
+        raise ConnectionRefusedError(111, "Connection refused")
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.observe_remote_pin",
+        _fake_observe,
+    )
+    with pytest.raises(CommandError) as exc:
+        await controller.preview_pair(hostname="desktop", port=6055)
+    assert exc.value.code == ErrorCode.UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_preview_pair_validates_inputs(tmp_path: Path) -> None:
+    """Bad hostname / port short-circuits before any TLS attempt."""
+    controller = _make_controller(config_dir=tmp_path)
+    with pytest.raises(CommandError) as exc:
+        await controller.preview_pair(hostname="", port=6055)
+    assert exc.value.code == ErrorCode.INVALID_ARGS
+    with pytest.raises(CommandError) as exc:
+        await controller.preview_pair(hostname="desktop", port=99999)
+    assert exc.value.code == ErrorCode.INVALID_ARGS
+
+
+@pytest.mark.asyncio
+async def test_confirm_pair_persists_when_handshake_and_bearer_succeed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end happy path — pin matches, bearer accepted, record persisted."""
+    controller = _make_controller(config_dir=tmp_path)
+    captured_dashboard_id: list[str] = []
+
+    async def _fake_verify(**kwargs: Any) -> PairingHealthResult:
+        # The receiver-side X-Dashboard-ID is the offloader's
+        # stable id from get_or_create_identity.
+        captured_dashboard_id.append(kwargs["dashboard_id"])
+        assert kwargs["host"] == "desktop"
+        assert kwargs["port"] == 6055
+        assert kwargs["expected_pin"] == _good_pin()
+        assert kwargs["token_cleartext"] == _good_token()
+        return PairingHealthResult(ok=True, http_status=200)
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.verify_bearer",
+        _fake_verify,
+    )
+
+    summary = await controller.confirm_pair(
+        hostname="desktop",
+        port=6055,
+        pin_sha256=_good_pin(),
+        token=_good_token(),
+        label="green",
+        server_version="1.2.3",
+        esphome_version="2026.5.0",
+    )
+    assert summary.hostname == "desktop"
+    assert summary.label == "green"
+    # Dashboard id was passed through to the verify call.
+    assert captured_dashboard_id and captured_dashboard_id[0]
+
+    # Record actually landed on disk with the cleartext token.
+    pool = await controller.list_pool()
+    assert len(pool) == 1
+    assert pool[0].hostname == "desktop"
+
+    settings = load_remote_build_settings(tmp_path)
+    assert settings.paired_remotes[0].token_cleartext == _good_token()
+
+
+@pytest.mark.asyncio
+async def test_confirm_pair_pin_mismatch_raises_precondition_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Re-handshake at confirm time observed a different pin → PRECONDITION_FAILED."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    async def _fake_verify(**kwargs: Any) -> Any:
+        raise PinMismatchError(expected=kwargs["expected_pin"], observed="b" * 64)
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.verify_bearer",
+        _fake_verify,
+    )
+
+    with pytest.raises(CommandError) as exc:
+        await controller.confirm_pair(
+            hostname="desktop",
+            port=6055,
+            pin_sha256=_good_pin(),
+            token=_good_token(),
+            label="green",
+        )
+    assert exc.value.code == ErrorCode.PRECONDITION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_confirm_pair_unauthorized_bearer_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 401 / 403 from the receiver maps to UNAUTHORIZED, no persistence."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    async def _fake_verify(**kwargs: Any) -> PairingHealthResult:
+        return PairingHealthResult(ok=False, http_status=401)
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.verify_bearer",
+        _fake_verify,
+    )
+
+    with pytest.raises(CommandError) as exc:
+        await controller.confirm_pair(
+            hostname="desktop",
+            port=6055,
+            pin_sha256=_good_pin(),
+            token=_good_token(),
+            label="green",
+        )
+    assert exc.value.code == ErrorCode.UNAUTHORIZED
+    assert await controller.list_pool() == []
+
+
+@pytest.mark.asyncio
+async def test_confirm_pair_unavailable_when_handshake_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No HTTP status means we couldn't even connect → UNAVAILABLE."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    async def _fake_verify(**kwargs: Any) -> PairingHealthResult:
+        return PairingHealthResult(ok=False, http_status=None)
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.verify_bearer",
+        _fake_verify,
+    )
+
+    with pytest.raises(CommandError) as exc:
+        await controller.confirm_pair(
+            hostname="desktop",
+            port=6055,
+            pin_sha256=_good_pin(),
+            token=_good_token(),
+            label="green",
+        )
+    assert exc.value.code == ErrorCode.UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_confirm_pair_rejects_duplicate_pairing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An existing pairing for (hostname, port) blocks a second confirm."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    def _seed(settings: Any) -> None:
+        settings.paired_remotes = [
+            StoredPairing(
+                hostname="desktop",
+                port=6055,
+                label="green",
+                pin_sha256=_good_pin(),
+                token_cleartext=_good_token(),
+                dashboard_id="dash-1",
+                server_version="",
+                esphome_version="",
+                paired_at=1700000000.0,
+            )
+        ]
+
+    await controller._modify_settings(_seed)
+
+    async def _fake_verify(**kwargs: Any) -> PairingHealthResult:
+        # Should not be reached — the duplicate check comes
+        # before the TLS round-trip on the fast path.
+        raise AssertionError("verify_bearer should not be called when duplicate exists")
+
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.verify_bearer",
+        _fake_verify,
+    )
+
+    with pytest.raises(CommandError) as exc:
+        await controller.confirm_pair(
+            hostname="desktop",
+            port=6055,
+            pin_sha256=_good_pin(),
+            token=_good_token(),
+            label="another label",
+        )
+    assert exc.value.code == ErrorCode.ALREADY_EXISTS
+
+
+@pytest.mark.asyncio
+async def test_unpair_removes_record(tmp_path: Path) -> None:
+    """``unpair`` drops the record matching ``(hostname, port)``."""
+    controller = _make_controller(config_dir=tmp_path)
+
+    def _seed(settings: Any) -> None:
+        settings.paired_remotes = [
+            StoredPairing(
+                hostname="desktop",
+                port=6055,
+                label="green",
+                pin_sha256=_good_pin(),
+                token_cleartext=_good_token(),
+                dashboard_id="dash-1",
+                server_version="",
+                esphome_version="",
+                paired_at=1700000000.0,
+            )
+        ]
+
+    await controller._modify_settings(_seed)
+    view = await controller.unpair(hostname="desktop", port=6055)
+    assert view.paired_remotes == []
+    assert await controller.list_pool() == []
+
+
+@pytest.mark.asyncio
+async def test_unpair_not_found_raises(tmp_path: Path) -> None:
+    """Removing an unknown pairing surfaces NOT_FOUND for caller clarity."""
+    controller = _make_controller(config_dir=tmp_path)
+    with pytest.raises(CommandError) as exc:
+        await controller.unpair(hostname="desktop", port=6055)
+    assert exc.value.code == ErrorCode.NOT_FOUND

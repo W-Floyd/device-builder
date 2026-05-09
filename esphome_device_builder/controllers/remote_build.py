@@ -64,15 +64,23 @@ from ..constants import __version__ as server_version
 from ..helpers.api import CommandError, api_command
 from ..helpers.dashboard_advertise import SERVICE_TYPE
 from ..helpers.dashboard_identity import get_or_create_identity, rotate_certificate
+from ..helpers.remote_build_pairing import (
+    PinMismatchError,
+    observe_remote_pin,
+    verify_bearer,
+)
 from ..models import (
     ErrorCode,
     EventType,
     IdentityView,
     ManualHost,
+    PairingPreview,
+    PairingSummary,
     RemoteBuildPeer,
     RemoteBuildPeerSource,
     RemoteBuildSettings,
     RemoteBuildSettingsView,
+    StoredPairing,
     StoredToken,
     TokenSummary,
 )
@@ -335,6 +343,58 @@ def _validate_secret_sha256(raw: object) -> str:
     return trimmed
 
 
+_PIN_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_pin_sha256(raw: object) -> str:
+    """
+    Validate a wire ``pin_sha256`` value.
+
+    Lowercase hex SHA-256 of the receiver's SubjectPublicKeyInfo:
+    exactly 64 chars from ``0-9a-f``. Same shape as
+    :func:`helpers.dashboard_identity._spki_fingerprint` produces.
+    Defends against the user pasting a different format
+    (uppercase, colon-separated, base64) into the pair confirm
+    step — we'd silently store junk and the next handshake would
+    fail with no clue why.
+    """
+    if not isinstance(raw, str):
+        msg = "'pin_sha256' must be a string"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    if not _PIN_SHA256_RE.match(raw):
+        msg = "'pin_sha256' must be 64 lowercase hex chars"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    return raw
+
+
+# Loose upper bound on the bearer string. The wire format is
+# ``{token_id}.{secret}`` — phase 3b3 mints a fixed shape (11 +
+# 1 + 43 = 55 chars), but we accept up to 256 to leave room for
+# forward-compat (longer secrets if entropy ever bumps up).
+# The receiver does the real shape check at health-verify time;
+# this is just a sanity ceiling so we don't store an obviously
+# wrong paste like a megabyte of YAML.
+_TOKEN_CLEARTEXT_MAX = 256
+
+
+def _validate_token_cleartext(raw: object) -> str:
+    """Validate the wire bearer at confirm-pair time."""
+    if not isinstance(raw, str):
+        msg = "'token' must be a string"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    trimmed = raw.strip()
+    if not trimmed:
+        msg = "'token' must not be empty"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    if len(trimmed) > _TOKEN_CLEARTEXT_MAX:
+        msg = f"'token' must be at most {_TOKEN_CLEARTEXT_MAX} characters"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    if "." not in trimmed:
+        msg = "'token' is missing the '<id>.<secret>' separator"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    return trimmed
+
+
 def _summarise_token(token: StoredToken) -> TokenSummary:
     """Project a :class:`StoredToken` to its public-facing :class:`TokenSummary`."""
     return TokenSummary(
@@ -345,19 +405,34 @@ def _summarise_token(token: StoredToken) -> TokenSummary:
     )
 
 
+def _summarise_pairing(pairing: StoredPairing) -> PairingSummary:
+    """Project a :class:`StoredPairing` to its public-facing :class:`PairingSummary`."""
+    return PairingSummary(
+        hostname=pairing.hostname,
+        port=pairing.port,
+        label=pairing.label,
+        pin_sha256=pairing.pin_sha256,
+        dashboard_id=pairing.dashboard_id,
+        server_version=pairing.server_version,
+        esphome_version=pairing.esphome_version,
+        paired_at=pairing.paired_at,
+    )
+
+
 def _to_view(settings: RemoteBuildSettings) -> RemoteBuildSettingsView:
     """
     Project a :class:`RemoteBuildSettings` to its wire :class:`RemoteBuildSettingsView`.
 
-    Drops ``secret_sha256`` from each token row. Every controller
-    method that returns settings to a client routes through here
-    so the stored hash never leaves the server, even when a CRUD
-    response also touches the tokens list.
+    Drops ``secret_sha256`` from each token row and
+    ``token_cleartext`` from each paired-remote row. Every
+    controller method that returns settings to a client routes
+    through here so on-disk-only fields never leave the server.
     """
     return RemoteBuildSettingsView(
         enabled=settings.enabled,
         manual_hosts=list(settings.manual_hosts),
         tokens=[_summarise_token(t) for t in settings.tokens],
+        paired_remotes=[_summarise_pairing(p) for p in settings.paired_remotes],
     )
 
 
@@ -978,6 +1053,285 @@ class RemoteBuildController:
             return _identity_view(identity, listener_bound=listener_bound)
         finally:
             self._rotation_in_flight = False
+
+    # ------------------------------------------------------------------
+    # Pairing (phase 4a) — offloader-side commands for the Pair flow.
+    # The receiver knows nothing about pairing; it just sees an
+    # authenticated request with X-Dashboard-ID, and the same auth
+    # middleware from 3b2 handles it. Storage and validation happen
+    # here on the offloader.
+    # ------------------------------------------------------------------
+
+    @api_command("remote_build/list_pool")
+    async def list_pool(self, **kwargs: Any) -> list[PairingSummary]:
+        """
+        Return the offloader's current pool of paired remotes.
+
+        Wire view drops ``token_cleartext``; the offloader keeps
+        the cleartext on disk because it has to *present* the
+        bearer on every peer-link request, but that field has no
+        business reaching the frontend. Phase 7's scheduler reads
+        the same list (in-process) to pick a target for each
+        compile.
+        """
+        loop = asyncio.get_running_loop()
+        settings = await loop.run_in_executor(
+            None, load_remote_build_settings, self._db.settings.config_dir
+        )
+        return [_summarise_pairing(p) for p in settings.paired_remotes]
+
+    @api_command("remote_build/preview_pair")
+    async def preview_pair(
+        self, *, hostname: object, port: object, **kwargs: Any
+    ) -> PairingPreview:
+        """
+        Open a TLS handshake to the candidate receiver, return its SPKI fingerprint.
+
+        Phase 1 of the two-step pair flow: no bearer is presented,
+        nothing is persisted, the only side effect is one TLS
+        handshake against the target. The frontend renders the
+        returned ``pin_sha256`` next to a prompt asking the user
+        to confirm it matches what the receiver's Build server
+        settings page shows — that out-of-band match is the only
+        thing standing between a legitimate first-pair and a LAN
+        MITM substituting their own cert.
+
+        Errors map to typed codes:
+
+        * ``UNAVAILABLE`` — host unreachable, TLS handshake failed,
+          or timeout. Most commonly: receiver dashboard is offline,
+          remote-build is disabled on the receiver, or wrong port.
+        * ``INVALID_ARGS`` — hostname / port failed validation.
+
+        Versions / dashboard_id are intentionally NOT in the
+        preview response — the frontend has them from mDNS or the
+        manual-host entry, and adding them here would either need
+        an authenticated round-trip (we don't have a bearer yet)
+        or a new unauth endpoint on the receiver.
+        """
+        clean_host = _validate_hostname(hostname)
+        clean_port = _validate_port(port)
+        try:
+            pin = await observe_remote_pin(clean_host, clean_port)
+        except (TimeoutError, OSError) as exc:
+            _LOGGER.debug(
+                "preview_pair: TLS handshake to %s:%s failed: %s",
+                clean_host,
+                clean_port,
+                exc,
+            )
+            msg = f"could not reach {clean_host}:{clean_port}"
+            raise CommandError(ErrorCode.UNAVAILABLE, msg) from exc
+        return PairingPreview(pin_sha256=pin)
+
+    @api_command("remote_build/confirm_pair")
+    async def confirm_pair(
+        self,
+        *,
+        hostname: object,
+        port: object,
+        pin_sha256: object,
+        token: object,
+        label: object,
+        server_version: object = "",
+        esphome_version: object = "",
+        **kwargs: Any,
+    ) -> PairingSummary:
+        """
+        Persist a paired-remote record after verifying pin + bearer end-to-end.
+
+        Phase 2 of the two-step pair flow. Re-handshakes the
+        receiver (defends against a TOCTOU between
+        :meth:`preview_pair` and here — an attacker who got the
+        first handshake to land could swap their own cert for the
+        confirm if we trusted *pin_sha256* without re-checking),
+        asserts the new handshake's pin matches the user-confirmed
+        value, presents the user-pasted bearer against
+        ``GET /remote-build/v1/health`` with this dashboard's
+        stable ``X-Dashboard-ID``, and persists the
+        :class:`StoredPairing` only when both succeed.
+
+        ``server_version`` / ``esphome_version`` are passed
+        through from the frontend (where they came from mDNS / the
+        manual-host metadata); blank values are accepted but the
+        scheduler in phase 7 will skip blank-version remotes from
+        match-version dispatch.
+
+        Errors:
+
+        * ``ALREADY_EXISTS`` — a pairing for ``(hostname, port)``
+          already exists. The frontend is expected to call
+          ``unpair`` first.
+        * ``PRECONDITION_FAILED`` — re-handshake's pin didn't
+          match *pin_sha256*. Either the user OOB-confirmed the
+          wrong fingerprint, or the receiver rotated its cert
+          between preview and confirm, or there's an active MITM.
+        * ``UNAUTHORIZED`` — handshake succeeded, pin matched,
+          but the bearer was rejected by the receiver. Could be a
+          mistyped paste, a token revoked since the user copied
+          it, or a 403 because the token is bound to a different
+          dashboard already (3b3 first-use binding).
+        * ``UNAVAILABLE`` — host unreachable, handshake / health
+          request timed out, or other transport failure.
+        * ``INVALID_ARGS`` — any of the inputs failed validation.
+        """
+        clean_host = _validate_hostname(hostname)
+        clean_port = _validate_port(port)
+        clean_pin = _validate_pin_sha256(pin_sha256)
+        clean_token = _validate_token_cleartext(token)
+        clean_label = _validate_label(label)
+        clean_server_version = _validate_optional_version(server_version, "server_version")
+        clean_esphome_version = _validate_optional_version(esphome_version, "esphome_version")
+
+        # Reject duplicates up front. Catching the collision here
+        # keeps the (potentially slow) TLS round-trip out of the
+        # error path for the common "user clicked Pair on an
+        # already-paired entry by mistake" case.
+        existing = await self._modify_settings_readonly(
+            lambda settings: any(
+                p.hostname == clean_host and p.port == clean_port for p in settings.paired_remotes
+            )
+        )
+        if existing:
+            msg = f"already paired with {clean_host}:{clean_port}"
+            raise CommandError(ErrorCode.ALREADY_EXISTS, msg)
+
+        loop = asyncio.get_running_loop()
+        identity = await loop.run_in_executor(
+            None, get_or_create_identity, self._db.settings.config_dir
+        )
+
+        try:
+            health = await verify_bearer(
+                host=clean_host,
+                port=clean_port,
+                expected_pin=clean_pin,
+                token_cleartext=clean_token,
+                dashboard_id=identity.dashboard_id,
+            )
+        except PinMismatchError as exc:
+            _LOGGER.info(
+                "confirm_pair: pin mismatch against %s:%s (expected %s, observed %s)",
+                clean_host,
+                clean_port,
+                exc.expected,
+                exc.observed,
+            )
+            msg = (
+                f"cert fingerprint changed since preview "
+                f"(expected {exc.expected}, observed {exc.observed})"
+            )
+            raise CommandError(ErrorCode.PRECONDITION_FAILED, msg) from exc
+
+        if not health.ok:
+            if health.http_status is None:
+                msg = f"could not reach {clean_host}:{clean_port}"
+                raise CommandError(ErrorCode.UNAVAILABLE, msg)
+            if health.http_status in (401, 403):
+                msg = (
+                    "receiver rejected the bearer "
+                    "(wrong token, revoked, or already bound to a different dashboard)"
+                )
+                raise CommandError(ErrorCode.UNAUTHORIZED, msg)
+            msg = (
+                f"receiver returned unexpected HTTP {health.http_status} "
+                f"during pair-confirm health check"
+            )
+            raise CommandError(ErrorCode.UNAVAILABLE, msg)
+
+        # All checks passed — persist the pairing record.
+        record = StoredPairing(
+            hostname=clean_host,
+            port=clean_port,
+            label=clean_label,
+            pin_sha256=clean_pin,
+            token_cleartext=clean_token,
+            dashboard_id=identity.dashboard_id,
+            server_version=clean_server_version,
+            esphome_version=clean_esphome_version,
+            paired_at=time.time(),
+        )
+
+        def _add(settings: RemoteBuildSettings) -> None:
+            # Re-check the duplicate inside the transaction —
+            # the readonly check above is racy if two confirm_pair
+            # calls happen concurrently for the same target.
+            for existing in settings.paired_remotes:
+                if existing.hostname == clean_host and existing.port == clean_port:
+                    msg = f"already paired with {clean_host}:{clean_port}"
+                    raise CommandError(ErrorCode.ALREADY_EXISTS, msg)
+            settings.paired_remotes = [*settings.paired_remotes, record]
+
+        await self._modify_settings(_add)
+        return _summarise_pairing(record)
+
+    @api_command("remote_build/unpair")
+    async def unpair(
+        self, *, hostname: object, port: object, **kwargs: Any
+    ) -> RemoteBuildSettingsView:
+        """
+        Remove a paired-remote record by ``(hostname, port)``.
+
+        ``NOT_FOUND`` if no pairing matches; same convention as
+        :meth:`remove_token`. After this returns, peer-link
+        traffic to the unpaired remote will fail (no stored
+        bearer to authenticate with); the frontend should drop
+        the row from any in-memory cache. The receiver still has
+        the bound token until it's revoked there separately —
+        unpair is local to the offloader.
+        """
+        clean_host = _validate_hostname(hostname)
+        clean_port = _validate_port(port)
+
+        def _remove(settings: RemoteBuildSettings) -> None:
+            kept = [
+                p
+                for p in settings.paired_remotes
+                if not (p.hostname == clean_host and p.port == clean_port)
+            ]
+            if len(kept) == len(settings.paired_remotes):
+                msg = f"no paired remote at {clean_host}:{clean_port}"
+                raise CommandError(ErrorCode.NOT_FOUND, msg)
+            settings.paired_remotes = kept
+
+        return await self._modify_settings(_remove)
+
+    async def _modify_settings_readonly[T](self, reader: Callable[[RemoteBuildSettings], T]) -> T:
+        """
+        Run ``reader`` against a fresh load of settings, returning its result.
+
+        Read-only sibling of :meth:`_modify_settings`; doesn't go
+        through the metadata transaction (no write to persist).
+        Used for fast-path pre-checks like the duplicate-pair
+        rejection in :meth:`confirm_pair`, where the slow path
+        (TLS + health round-trip) shouldn't fire if the answer
+        is already obvious from disk state.
+        """
+        loop = asyncio.get_running_loop()
+        settings = await loop.run_in_executor(
+            None, load_remote_build_settings, self._db.settings.config_dir
+        )
+        return reader(settings)
+
+
+def _validate_optional_version(raw: object, field: str) -> str:
+    """
+    Accept either an empty string or a short non-empty version label.
+
+    Used for ``server_version`` / ``esphome_version`` on
+    :meth:`confirm_pair`. Blank means "the frontend didn't have a
+    value to pass" (manual host with no resolved mDNS); a real
+    string is whitespace-trimmed and capped at 64 chars to keep
+    obvious garbage out of storage.
+    """
+    if not isinstance(raw, str):
+        msg = f"'{field}' must be a string"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    trimmed = raw.strip()
+    if len(trimmed) > 64:
+        msg = f"'{field}' must be at most 64 characters"
+        raise CommandError(ErrorCode.INVALID_ARGS, msg)
+    return trimmed
 
 
 def _identity_view(identity: DashboardIdentity, *, listener_bound: bool) -> IdentityView:

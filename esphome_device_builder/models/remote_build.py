@@ -84,6 +84,95 @@ class TokenSummary(DataClassORJSONMixin):
 
 
 @dataclass
+class StoredPairing(DataClassORJSONMixin):
+    """
+    Offloader-side persisted record of a paired build server.
+
+    Identifies one remote dashboard this dashboard has paired with
+    (= confirmed cert fingerprint out-of-band, then submitted a
+    bearer the receiver accepted). Persisted in
+    ``.device-builder.json`` under
+    ``_remote_build.paired_remotes``.
+
+    ``token_cleartext`` is the wire bearer (``{token_id}.{secret}``)
+    needed to authenticate every request the offloader sends to
+    this receiver. Unlike receiver-side tokens (stored as
+    ``secret_sha256`` because the receiver only verifies), the
+    offloader needs the cleartext to *present* the bearer, so a
+    one-way hash is the wrong primitive. Phase 4a stores cleartext;
+    encryption-at-rest is a follow-up (single keyfile under
+    ``<data_dir>/storage`` with 0o600 perms; same lifecycle as the
+    cert key).
+
+    ``pin_sha256`` is the SPKI fingerprint observed during pairing
+    and confirmed by the user out-of-band. The peer-link layer
+    (phase 5) will assert this on every TLS handshake; a mismatch
+    triggers the re-auth wizard (phase 8). ``dashboard_id`` is
+    what we send in ``X-Dashboard-ID``; the receiver pins it after
+    first use.
+
+    ``server_version`` / ``esphome_version`` are captured at pair
+    time so the offload scheduler (phase 7) can match builds to
+    version-compatible peers without a round-trip.
+    """
+
+    hostname: str
+    port: int
+    label: str
+    pin_sha256: str
+    token_cleartext: str
+    dashboard_id: str
+    server_version: str
+    esphome_version: str
+    paired_at: float
+
+
+@dataclass
+class PairingSummary(DataClassORJSONMixin):
+    """
+    Public-facing wire view of :class:`StoredPairing`.
+
+    Returned from ``remote_build/list_pool`` and
+    ``remote_build/confirm_pair``. Drops ``token_cleartext``: the
+    offloader has the bearer in storage, the frontend has no
+    business reading it back. Same projection logic as
+    :class:`StoredToken` → :class:`TokenSummary` on the
+    receiver side.
+    """
+
+    hostname: str
+    port: int
+    label: str
+    pin_sha256: str
+    dashboard_id: str
+    server_version: str
+    esphome_version: str
+    paired_at: float
+
+
+@dataclass
+class PairingPreview(DataClassORJSONMixin):
+    """
+    Wire shape returned from ``remote_build/preview_pair``.
+
+    The single load-bearing field is ``pin_sha256`` — the SPKI
+    fingerprint observed during the TLS handshake to the
+    candidate receiver. The frontend renders it for OOB
+    verification ("does this match the fingerprint shown on the
+    receiver's Build server settings page?"); on confirm, the
+    user's "yes" gates the persistence step.
+
+    Versions / dashboard_id intentionally NOT in the preview:
+    those would require either an authenticated round-trip
+    (we don't have the bearer yet) or a new unauth endpoint on
+    the receiver (scope creep for 4a). The frontend already has
+    versions from mDNS or the manual-host entry.
+    """
+
+    pin_sha256: str
+
+
+@dataclass
 class RemoteBuildSettings(DataClassORJSONMixin):
     """
     Receiver-side settings for the remote-build feature (storage shape).
@@ -95,11 +184,16 @@ class RemoteBuildSettings(DataClassORJSONMixin):
     wire. Use :class:`RemoteBuildSettingsView` (or the
     ``_summarise_token`` projection) for any response that leaves
     the server.
+
+    ``paired_remotes`` carries the offloader-side pairing records
+    from phase 4a; same shape concern (token_cleartext is on-disk
+    only, never on the wire) as ``tokens``.
     """
 
     enabled: bool = False
     manual_hosts: list[ManualHost] = field(default_factory=list)
     tokens: list[StoredToken] = field(default_factory=list)
+    paired_remotes: list[StoredPairing] = field(default_factory=list)
 
 
 @dataclass
@@ -108,16 +202,21 @@ class RemoteBuildSettingsView(DataClassORJSONMixin):
     Wire view of :class:`RemoteBuildSettings`.
 
     Returned from every WS command that exposes settings to a
-    client. Identical to :class:`RemoteBuildSettings` except
-    ``tokens`` is a list of :class:`TokenSummary` (no
-    ``secret_sha256``), so issuing or removing tokens via the
-    CRUD methods can't accidentally leak the stored hash back to
-    the frontend through the response shape.
+    client. Identical to :class:`RemoteBuildSettings` except:
+
+    - ``tokens`` is a list of :class:`TokenSummary` (no
+      ``secret_sha256``) so issuing or removing tokens via the
+      CRUD methods can't leak the stored hash back to the
+      frontend through the response shape.
+    - ``paired_remotes`` is a list of :class:`PairingSummary`
+      (no ``token_cleartext``) so the offloader's stored bearers
+      can't leak via the same path.
     """
 
     enabled: bool = False
     manual_hosts: list[ManualHost] = field(default_factory=list)
     tokens: list[TokenSummary] = field(default_factory=list)
+    paired_remotes: list[PairingSummary] = field(default_factory=list)
 
 
 @dataclass
