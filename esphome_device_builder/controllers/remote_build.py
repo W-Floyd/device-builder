@@ -69,6 +69,7 @@ from ..helpers.remote_build_pairing import (
     observe_remote_pin,
     verify_bearer,
 )
+from ..helpers.remote_build_token_seal import seal_bearer
 from ..models import (
     ErrorCode,
     EventType,
@@ -376,6 +377,16 @@ def _validate_pin_sha256(raw: object) -> str:
 # wrong paste like a megabyte of YAML.
 _TOKEN_CLEARTEXT_MAX = 256
 
+# Both halves of the wire bearer are base64url encodings of fixed
+# random byte counts (3b3 mints 11 + 1 + 43 = 55 chars). Accept
+# any base64url-shaped pair under the ceiling so a future bump in
+# entropy doesn't reject; the receiver's auth middleware does the
+# strict-shape check anyway. This pre-flight catches obviously-
+# wrong pastes (just the token_id, a UUID, an arbitrary URL,
+# anything with the wrong character class) and surfaces a clear
+# INVALID_ARGS before we start the slow TLS round-trip.
+_TOKEN_CLEARTEXT_RE = re.compile(r"^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$")
+
 
 def _validate_token_cleartext(raw: object) -> str:
     """Validate the wire bearer at confirm-pair time."""
@@ -389,10 +400,18 @@ def _validate_token_cleartext(raw: object) -> str:
     if len(trimmed) > _TOKEN_CLEARTEXT_MAX:
         msg = f"'token' must be at most {_TOKEN_CLEARTEXT_MAX} characters"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
-    if "." not in trimmed:
-        msg = "'token' is missing the '<id>.<secret>' separator"
+    if not _TOKEN_CLEARTEXT_RE.match(trimmed):
+        msg = "'token' must be of the form '<id>.<secret>' with base64url chars"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
     return trimmed
+
+
+# Cap the offloader-side pool so a buggy / abusive frontend
+# can't grow the metadata file unboundedly. Mirrors ``_MAX_TOKENS``
+# from the receiver-side store. The interactive pair flow gates
+# each addition (preview + OOB-confirm + bearer paste), so 100
+# is comfortably above any realistic operator's pool.
+_MAX_PAIRINGS = 100
 
 
 def _summarise_token(token: StoredToken) -> TokenSummary:
@@ -1183,20 +1202,26 @@ class RemoteBuildController:
         clean_server_version = _validate_optional_version(server_version, "server_version")
         clean_esphome_version = _validate_optional_version(esphome_version, "esphome_version")
 
-        # Reject duplicates up front. Catching the collision here
-        # keeps the (potentially slow) TLS round-trip out of the
-        # error path for the common "user clicked Pair on an
-        # already-paired entry by mistake" case.
-        existing = await self._modify_settings_readonly(
-            lambda settings: any(
-                p.hostname == clean_host and p.port == clean_port for p in settings.paired_remotes
-            )
+        # Fast-path pre-checks: reject duplicates and over-cap
+        # additions before the slow TLS round-trip. Both are
+        # rechecked inside the transaction below for race-safety.
+        loop = asyncio.get_running_loop()
+        settings_snapshot = await loop.run_in_executor(
+            None, load_remote_build_settings, self._db.settings.config_dir
         )
-        if existing:
+        if any(
+            p.hostname == clean_host and p.port == clean_port
+            for p in settings_snapshot.paired_remotes
+        ):
             msg = f"already paired with {clean_host}:{clean_port}"
             raise CommandError(ErrorCode.ALREADY_EXISTS, msg)
+        if len(settings_snapshot.paired_remotes) >= _MAX_PAIRINGS:
+            msg = (
+                f"paired-remote pool is at the {_MAX_PAIRINGS}-entry cap; "
+                "unpair an existing remote before adding a new one"
+            )
+            raise CommandError(ErrorCode.INVALID_ARGS, msg)
 
-        loop = asyncio.get_running_loop()
         identity = await loop.run_in_executor(
             None, get_or_create_identity, self._db.settings.config_dir
         )
@@ -1239,13 +1264,19 @@ class RemoteBuildController:
             )
             raise CommandError(ErrorCode.UNAVAILABLE, msg)
 
-        # All checks passed — persist the pairing record.
+        # All checks passed — seal the bearer and persist the
+        # pairing record. Sealing happens once on this hot path;
+        # peer-link traffic in phase 5+ will unseal once per
+        # outbound request via ``unseal_bearer``.
+        sealed = await loop.run_in_executor(
+            None, seal_bearer, self._db.settings.config_dir, clean_token
+        )
         record = StoredPairing(
             hostname=clean_host,
             port=clean_port,
             label=clean_label,
             pin_sha256=clean_pin,
-            token_cleartext=clean_token,
+            token_sealed=sealed,
             dashboard_id=identity.dashboard_id,
             server_version=clean_server_version,
             esphome_version=clean_esphome_version,
@@ -1253,13 +1284,17 @@ class RemoteBuildController:
         )
 
         def _add(settings: RemoteBuildSettings) -> None:
-            # Re-check the duplicate inside the transaction —
-            # the readonly check above is racy if two confirm_pair
-            # calls happen concurrently for the same target.
+            # Re-check duplicate + cap inside the transaction —
+            # the snapshot reads above are racy if two confirm_pair
+            # calls run concurrently against the same / different
+            # targets.
             for existing in settings.paired_remotes:
                 if existing.hostname == clean_host and existing.port == clean_port:
                     msg = f"already paired with {clean_host}:{clean_port}"
                     raise CommandError(ErrorCode.ALREADY_EXISTS, msg)
+            if len(settings.paired_remotes) >= _MAX_PAIRINGS:
+                msg = f"paired-remote pool is at the {_MAX_PAIRINGS}-entry cap"
+                raise CommandError(ErrorCode.INVALID_ARGS, msg)
             settings.paired_remotes = [*settings.paired_remotes, record]
 
         await self._modify_settings(_add)
@@ -1295,23 +1330,6 @@ class RemoteBuildController:
             settings.paired_remotes = kept
 
         return await self._modify_settings(_remove)
-
-    async def _modify_settings_readonly[T](self, reader: Callable[[RemoteBuildSettings], T]) -> T:
-        """
-        Run ``reader`` against a fresh load of settings, returning its result.
-
-        Read-only sibling of :meth:`_modify_settings`; doesn't go
-        through the metadata transaction (no write to persist).
-        Used for fast-path pre-checks like the duplicate-pair
-        rejection in :meth:`confirm_pair`, where the slow path
-        (TLS + health round-trip) shouldn't fire if the answer
-        is already obvious from disk state.
-        """
-        loop = asyncio.get_running_loop()
-        settings = await loop.run_in_executor(
-            None, load_remote_build_settings, self._db.settings.config_dir
-        )
-        return reader(settings)
 
 
 def _validate_optional_version(raw: object, field: str) -> str:

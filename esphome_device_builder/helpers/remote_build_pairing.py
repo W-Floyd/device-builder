@@ -31,13 +31,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import logging
 import ssl
 from dataclasses import dataclass
 
 import aiohttp
 from cryptography import x509
-from cryptography.hazmat.primitives import hashes, serialization
+
+from .dashboard_identity import compute_spki_fingerprint
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -165,6 +167,7 @@ async def verify_bearer(
 # ---------------------------------------------------------------------------
 
 
+@functools.cache
 def _trust_no_ca_context() -> ssl.SSLContext:
     """
     SSLContext that completes a handshake without validating chain or hostname.
@@ -180,6 +183,10 @@ def _trust_no_ca_context() -> ssl.SSLContext:
     deliberately permissive. Real peer-link traffic (phase 5)
     will use a per-pin verification callback instead of this
     no-trust shortcut.
+
+    Cached at first call: ``ssl.create_default_context`` does a
+    synchronous read of the OS trust store, and the configured
+    SSLContext is stateless across pair attempts.
     """
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
@@ -230,6 +237,14 @@ def _observed_pin_from_response(resp: aiohttp.ClientResponse) -> str:
     on it returns the same DER we'd get from a manual handshake.
     Used at confirm time so the pin assertion happens against the
     same TLS connection the bearer health check landed on.
+
+    NOTE: ``resp.connection.transport`` is documented in aiohttp's
+    dev guide but isn't part of the stable public API surface; a
+    major aiohttp upgrade could rename or remove it. The fallback
+    in that case is to drop back to a separate ``open_connection``
+    handshake the same way :func:`_fetch_cert_der` does, paying a
+    second handshake at confirm time. Worth knowing if this surface
+    breaks under a future bump.
     """
     conn = resp.connection
     if conn is None or conn.transport is None:
@@ -244,15 +259,8 @@ def _observed_pin_from_response(resp: aiohttp.ClientResponse) -> str:
 
 
 def _spki_fingerprint_from_der(cert_der: bytes) -> str:
-    """SHA-256 of the cert's SubjectPublicKeyInfo, lowercase hex."""
-    cert = x509.load_der_x509_certificate(cert_der)
-    spki = cert.public_key().public_bytes(
-        encoding=serialization.Encoding.DER,
-        format=serialization.PublicFormat.SubjectPublicKeyInfo,
-    )
-    digest = hashes.Hash(hashes.SHA256())
-    digest.update(spki)
-    return digest.finalize().hex()
+    """DER-input wrapper around :func:`compute_spki_fingerprint`."""
+    return compute_spki_fingerprint(x509.load_der_x509_certificate(cert_der))
 
 
 def _format_host(host: str) -> str:

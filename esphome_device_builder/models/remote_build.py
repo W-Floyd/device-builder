@@ -94,15 +94,17 @@ class StoredPairing(DataClassORJSONMixin):
     ``.device-builder.json`` under
     ``_remote_build.paired_remotes``.
 
-    ``token_cleartext`` is the wire bearer (``{token_id}.{secret}``)
-    needed to authenticate every request the offloader sends to
-    this receiver. Unlike receiver-side tokens (stored as
-    ``secret_sha256`` because the receiver only verifies), the
-    offloader needs the cleartext to *present* the bearer, so a
-    one-way hash is the wrong primitive. Phase 4a stores cleartext;
-    encryption-at-rest is a follow-up (single keyfile under
-    ``<data_dir>/storage`` with 0o600 perms; same lifecycle as the
-    cert key).
+    ``token_sealed`` is the wire bearer (``{token_id}.{secret}``)
+    encrypted-at-rest with a per-installation Fernet key under
+    ``<config_dir>/.device-builder-offload-key.bin`` (0o600).
+    Unlike receiver-side tokens (stored as ``secret_sha256``
+    because the receiver only verifies), the offloader needs the
+    cleartext to *present* the bearer on every peer-link
+    request, so a one-way hash isn't usable. The keyfile lives
+    next to the cert key from phase 3a and follows the same
+    "lazy-create, never auto-rotate" lifecycle. Cleartext lives
+    in process memory only for the duration of a single outbound
+    request; never written back to disk in the clear.
 
     ``pin_sha256`` is the SPKI fingerprint observed during pairing
     and confirmed by the user out-of-band. The peer-link layer
@@ -120,7 +122,7 @@ class StoredPairing(DataClassORJSONMixin):
     port: int
     label: str
     pin_sha256: str
-    token_cleartext: str
+    token_sealed: str
     dashboard_id: str
     server_version: str
     esphome_version: str
@@ -133,11 +135,11 @@ class PairingSummary(DataClassORJSONMixin):
     Public-facing wire view of :class:`StoredPairing`.
 
     Returned from ``remote_build/list_pool`` and
-    ``remote_build/confirm_pair``. Drops ``token_cleartext``: the
-    offloader has the bearer in storage, the frontend has no
-    business reading it back. Same projection logic as
-    :class:`StoredToken` → :class:`TokenSummary` on the
-    receiver side.
+    ``remote_build/confirm_pair``. Drops ``token_sealed``: the
+    offloader has the encrypted bearer in storage, the frontend
+    has no business reading it back even in sealed form. Same
+    projection logic as :class:`StoredToken` →
+    :class:`TokenSummary` on the receiver side.
     """
 
     hostname: str

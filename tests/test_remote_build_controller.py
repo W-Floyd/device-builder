@@ -45,6 +45,7 @@ from esphome_device_builder.helpers.remote_build_pairing import (
     PairingHealthResult,
     PinMismatchError,
 )
+from esphome_device_builder.helpers.remote_build_token_seal import unseal_bearer
 from esphome_device_builder.models import (
     ErrorCode,
     EventType,
@@ -1654,7 +1655,7 @@ def test_summarise_pairing_drops_token_cleartext() -> None:
         port=6055,
         label="green",
         pin_sha256=_good_pin(),
-        token_cleartext=_good_token(),
+        token_sealed="seeded-blob",
         dashboard_id="dash-1",
         server_version="1.2.3",
         esphome_version="2026.5.0",
@@ -1665,7 +1666,9 @@ def test_summarise_pairing_drops_token_cleartext() -> None:
     assert summary.hostname == "desktop"
     assert summary.label == "green"
     assert summary.pin_sha256 == _good_pin()
-    # ...and the field we don't
+    # ...and the field we don't (the sealed bearer is on-disk
+    # only; never exposed via the wire summary).
+    assert not hasattr(summary, "token_sealed")
     assert not hasattr(summary, "token_cleartext")
 
 
@@ -1678,14 +1681,14 @@ async def test_list_pool_empty(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_list_pool_reads_persisted_records(tmp_path: Path) -> None:
-    """After a write, ``list_pool`` returns a wire view (no token_cleartext)."""
+    """After a write, ``list_pool`` returns a wire view (no token_sealed)."""
     controller = _make_controller(config_dir=tmp_path)
     record = StoredPairing(
         hostname="desktop",
         port=6055,
         label="green",
         pin_sha256=_good_pin(),
-        token_cleartext=_good_token(),
+        token_sealed="seeded-blob",
         dashboard_id="dash-1",
         server_version="",
         esphome_version="",
@@ -1701,6 +1704,7 @@ async def test_list_pool_reads_persisted_records(tmp_path: Path) -> None:
     assert len(pool) == 1
     assert pool[0].hostname == "desktop"
     assert pool[0].label == "green"
+    assert not hasattr(pool[0], "token_sealed")
     assert not hasattr(pool[0], "token_cleartext")
 
 
@@ -1792,13 +1796,17 @@ async def test_confirm_pair_persists_when_handshake_and_bearer_succeed(
     # Dashboard id was passed through to the verify call.
     assert captured_dashboard_id and captured_dashboard_id[0]
 
-    # Record actually landed on disk with the cleartext token.
+    # Record actually landed on disk; the bearer is stored
+    # SEALED. Unseal to verify it round-trips back to the
+    # original cleartext (encryption-at-rest contract).
     pool = await controller.list_pool()
     assert len(pool) == 1
     assert pool[0].hostname == "desktop"
 
     settings = load_remote_build_settings(tmp_path)
-    assert settings.paired_remotes[0].token_cleartext == _good_token()
+    sealed = settings.paired_remotes[0].token_sealed
+    assert sealed != _good_token(), "stored bearer must not be cleartext"
+    assert unseal_bearer(tmp_path, sealed) == _good_token()
 
 
 @pytest.mark.asyncio
@@ -1894,7 +1902,7 @@ async def test_confirm_pair_rejects_duplicate_pairing(
                 port=6055,
                 label="green",
                 pin_sha256=_good_pin(),
-                token_cleartext=_good_token(),
+                token_sealed="seeded-blob",
                 dashboard_id="dash-1",
                 server_version="",
                 esphome_version="",
@@ -1937,7 +1945,7 @@ async def test_unpair_removes_record(tmp_path: Path) -> None:
                 port=6055,
                 label="green",
                 pin_sha256=_good_pin(),
-                token_cleartext=_good_token(),
+                token_sealed="seeded-blob",
                 dashboard_id="dash-1",
                 server_version="",
                 esphome_version="",
