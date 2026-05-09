@@ -211,10 +211,13 @@ async def _fetch_cert_der(host: str, port: int) -> bytes:
         return cert_der
     finally:
         writer.close()
-        # Best-effort cleanup; the cert is already in hand by the
-        # time the close is initiated, and a hung close shouldn't
-        # propagate into the caller.
-        with contextlib.suppress(OSError, asyncio.CancelledError):
+        # Best-effort cleanup; a transport-level error during
+        # close shouldn't mask the cert we already have in hand.
+        # NOTE: CancelledError is *not* suppressed — if our caller
+        # is cancelled while we're awaiting wait_closed, the
+        # cancellation must propagate. ``suppress(CancelledError)``
+        # silently breaks task cancellation.
+        with contextlib.suppress(OSError):
             await writer.wait_closed()
 
 
