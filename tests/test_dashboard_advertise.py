@@ -426,6 +426,68 @@ async def test_service_instance_name_returns_published_name_after_register(
     assert advertiser.service_instance_name is None
 
 
+def test_service_target_endpoint_returns_none_before_register() -> None:
+    """``service_target_endpoint`` is ``None`` until ``register()`` succeeds."""
+    advertiser = _make_advertiser(name="green", hostname="green.local")
+    assert advertiser.service_target_endpoint is None
+
+
+@pytest.mark.asyncio
+async def test_service_target_endpoint_returns_none_when_info_lacks_server_or_port(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``ServiceInfo`` whose ``server`` / ``port`` is ``None`` doesn't crash the accessor.
+
+    The :class:`ServiceInfo` type stubs admit ``str | None`` /
+    ``int | None`` for those fields even though zeroconf always
+    populates them after ``register()``. Defensive guard on the
+    accessor; pin the contract so a future zeroconf version that
+    returns ``None`` for either field doesn't ``AttributeError``
+    inside peer-discovery hot paths.
+    """
+    monkeypatch.setattr(dashboard_advertise, "_local_addresses", lambda: ["192.168.1.10"])
+    advertiser = _make_advertiser(name="green", hostname="green.local")
+    zc = _make_zeroconf_mock()
+    await advertiser.register(zc)
+    try:
+        assert advertiser._info is not None
+        # Wipe ``server`` and re-check; same for ``port``.
+        advertiser._info.server = None
+        assert advertiser.service_target_endpoint is None
+        advertiser._info.server = "green.local."
+        advertiser._info.port = None
+        assert advertiser.service_target_endpoint is None
+    finally:
+        # Restore real server / port so ``unregister`` can match
+        # zeroconf's registered ServiceInfo.
+        advertiser._info.server = "green.local."
+        advertiser._info.port = advertiser._port
+        await advertiser.unregister()
+
+
+@pytest.mark.asyncio
+async def test_service_target_endpoint_returns_lowercased_no_trailing_dot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Post-``register``, the endpoint tuple is lowercased and trailing-dot stripped.
+
+    Peer-discovery code compares the resolved peer's
+    ``(server, port)`` against this tuple; both ends are
+    normalised the same way so the equality check just works.
+    """
+    monkeypatch.setattr(dashboard_advertise, "_local_addresses", lambda: ["192.168.1.10"])
+    advertiser = _make_advertiser(name="Green", hostname="Green.Local")
+    zc = _make_zeroconf_mock()
+    await advertiser.register(zc)
+    try:
+        endpoint = advertiser.service_target_endpoint
+        assert endpoint == ("green.local", advertiser._port)
+    finally:
+        await advertiser.unregister()
+    assert advertiser.service_target_endpoint is None
+
+
 def test_build_service_info_falls_back_when_hostname_is_blank(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
