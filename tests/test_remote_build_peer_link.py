@@ -20,12 +20,13 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import secrets
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import aiohttp
 import pytest
 from aiohttp import WSMessage, WSMsgType, web
 from aiohttp.test_utils import TestClient, TestServer
@@ -38,9 +39,10 @@ from esphome_device_builder.controllers import (
 )
 from esphome_device_builder.controllers.remote_build import RemoteBuildController
 from esphome_device_builder.controllers.remote_build_peer_link import (
-    _APP_FRAME_MAX_BYTES,
     _PEER_LABEL_MAX_CHARS,
+    APP_FRAME_MAX_BYTES,
     PEER_LINK_PATH,
+    PeerLinkChannel,
     PeerLinkSession,
     TerminateReason,
     _dispatch_intent,
@@ -86,6 +88,27 @@ def _make_controller(*, config_dir: Any = None) -> RemoteBuildController:
 def _seed_peer(controller: RemoteBuildController, peer: StoredPeer) -> None:
     """Insert *peer* into the controller's RAM-canonical APPROVED dict."""
     controller._approved_peers[peer.dashboard_id] = peer
+
+
+async def _wait_until(condition: Callable[[], bool], *, timeout: float = 2.0) -> None:
+    """Yield to the loop until *condition()* returns truthy or *timeout* elapses.
+
+    Raises :exc:`TimeoutError` (via :func:`asyncio.wait_for`) when
+    the condition stays false past *timeout* — surfaces a
+    deterministic failure in place of a silent
+    ``for _ in range(N): sleep(0)`` loop that would otherwise
+    fall through and let the next assertion produce a misleading
+    error message. Use for waits whose synchronisation source is
+    a piece of mutated state (registry dict membership, attribute
+    flip) rather than a callback we can wire an
+    :class:`asyncio.Event` into.
+    """
+
+    async def _spin() -> None:
+        while not condition():
+            await asyncio.sleep(0)
+
+    await asyncio.wait_for(_spin(), timeout=timeout)
 
 
 # ---------------------------------------------------------------------------
@@ -1063,16 +1086,12 @@ async def test_e2e_peer_link_session_stays_open_after_intent_response(
         client, dashboard_id="alpha", initiator_priv=initiator_priv
     )
     try:
-        # Allow the handler enough loop ticks to drop into the
-        # receive loop. If the WS closed, ``ws.closed`` would
-        # flip; if it's still open, we're in the session loop.
-        for _ in range(10):
-            await asyncio.sleep(0)
-            if ws.closed:
-                break
+        # Wait for the handler to drop into the receive loop —
+        # registration happens just before. If the WS closed
+        # instead, ``"alpha"`` would never land in the dict and
+        # the wait would time out (deterministic failure).
+        await _wait_until(lambda: "alpha" in controller._peer_link_sessions)
         assert not ws.closed
-        # Controller registered the session.
-        assert "alpha" in controller._peer_link_sessions
     finally:
         await ws.close()
 
@@ -1174,22 +1193,13 @@ async def test_e2e_peer_link_session_unregistered_on_peer_close(
     _session, ws, _ = await _drive_peer_link_session_open(
         client, dashboard_id="alpha", initiator_priv=initiator_priv
     )
-    # Wait for the registry to settle.
-    for _ in range(10):
-        await asyncio.sleep(0)
-        if "alpha" in controller._peer_link_sessions:
-            break
-    assert "alpha" in controller._peer_link_sessions
+    await _wait_until(lambda: "alpha" in controller._peer_link_sessions)
 
     await ws.close()
 
     # The receiver's session loop sees the close, exits, and
     # ``unregister_peer_link_session`` runs in its ``finally``.
-    for _ in range(20):
-        await asyncio.sleep(0)
-        if "alpha" not in controller._peer_link_sessions:
-            break
-    assert "alpha" not in controller._peer_link_sessions
+    await _wait_until(lambda: "alpha" not in controller._peer_link_sessions)
 
 
 @pytest.mark.asyncio
@@ -1215,11 +1225,7 @@ async def test_e2e_peer_link_session_drained_on_controller_stop(
         client, dashboard_id="alpha", initiator_priv=initiator_priv
     )
     try:
-        for _ in range(10):
-            await asyncio.sleep(0)
-            if "alpha" in controller._peer_link_sessions:
-                break
-        assert "alpha" in controller._peer_link_sessions
+        await _wait_until(lambda: "alpha" in controller._peer_link_sessions)
 
         # ``stop()`` runs in the same loop; the test fixture
         # also calls ``stop()`` on teardown but we drive it
@@ -1242,7 +1248,7 @@ async def test_e2e_peer_link_session_drained_on_controller_stop(
 async def test_e2e_peer_link_session_oversize_frame_terminates(
     peer_link_app: tuple[TestClient, RemoteBuildController, bytes],
 ) -> None:
-    """A frame past ``_APP_FRAME_MAX_BYTES`` triggers ``terminate{malformed_frame}``.
+    """A frame past ``APP_FRAME_MAX_BYTES`` triggers ``terminate{malformed_frame}``.
 
     Closes a misbehaving / hostile peer at the dispatch seam
     rather than letting an unbounded ciphertext pin memory.
@@ -1263,7 +1269,7 @@ async def test_e2e_peer_link_session_oversize_frame_terminates(
     try:
         # Encrypt a payload larger than the cap. ChaCha20 adds a
         # 16-byte auth tag; the encrypted size is plaintext + 16.
-        oversize = session.encrypt(b"x" * (_APP_FRAME_MAX_BYTES + 1))
+        oversize = session.encrypt(b"x" * (APP_FRAME_MAX_BYTES + 1))
         await ws.send_bytes(oversize)
         terminate_encrypted = await asyncio.wait_for(ws.receive_bytes(), timeout=2.0)
         terminate = _decode_app_frame(session, terminate_encrypted)
@@ -1497,6 +1503,49 @@ async def test_send_app_frame_returns_false_on_noise_encrypt_failure(tmp_path: P
     assert ws.sends == []
 
 
+@pytest.mark.asyncio
+async def test_peer_link_channel_send_terminate_swallows_aiohttp_close_error(
+    tmp_path: Path,
+) -> None:
+    """``send_terminate`` returns cleanly when ``ws.close()`` raises ``aiohttp.ClientError``.
+
+    :class:`PeerLinkChannel` runs on both sides of the wire — the
+    offloader-side ``self.ws`` is an
+    :class:`aiohttp.ClientWebSocketResponse` whose ``.close()``
+    can raise ``ClientConnectionError`` / ``ClientError`` when
+    the peer has already gone away. Without widening the
+    suppression around the close, that exception would escape
+    and could block a caller's :class:`CancelledError`
+    propagation (e.g. inside
+    :meth:`PeerLinkClient._run_one_session`'s cancellation
+    handler that awaits ``send_terminate`` before re-raising).
+    """
+    _initiator, responder = _noise_pair()
+
+    class _RaisingCloseWs:
+        def __init__(self) -> None:
+            self.sends: list[bytes] = []
+            self.closed = False
+
+        async def send_bytes(self, data: bytes) -> None:
+            self.sends.append(data)
+
+        async def close(self) -> None:
+            self.closed = True
+            raise aiohttp.ClientConnectionError("forced for test")
+
+    ws = _RaisingCloseWs()
+    channel = PeerLinkChannel(noise=responder, ws=ws, log_label="test")  # type: ignore[arg-type]
+
+    # Should NOT raise — the suppression around ``ws.close()``
+    # widened to include ``aiohttp.ClientError``.
+    await channel.send_terminate(TerminateReason.SERVER_SHUTTING_DOWN.value)
+
+    # The terminate frame was still sent before the close attempt.
+    assert len(ws.sends) == 1
+    assert ws.closed is True
+
+
 # ---------------------------------------------------------------------------
 # Receive loop unit tests — drive ``_receive_loop`` against a scripted ``_FakeWs``
 # so each malformed-frame branch fires its terminate cleanly.
@@ -1627,62 +1676,151 @@ async def test_receive_loop_unknown_app_frame_type_logged_and_ignored(tmp_path: 
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_loop_terminates_on_pong_timeout(
+async def test_run_peer_link_heartbeat_terminates_on_pong_timeout(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The heartbeat loop closes the session when no pong lands in the threshold window.
+    """The shared heartbeat helper invokes ``on_dead`` when no pong lands in time.
 
-    Shrinks the heartbeat interval to a few ms so the test
-    finishes quickly (real ``asyncio.sleep``, no stubbing — that
-    avoids recursion loops if a future ``_heartbeat_loop`` body
-    calls ``asyncio.sleep`` from anywhere else). Drives the
-    clock past the miss threshold on the second
-    :func:`_monotonic` read so the very first iteration trips
-    the timeout branch.
+    Shrinks the heartbeat interval so the test finishes quickly
+    (real ``asyncio.sleep``, no stubbing). Drives the clock past
+    the miss threshold on the next ``_monotonic`` read so the
+    very first iteration trips the timeout branch.
     """
-    _initiator, responder = _noise_pair()
-    session, ws = _make_unit_session(responder)
+    monkeypatch.setattr(_peer_link_module, "HEARTBEAT_INTERVAL_SECONDS", 0.001)
+    monkeypatch.setattr(_peer_link_module, "HEARTBEAT_DEAD_AFTER_SECONDS", 0.0)
+    monkeypatch.setattr(_peer_link_module, "_monotonic", lambda: 1000.0)
 
-    monkeypatch.setattr(_peer_link_module, "_HEARTBEAT_INTERVAL_SECONDS", 0.001)
-    monkeypatch.setattr(_peer_link_module, "_HEARTBEAT_DEAD_AFTER_SECONDS", 0.0)
-    # First call seeds last_pong_at = 0; second call returns a
-    # large value so the gap exceeds the (zero-sized) threshold.
-    ticks = iter([0.0, 1000.0])
-    monkeypatch.setattr(_peer_link_module, "_monotonic", lambda: next(ticks))
+    pings: list[int] = []
+    deaths: list[bool] = []
 
-    await _peer_link_module._heartbeat_loop(session)
+    async def _send_ping(nonce: int) -> bool:
+        pings.append(nonce)
+        return True
 
-    assert len(ws.sends) == 1
-    assert ws.closes == 1
+    async def _on_dead() -> None:
+        deaths.append(True)
+
+    await _peer_link_module.run_peer_link_heartbeat(
+        send_ping=_send_ping,
+        last_pong_at=lambda: 0.0,
+        on_dead=_on_dead,
+    )
+
+    # Timeout branch fires before the first ping — last_pong_at
+    # is at 0, _monotonic() is at 1000, the gap exceeds the
+    # zero threshold.
+    assert pings == []
+    assert deaths == [True]
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_loop_terminates_on_send_failure(
+async def test_run_peer_link_heartbeat_terminates_on_send_failure(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """If ``send_app_frame`` reports failure (WS dead), heartbeat terminates the session."""
-    _initiator, responder = _noise_pair()
-    session, ws = _make_unit_session(responder)
-
-    monkeypatch.setattr(_peer_link_module, "_HEARTBEAT_INTERVAL_SECONDS", 0.001)
-    # Clock stays inside the threshold so the timeout branch
-    # doesn't fire; only the send-failure path does.
+    """If ``send_ping`` reports failure (WS dead), the heartbeat invokes ``on_dead``."""
+    monkeypatch.setattr(_peer_link_module, "HEARTBEAT_INTERVAL_SECONDS", 0.001)
     monkeypatch.setattr(_peer_link_module, "_monotonic", lambda: 0.0)
 
-    async def _fail_send(_payload: dict[str, Any]) -> bool:
+    deaths: list[bool] = []
+
+    async def _send_ping_fail(_nonce: int) -> bool:
         return False
 
-    monkeypatch.setattr(session, "send_app_frame", _fail_send)
+    async def _on_dead() -> None:
+        deaths.append(True)
 
-    await _peer_link_module._heartbeat_loop(session)
+    await _peer_link_module.run_peer_link_heartbeat(
+        send_ping=_send_ping_fail,
+        last_pong_at=lambda: 0.0,
+        on_dead=_on_dead,
+    )
 
-    # ``terminate`` calls ``send_app_frame`` (which our stub
-    # makes False) but always closes the WS regardless.
-    assert ws.closes == 1
+    assert deaths == [True]
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_loop_propagates_cancellation(
+async def test_run_peer_link_session_heartbeat_closures_route_to_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The closures wired into ``run_peer_link_heartbeat`` route to the live session.
+
+    Covers the receiver-side ``_send_ping`` and ``_on_dead``
+    closure bodies inside :func:`_run_peer_link_session` (the
+    short two-line wrappers that translate the heartbeat helper's
+    callback contract onto the session's
+    :meth:`PeerLinkSession.send_app_frame` and
+    :meth:`PeerLinkSession.terminate`). The other heartbeat tests
+    drive :func:`run_peer_link_heartbeat` directly with stubbed
+    callbacks and so don't touch these wrappers.
+
+    Captures both callbacks via a stub heartbeat, fires them, and
+    asserts the wire effects: a ``ping`` frame on the WS for
+    ``send_ping``, and a ``terminate{heartbeat_timeout}`` frame
+    plus a CLOSE for ``on_dead``.
+    """
+    initiator, responder = _noise_pair()
+    parked = asyncio.Event()
+
+    class _ParkingWs(_FakeWs):
+        async def __anext__(self) -> WSMessage:
+            # Block ``_receive_loop`` so the heartbeat task gets a
+            # turn to capture the callbacks before the session's
+            # lifecycle ends. Cancellation of the run task wakes
+            # the wait via :class:`CancelledError`.
+            await parked.wait()
+            raise StopAsyncIteration
+
+    ws = _ParkingWs()
+    controller = _make_controller(config_dir=tmp_path)
+    controller._db.bus = MagicMock()
+
+    captured: dict[str, Any] = {}
+    heartbeat_started = asyncio.Event()
+
+    async def _capturing_heartbeat(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        captured["send_ping"] = send_ping
+        captured["on_dead"] = on_dead
+        heartbeat_started.set()
+        # Park until the test signals via cancellation.
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(_peer_link_module, "run_peer_link_heartbeat", _capturing_heartbeat)
+
+    run_task = asyncio.create_task(
+        _peer_link_module._run_peer_link_session(
+            controller=controller,
+            ws=ws,  # type: ignore[arg-type]
+            session=responder,
+            dashboard_id="alpha",
+            peer_ip="127.0.0.1",
+        )
+    )
+    # Wait for ``_run_peer_link_session`` to register and kick off
+    # the heartbeat task — the helper sets ``heartbeat_started``
+    # the moment its callbacks land in ``captured``.
+    await asyncio.wait_for(heartbeat_started.wait(), timeout=2.0)
+
+    # Exercise ``_send_ping`` — the closure encrypts and sends a
+    # ping frame through ``send_app_frame``.
+    ok = await captured["send_ping"](7)
+    assert ok is True
+    decrypted = _json.loads(initiator.decrypt(ws.sends[-1]))
+    assert decrypted == {"type": "ping", "nonce": 7}
+
+    # Exercise ``_on_dead`` — the closure calls
+    # ``session.terminate(HEARTBEAT_TIMEOUT)`` which encrypts a
+    # ``terminate`` frame, sends it, then closes the WS.
+    await captured["on_dead"]()
+    final = _json.loads(initiator.decrypt(ws.sends[-1]))
+    assert final == {"type": "terminate", "reason": "heartbeat_timeout"}
+    assert ws.closed
+
+    run_task.cancel()
+    await asyncio.gather(run_task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_run_peer_link_heartbeat_propagates_cancellation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Cancelling the heartbeat task surfaces as ``CancelledError``, not a silent return.
@@ -1692,15 +1830,24 @@ async def test_heartbeat_loop_propagates_cancellation(
     parent coroutine. The parent's ``contextlib.suppress(CancelledError)``
     is the right layer to absorb it.
     """
-    _initiator, responder = _noise_pair()
-    session, _ws = _make_unit_session(responder)
-
     # Use a long interval so the task is reliably parked in
     # ``asyncio.sleep`` when we cancel.
-    monkeypatch.setattr(_peer_link_module, "_HEARTBEAT_INTERVAL_SECONDS", 10.0)
+    monkeypatch.setattr(_peer_link_module, "HEARTBEAT_INTERVAL_SECONDS", 10.0)
     monkeypatch.setattr(_peer_link_module, "_monotonic", lambda: 0.0)
 
-    task = asyncio.create_task(_peer_link_module._heartbeat_loop(session))
+    async def _noop_send(_nonce: int) -> bool:
+        return True
+
+    async def _noop_dead() -> None:
+        pass
+
+    task = asyncio.create_task(
+        _peer_link_module.run_peer_link_heartbeat(
+            send_ping=_noop_send,
+            last_pong_at=lambda: 0.0,
+            on_dead=_noop_dead,
+        )
+    )
     # Yield once so the task enters its sleep; then cancel.
     await asyncio.sleep(0)
     task.cancel()

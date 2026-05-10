@@ -22,20 +22,27 @@ import hashlib
 import secrets
 from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
+import aiohttp
 import pytest
-from aiohttp import web
+from aiohttp import WSMessage, WSMsgType, web
 from aiohttp.test_utils import TestServer
 from cryptography.hazmat.primitives.asymmetric.x25519 import X25519PrivateKey
+from noise.exceptions import NoiseInvalidMessage
 
+from esphome_device_builder.controllers import remote_build as rb
 from esphome_device_builder.controllers import remote_build_peer_link_client
 from esphome_device_builder.controllers.remote_build import RemoteBuildController
 from esphome_device_builder.controllers.remote_build_peer_link import (
     PEER_LINK_PATH,
+    PeerLinkChannel,
     make_peer_link_handler,
 )
 from esphome_device_builder.controllers.remote_build_peer_link_client import (
+    PairStatusResult,
+    PeerLinkClient,
     PeerLinkClientError,
     RequestPairResult,
     _build_ws_url,
@@ -43,7 +50,9 @@ from esphome_device_builder.controllers.remote_build_peer_link_client import (
     preview_pair,
     request_pair,
 )
+from esphome_device_builder.helpers import json as _json
 from esphome_device_builder.helpers.api import CommandError
+from esphome_device_builder.helpers.event_bus import EventBus
 from esphome_device_builder.helpers.peer_link_identity import (
     get_or_create_peer_link_identity,
 )
@@ -71,6 +80,54 @@ def _make_controller(*, config_dir: Path) -> RemoteBuildController:
     db.settings = MagicMock()
     db.settings.config_dir = config_dir
     return RemoteBuildController(db)
+
+
+class _CapturedEvents(list[dict]):
+    """A list of captured event payloads with an :class:`asyncio.Event` that fires on each append.
+
+    Subclassing ``list`` keeps the natural ``captured[0]["reason"]``
+    / ``len(captured)`` access shape that callers expect; the
+    extra :attr:`received` event lets a test ``await asyncio.wait_for(
+    captured.received.wait(), timeout=...)`` instead of polling
+    on a ``for _ in range(N): sleep(0.01)`` loop.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.received = asyncio.Event()
+
+    def append(self, item: dict) -> None:
+        super().append(item)
+        self.received.set()
+
+
+def capture_events(bus: EventBus, event_type: EventType) -> _CapturedEvents:
+    """Subscribe to *event_type* on *bus* and return a list captured-as-they-fire.
+
+    Each fired event's ``data`` payload is materialised into a
+    plain dict and appended. Returned object is a ``list`` subclass
+    with a ``received`` :class:`asyncio.Event` that's set on every
+    append — use ``await asyncio.wait_for(captured.received.wait(),
+    timeout=...)`` to block until the first event lands rather
+    than polling.
+    """
+    captured = _CapturedEvents()
+    bus.add_listener(event_type, lambda event: captured.append(dict(event.data)))
+    return captured
+
+
+async def cancel_and_drain(task: asyncio.Task[Any]) -> None:
+    """Cancel *task* and await its termination, swallowing the resulting CancelledError.
+
+    Equivalent to ``task.cancel(); contextlib.suppress(...) +
+    await``, but written with :func:`asyncio.gather` so the
+    exception is captured by the gather aggregation rather than
+    propagating into the test body. Use at end-of-test cleanup
+    where the cancellation was the test's intended teardown
+    signal — not where the test asserts on the cancellation.
+    """
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest.fixture
@@ -2086,3 +2143,985 @@ async def test_pair_status_listener_loop_backs_off_on_unexpected_status(
     # Two poll attempts (OK → backoff → REJECTED → terminal).
     assert calls == 2
     assert ("rcv.local", 6055) not in offloader._pairings
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a-2 — PeerLinkClient long-lived offloader-side session.
+# ---------------------------------------------------------------------------
+
+
+def _build_handshake_pair() -> tuple[PeerLinkNoiseSession, PeerLinkNoiseSession]:
+    """Drive a 3-message Noise XX handshake against itself; return both sides finalised."""
+    initiator = PeerLinkNoiseSession.initiator(secrets.token_bytes(32))
+    responder = PeerLinkNoiseSession.responder(secrets.token_bytes(32))
+    responder.read_handshake_message(initiator.write_handshake_message(b""))
+    initiator.read_handshake_message(responder.write_handshake_message(b""))
+    responder.read_handshake_message(initiator.write_handshake_message(b""))
+    return initiator, responder
+
+
+class _ParkingWs:
+    """Async-iterable fake WS that parks ``__anext__`` until ``close()`` is called.
+
+    Used in unit tests for :meth:`PeerLinkClient._run_session_loops`
+    where we want the receive loop to park until something else
+    (a stubbed heartbeat, a manual close call) wakes it. Once
+    ``close()`` runs, the parked ``__anext__`` raises
+    :class:`StopAsyncIteration` and the receive loop exits.
+    """
+
+    def __init__(self, closed_event: asyncio.Event) -> None:
+        self._closed_event = closed_event
+        self.closed = False
+
+    async def send_bytes(self, _data: bytes) -> None:  # pragma: no cover — no-op
+        pass
+
+    async def close(self) -> None:
+        self.closed = True
+        self._closed_event.set()
+
+    def __aiter__(self) -> _ParkingWs:
+        return self
+
+    async def __anext__(self) -> Any:
+        await self._closed_event.wait()
+        raise StopAsyncIteration
+
+
+async def _seed_approved_peer_for_initiator(
+    receiver_controller: RemoteBuildController,
+    *,
+    dashboard_id: str,
+    initiator_priv: bytes,
+) -> None:
+    """Seed an APPROVED ``StoredPeer`` on the receiver matching *initiator_priv*."""
+    initiator_pub = (
+        X25519PrivateKey.from_private_bytes(initiator_priv).public_key().public_bytes_raw()
+    )
+    receiver_controller._approved_peers[dashboard_id] = StoredPeer(
+        dashboard_id=dashboard_id,
+        pin_sha256=hashlib.sha256(initiator_pub).hexdigest(),
+        static_x25519_pub=initiator_pub,
+        label=dashboard_id,
+        paired_at=1.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_fires_opened_after_handshake(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+) -> None:
+    """A real PeerLinkClient against a real receiver fires OFFLOADER_PEER_LINK_OPENED."""
+    server, receiver, _ = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+    await _seed_approved_peer_for_initiator(
+        receiver, dashboard_id="alpha", initiator_priv=initiator_priv
+    )
+
+    bus = EventBus()
+    opened = capture_events(bus, EventType.OFFLOADER_PEER_LINK_OPENED)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(opened.received.wait(), timeout=2.0)
+        assert len(opened) == 1
+        assert opened[0]["receiver_hostname"] == "127.0.0.1"
+        assert opened[0]["receiver_port"] == server.port
+    finally:
+        await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_fires_closed_on_cancel(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+) -> None:
+    """Cancelling the client task fires OFFLOADER_PEER_LINK_CLOSED with client_stopped."""
+    server, receiver, _ = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+    await _seed_approved_peer_for_initiator(
+        receiver, dashboard_id="alpha", initiator_priv=initiator_priv
+    )
+
+    bus = EventBus()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+    opened = asyncio.Event()
+    bus.add_listener(EventType.OFFLOADER_PEER_LINK_OPENED, lambda e: opened.set())
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    await asyncio.wait_for(opened.wait(), timeout=2.0)
+
+    await cancel_and_drain(task)
+
+    # CancelledError handler in run() fires CLOSED before
+    # propagating. Reason is "client_stopped" because the
+    # offloader-side initiated.
+    assert len(closed) >= 1
+    assert closed[-1]["reason"] == "client_stopped"
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_orphans_on_superseded(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+) -> None:
+    """A receiver-side ``terminate{reason: superseded}`` orphans the client.
+
+    Reconnecting after a superseded close would just collide
+    with the offloader instance that took our slot. Drive this
+    by running two clients with the same dashboard_id /
+    initiator_priv against one receiver — the second connect
+    kicks the first via ``terminate{reason: superseded}``, the
+    first's run loop sees that and orphans rather than retrying.
+    """
+    server, receiver, _ = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+    await _seed_approved_peer_for_initiator(
+        receiver, dashboard_id="alpha", initiator_priv=initiator_priv
+    )
+
+    bus = EventBus()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+    opened1 = asyncio.Event()
+    opened2 = asyncio.Event()
+
+    def _on_open(e: Any) -> None:
+        if not opened1.is_set():
+            opened1.set()
+        else:
+            opened2.set()
+
+    bus.add_listener(EventType.OFFLOADER_PEER_LINK_OPENED, _on_open)
+
+    client1 = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task1 = asyncio.create_task(client1.run())
+    await asyncio.wait_for(opened1.wait(), timeout=2.0)
+
+    client2 = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task2 = asyncio.create_task(client2.run())
+    try:
+        await asyncio.wait_for(opened2.wait(), timeout=2.0)
+        # Wait for client1 to observe the superseded close. ``run()``
+        # exits cleanly (returns) on superseded — no exception to
+        # gather around — so the wait_for can target the task directly.
+        await asyncio.wait_for(asyncio.shield(task1), timeout=2.0)
+        assert client1.is_orphaned
+        # The first close event should carry the superseded reason.
+        superseded_events = [c for c in closed if c["reason"] == "superseded"]
+        assert len(superseded_events) >= 1
+    finally:
+        await cancel_and_drain(task2)
+        if not task1.done():
+            await cancel_and_drain(task1)
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_reconnects_on_transport_error(
+    monkeypatch: pytest.MonkeyPatch,
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+) -> None:
+    """A failed connect retries with backoff; succeed on second attempt.
+
+    Drives one client against an initially-unreachable port,
+    flips it to the live receiver after one failure, and asserts
+    the client opens a session against the second target. Pins
+    the auto-reconnect contract without waiting the full
+    1-second backoff (monkey-patches the initial backoff to
+    near-zero so the test finishes promptly).
+    """
+    monkeypatch.setattr(remote_build_peer_link_client, "_RECONNECT_INITIAL_BACKOFF_SECONDS", 0.01)
+
+    server, receiver, _ = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+    await _seed_approved_peer_for_initiator(
+        receiver, dashboard_id="alpha", initiator_priv=initiator_priv
+    )
+
+    bus = EventBus()
+    opened = asyncio.Event()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+    bus.add_listener(EventType.OFFLOADER_PEER_LINK_OPENED, lambda e: opened.set())
+
+    # Start with a (mostly) unreachable port — connect to a
+    # closed local port returns ECONNREFUSED quickly. Use the
+    # client's own state to flip the target to the live port
+    # after one failure lands.
+    failed = asyncio.Event()
+
+    class _RetargetingClient(PeerLinkClient):
+        async def _run_one_session(self) -> str:  # type: ignore[override]
+            reason = await super()._run_one_session()
+            if reason == "transport_error" and not failed.is_set():
+                self._port = server.port
+                failed.set()
+            return reason
+
+    client = _RetargetingClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=1,  # privileged + closed; ECONNREFUSED
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(opened.wait(), timeout=5.0)
+        # First close was the transport error against port 1.
+        assert any(c["reason"] == "transport_error" for c in closed)
+    finally:
+        await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_send_ping_routes_through_channel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ``send_ping`` callback handed to the heartbeat sends a PING via the channel.
+
+    Covers the body of the inner ``_send_ping`` closure inside
+    :meth:`PeerLinkClient._run_session_loops`. The closure
+    encrypts a ``{"type": "ping", "nonce": N}`` frame and writes
+    it to the WS — it's small, but unstubbed-heartbeat tests
+    don't otherwise reach it (the other heartbeat regressions
+    here stub :func:`run_peer_link_heartbeat` to a no-op rather
+    than driving the callback).
+    """
+    initiator, responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+    ping_sent = asyncio.Event()
+
+    sent_frames: list[bytes] = []
+
+    class _RecordingWs(_ParkingWs):
+        async def send_bytes(self, data: bytes) -> None:
+            sent_frames.append(data)
+            ping_sent.set()
+
+    ws = _RecordingWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _ping_then_park(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        await send_ping(42)
+        await closed_event.wait()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _ping_then_park)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+    drive_task = asyncio.create_task(client._run_session_loops(channel))
+    await asyncio.wait_for(ping_sent.wait(), timeout=2.0)
+    decoded = _json.loads(responder.decrypt(sent_frames[0]))
+    assert decoded == {"type": "ping", "nonce": 42}
+
+    closed_event.set()
+    await drive_task
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_returns_heartbeat_timeout_when_dead(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The heartbeat ``on_dead`` callback writes ``heartbeat_timeout`` into the close reason.
+
+    Regression: pre-fix the receive loop's ``async for`` exited
+    after the heartbeat task closed the WS without overwriting
+    ``close_reason``, so the bus event lied about the cause as
+    ``peer_hung_up``. The fix uses :class:`_SessionLoopState`
+    so heartbeat-driven closes write the real cause into a
+    field both loops share.
+
+    Stubs ``run_peer_link_heartbeat`` to invoke its provided
+    ``on_dead`` immediately, then closes the parking WS — the
+    receive loop exits and returns the populated close reason.
+    No real timing involved.
+    """
+    initiator, _responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+    ws = _ParkingWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _fake_heartbeat(
+        *,
+        send_ping: Any,
+        last_pong_at: Any,
+        on_dead: Any,
+    ) -> None:
+        await on_dead()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _fake_heartbeat)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+
+    close_reason = await client._run_session_loops(channel)
+
+    assert close_reason == "heartbeat_timeout"
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_backoff_advances_when_session_never_opens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Repeated never-opened sessions advance backoff exponentially; openings reset it.
+
+    Regression: pre-fix the run loop checked
+    ``_last_close_reason``, which only got set on the
+    auth-rejected path; transport errors left it ``None`` and
+    every iteration reset the backoff. The fix tracks
+    ``_session_was_opened`` and only resets the backoff when
+    the previous session reached ``intent_response: ok``.
+
+    Stubs out ``_run_one_session`` so the test controls the
+    sequence of "did this iteration open a session?" deterministically,
+    and stubs ``asyncio.sleep`` to capture the requested
+    backoff windows without actually sleeping.
+    """
+    initial = 1.0
+    cap = 30.0
+    monkeypatch.setattr(
+        remote_build_peer_link_client, "_RECONNECT_INITIAL_BACKOFF_SECONDS", initial
+    )
+    monkeypatch.setattr(remote_build_peer_link_client, "_RECONNECT_MAX_BACKOFF_SECONDS", cap)
+
+    backoffs_observed: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def _capturing_sleep(delay: float) -> None:
+        if delay >= initial:
+            backoffs_observed.append(delay)
+        await real_sleep(0)
+
+    monkeypatch.setattr(remote_build_peer_link_client.asyncio, "sleep", _capturing_sleep)
+
+    bus = EventBus()
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=bus,
+    )
+
+    # Iteration plan: (was_opened, close_reason)
+    #   1. transport_error, never opened → backoff doubles 1 → 2
+    #   2. transport_error, never opened → backoff doubles 2 → 4
+    #   3. peer_hung_up,    *opened*    → backoff resets to 1
+    #   4. transport_error, never opened → backoff doubles 1 → 2
+    plan = [
+        (False, "transport_error"),
+        (False, "transport_error"),
+        (True, "peer_hung_up"),
+        (False, "transport_error"),
+    ]
+    plan_iter = iter(plan)
+
+    async def _fake_run_one_session() -> str:
+        try:
+            opened, reason = next(plan_iter)
+        except StopIteration:
+            # No more iterations — orphan the client so run()
+            # exits cleanly.
+            client._orphaned = True
+            return "superseded"
+        client._session_was_opened = opened
+        return reason
+
+    monkeypatch.setattr(client, "_run_one_session", _fake_run_one_session)
+
+    await client.run()
+
+    assert backoffs_observed == [2.0, 4.0, 1.0, 2.0]
+
+
+def test_peer_link_client_exposes_receiver_coordinates() -> None:
+    """``receiver_hostname`` / ``receiver_port`` properties echo the constructor args."""
+    client = PeerLinkClient(
+        receiver_hostname="10.0.0.5",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+    assert client.receiver_hostname == "10.0.0.5"
+    assert client.receiver_port == 6055
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_returns_transport_error_on_type_error(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A ``TypeError`` from the handshake (e.g. non-binary frame) maps to ``transport_error``.
+
+    Covers the ``TypeError`` branch of the transport-exception
+    catch in :meth:`PeerLinkClient._run_one_session`.
+    aiohttp's ``ClientWebSocketResponse.receive_bytes()`` raises
+    ``TypeError`` when the peer sends a TEXT frame or closes
+    abruptly mid-handshake; without this branch the exception
+    would bubble out and kill the long-lived task instead of
+    triggering a reconnect.
+    """
+    server, _receiver, _ = receiver_server
+
+    async def _typeerror_handshake(**kwargs: Any) -> bytes:
+        raise TypeError("Received non-binary message")
+
+    monkeypatch.setattr(
+        remote_build_peer_link_client,
+        "_drive_initiator_handshake_and_read_response",
+        _typeerror_handshake,
+    )
+
+    bus = EventBus()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(closed.received.wait(), timeout=2.0)
+        assert closed[0]["reason"] == "transport_error"
+    finally:
+        await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_returns_transport_error_on_noise_failure(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Noise-side failure during the handshake maps to ``transport_error``.
+
+    Covers the ``except NOISE_ERRORS`` catch in
+    :meth:`PeerLinkClient._run_one_session`. Forces the failure
+    by patching the shared handshake driver to raise a
+    :class:`NoiseInvalidMessage` — any of the
+    :data:`NOISE_ERRORS` tuple's types is sufficient.
+    """
+    server, _receiver, _ = receiver_server
+
+    async def _bad_handshake(**kwargs: Any) -> bytes:
+        raise NoiseInvalidMessage("forced for test")
+
+    monkeypatch.setattr(
+        remote_build_peer_link_client,
+        "_drive_initiator_handshake_and_read_response",
+        _bad_handshake,
+    )
+
+    bus = EventBus()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(closed.received.wait(), timeout=2.0)
+        assert closed[0]["reason"] == "transport_error"
+    finally:
+        await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_auth_rejected_when_dashboard_id_unknown(
+    receiver_server: tuple[TestServer, RemoteBuildController, str],
+) -> None:
+    """An unapproved dashboard_id fires CLOSED with auth_rejected.
+
+    Drives a real handshake against the receiver but skips the
+    ``_seed_approved_peer_for_initiator`` step. The receiver
+    responds ``intent_response: not_paired``; the client surfaces
+    that as the offloader-side ``auth_rejected`` reason on
+    ``OFFLOADER_PEER_LINK_CLOSED``.
+    """
+    server, _receiver, _ = receiver_server
+    bus = EventBus()
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="never-paired",
+        bus=bus,
+    )
+    task = asyncio.create_task(client.run())
+    try:
+        await asyncio.wait_for(closed.received.wait(), timeout=2.0)
+        assert closed[0]["reason"] == "auth_rejected"
+    finally:
+        await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_responds_to_peer_ping(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PING from the receiver is answered with a PONG and the loop keeps running."""
+    initiator, responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+    pong_sent = asyncio.Event()
+
+    sent_frames: list[bytes] = []
+
+    class _PingingWs(_ParkingWs):
+        def __init__(self, evt: asyncio.Event) -> None:
+            super().__init__(evt)
+            self._delivered = False
+
+        async def send_bytes(self, data: bytes) -> None:
+            sent_frames.append(data)
+            pong_sent.set()
+
+        async def __anext__(self) -> Any:
+            if not self._delivered:
+                self._delivered = True
+                ping = responder.encrypt(_json.dumps({"type": "ping", "nonce": 7}))
+                return WSMessage(type=WSMsgType.BINARY, data=ping, extra="")
+            await self._closed_event.wait()
+            raise StopAsyncIteration
+
+    ws = _PingingWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _idle_heartbeat(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        await closed_event.wait()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _idle_heartbeat)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+
+    async def _drive() -> str:
+        return await client._run_session_loops(channel)
+
+    drive_task = asyncio.create_task(_drive())
+    await asyncio.wait_for(pong_sent.wait(), timeout=2.0)
+    decoded = _json.loads(responder.decrypt(sent_frames[0]))
+    assert decoded == {"type": "pong", "nonce": 7}
+
+    closed_event.set()
+    reason = await drive_task
+    assert reason == "peer_hung_up"
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_bumps_last_pong_on_pong(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A PONG from the receiver bumps ``last_pong_at`` so the next heartbeat sees fresh activity."""
+    initiator, responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+
+    class _PongingWs(_ParkingWs):
+        def __init__(self, evt: asyncio.Event) -> None:
+            super().__init__(evt)
+            self._delivered = False
+
+        async def __anext__(self) -> Any:
+            if not self._delivered:
+                self._delivered = True
+                pong = responder.encrypt(_json.dumps({"type": "pong", "nonce": 1}))
+                return WSMessage(type=WSMsgType.BINARY, data=pong, extra="")
+            await self._closed_event.wait()
+            raise StopAsyncIteration
+
+    ws = _PongingWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    captured_last_pong: list[float] = []
+    sample_taken = asyncio.Event()
+
+    async def _capturing_heartbeat(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        # Sleep one tick so the receive loop processes the PONG first.
+        await asyncio.sleep(0)
+        captured_last_pong.append(last_pong_at())
+        sample_taken.set()
+        await closed_event.wait()
+
+    monkeypatch.setattr(
+        remote_build_peer_link_client, "run_peer_link_heartbeat", _capturing_heartbeat
+    )
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+    drive_task = asyncio.create_task(client._run_session_loops(channel))
+
+    await asyncio.wait_for(sample_taken.wait(), timeout=2.0)
+
+    closed_event.set()
+    reason = await drive_task
+
+    assert reason == "peer_hung_up"
+    assert captured_last_pong, "heartbeat callback never sampled last_pong_at"
+    # The captured value should be a real loop timestamp; we
+    # mostly care that the PONG branch ran without falling
+    # through to the unknown-msg-type branch (which would have
+    # left ``last_pong_at`` at the initial value).
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_returns_transport_error_on_malformed_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A frame that ``parse_frame`` rejects ends the loop with ``transport_error``."""
+    initiator, _responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+
+    class _GarbageWs(_ParkingWs):
+        def __init__(self, evt: asyncio.Event) -> None:
+            super().__init__(evt)
+            self._delivered = False
+
+        async def __anext__(self) -> Any:
+            if not self._delivered:
+                self._delivered = True
+                # Bytes that won't decrypt — parse_frame returns None.
+                return WSMessage(type=WSMsgType.BINARY, data=b"\x00" * 32, extra="")
+            await self._closed_event.wait()
+            raise StopAsyncIteration
+
+    ws = _GarbageWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _idle_heartbeat(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        await closed_event.wait()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _idle_heartbeat)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+    reason = await client._run_session_loops(channel)
+    assert reason == "transport_error"
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_ignores_unknown_msg_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unknown ``type`` in a valid frame is logged and ignored; the loop keeps running."""
+    initiator, responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+
+    class _UnknownTypeWs(_ParkingWs):
+        def __init__(self, evt: asyncio.Event) -> None:
+            super().__init__(evt)
+            self._delivered = False
+
+        async def __anext__(self) -> Any:
+            if not self._delivered:
+                self._delivered = True
+                frame = responder.encrypt(_json.dumps({"type": "wat", "payload": 1}))
+                return WSMessage(type=WSMsgType.BINARY, data=frame, extra="")
+            await self._closed_event.wait()
+            raise StopAsyncIteration
+
+    ws = _UnknownTypeWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _idle_heartbeat(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        await closed_event.wait()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _idle_heartbeat)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+    drive_task = asyncio.create_task(client._run_session_loops(channel))
+    # The fake WS delivers the unknown frame on the first
+    # ``__anext__`` and then awaits ``closed_event`` on the next
+    # call. Setting it now lets the receive loop process the
+    # unknown frame (logged + ignored) and exit cleanly.
+    closed_event.set()
+    reason = await drive_task
+    # Default close reason — neither malformed nor terminate; the
+    # unknown frame was logged and dropped, the loop fell through
+    # to the WS close.
+    assert reason == "peer_hung_up"
+
+
+@pytest.mark.asyncio
+async def test_run_session_loops_on_dead_swallows_aiohttp_close_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A heartbeat-driven close that raises ``aiohttp.ClientError`` doesn't crash the task.
+
+    Regression: the offloader-side ``_on_dead`` callback in
+    :meth:`PeerLinkClient._run_session_loops` originally
+    suppressed only ``OSError`` / ``RuntimeError`` around
+    ``ws.close()``. ``aiohttp.ClientWebSocketResponse.close()``
+    can raise ``ClientError`` when the peer has already
+    disappeared; that exception would crash the heartbeat task
+    and let the receive loop fall through to its
+    ``peer_hung_up`` default, masking the real
+    ``heartbeat_timeout`` cause.
+
+    Forces the failure by replacing the parking WS's ``close``
+    with one that raises ``aiohttp.ClientConnectionError``;
+    drives the receive loop via a stub heartbeat that fires
+    ``on_dead`` immediately; asserts the close reason is still
+    ``heartbeat_timeout``.
+    """
+    initiator, _responder = _build_handshake_pair()
+    closed_event = asyncio.Event()
+
+    class _RaisingCloseWs(_ParkingWs):
+        async def close(self) -> None:
+            self.closed = True
+            self._closed_event.set()
+            raise aiohttp.ClientConnectionError("forced for test")
+
+    ws = _RaisingCloseWs(closed_event)
+    channel = PeerLinkChannel(noise=initiator, ws=ws, log_label="127.0.0.1:6055")
+
+    async def _fire_on_dead(*, send_ping: Any, last_pong_at: Any, on_dead: Any) -> None:
+        await on_dead()
+
+    monkeypatch.setattr(remote_build_peer_link_client, "run_peer_link_heartbeat", _fire_on_dead)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=6055,
+        identity_priv=secrets.token_bytes(32),
+        dashboard_id="alpha",
+        bus=EventBus(),
+    )
+
+    close_reason = await client._run_session_loops(channel)
+    assert close_reason == "heartbeat_timeout"
+
+
+# ---------------------------------------------------------------------------
+# Phase 5a-2 — RemoteBuildController peer-link client task lifecycle.
+# ---------------------------------------------------------------------------
+
+
+def _prime_offloader_identity_for_spawn(controller: RemoteBuildController) -> None:
+    """Set the identity prerequisites :meth:`_spawn_peer_link_client` checks before spawning.
+
+    Production wires these in :meth:`start`; tests that bypass
+    ``start`` can call this helper to flip the same flags
+    directly. ``_db.bus`` is a separate prerequisite — set it
+    explicitly on the test (typically to a ``MagicMock`` or
+    ``EventBus`` depending on what's being asserted).
+    """
+    controller._offloader_dashboard_id = "test-dashboard"
+    controller._offloader_peer_link_priv = secrets.token_bytes(32)
+
+
+@pytest.mark.asyncio
+async def test_await_pair_status_flip_self_removes_listener_on_terminal_exit(
+    offloader_controller_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A listener that exits via terminal result deletes its own slot in ``_pair_status_listeners``.
+
+    Covers the ``self._pair_status_listeners.get(key) is asyncio.current_task()``
+    branch's ``del`` line in :meth:`_await_pair_status_flip`'s
+    ``finally``. The slot is only removed when nobody else has
+    replaced the task in the meantime — re-pair flows pop the
+    old task from the slot before installing the new one, so
+    the old task's finally must NOT pop the replacement (the
+    rationale documented inline at the production site).
+    """
+
+    async def _approved_round_trip(**kwargs: Any) -> PairStatusResult:
+        return PairStatusResult(status=IntentResponse.APPROVED, pin_sha256="a" * 64)
+
+    monkeypatch.setattr(rb, "peer_link_await_pair_status", _approved_round_trip)
+
+    offloader = _make_offloader_controller(config_dir=offloader_controller_dir)
+    offloader._db.bus = MagicMock()
+    pubkey = b"\xab" * 32
+    pin = hashlib.sha256(pubkey).hexdigest()
+    pairing = _stub_pairing(
+        receiver_hostname="rcv.local",
+        receiver_port=6055,
+        pin_sha256=pin,
+        static_x25519_pub=pubkey,
+        status=PeerStatus.PENDING,
+    )
+    offloader._pairings[("rcv.local", 6055)] = pairing
+    offloader._spawn_pair_status_listener(pairing)
+    listener = offloader._pair_status_listeners[("rcv.local", 6055)]
+
+    await listener
+
+    assert ("rcv.local", 6055) not in offloader._pair_status_listeners
+
+
+@pytest.mark.asyncio
+async def test_spawn_peer_link_client_idempotent_when_task_running(
+    offloader_controller_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A second :meth:`_spawn_peer_link_client` for the same key is a no-op.
+
+    Covers the ``existing is not None and not existing.done()``
+    early-return branch in :meth:`_spawn_peer_link_client`.
+    Without it, an apply-pair-status-result that lands twice (e.g.
+    a re-pair race against an already-running client) would
+    replace the live task and leak the original.
+    """
+    park = asyncio.Event()
+
+    async def _parked_run(self: PeerLinkClient) -> None:
+        await park.wait()
+
+    monkeypatch.setattr(PeerLinkClient, "run", _parked_run)
+
+    offloader = _make_offloader_controller(config_dir=offloader_controller_dir)
+    offloader._db.bus = MagicMock()
+    _prime_offloader_identity_for_spawn(offloader)
+    pairing = _stub_pairing(
+        receiver_hostname="rcv.local", receiver_port=6055, status=PeerStatus.APPROVED
+    )
+
+    offloader._spawn_peer_link_client(pairing)
+    await asyncio.sleep(0)
+    first_task = offloader._peer_link_clients[("rcv.local", 6055)]
+
+    offloader._spawn_peer_link_client(pairing)
+    await asyncio.sleep(0)
+
+    assert offloader._peer_link_clients[("rcv.local", 6055)] is first_task
+    park.set()
+    await cancel_and_drain(first_task)
+
+
+@pytest.mark.asyncio
+async def test_cancel_peer_link_client_cancels_running_task(
+    offloader_controller_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """:meth:`_cancel_peer_link_client` pops + cancels a running task.
+
+    Covers the ``task is not None and not task.done()`` branch
+    (including the ``task.cancel()`` line) in
+    :meth:`_cancel_peer_link_client`. The unpair path relies on
+    this to close the long-lived Noise WS promptly when the user
+    drops a pairing.
+    """
+    park = asyncio.Event()
+
+    async def _parked_run(self: PeerLinkClient) -> None:
+        await park.wait()
+
+    monkeypatch.setattr(PeerLinkClient, "run", _parked_run)
+
+    offloader = _make_offloader_controller(config_dir=offloader_controller_dir)
+    offloader._db.bus = MagicMock()
+    _prime_offloader_identity_for_spawn(offloader)
+    pairing = _stub_pairing(
+        receiver_hostname="rcv.local", receiver_port=6055, status=PeerStatus.APPROVED
+    )
+    offloader._spawn_peer_link_client(pairing)
+    await asyncio.sleep(0)
+    task = offloader._peer_link_clients[("rcv.local", 6055)]
+
+    offloader._cancel_peer_link_client("rcv.local", 6055)
+
+    assert ("rcv.local", 6055) not in offloader._peer_link_clients
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_stop_drains_peer_link_clients(
+    offloader_controller_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """:meth:`stop` cancels every peer-link client task and clears the registry.
+
+    Covers the drain loop at the top of :meth:`stop` —
+    ``for task in self._peer_link_clients.values(): task.cancel()``
+    plus the ``await asyncio.gather(...)`` and the subsequent
+    ``self._peer_link_clients.clear()``.
+    """
+    park = asyncio.Event()
+
+    async def _parked_run(self: PeerLinkClient) -> None:
+        await park.wait()
+
+    monkeypatch.setattr(PeerLinkClient, "run", _parked_run)
+
+    offloader = _make_offloader_controller(config_dir=offloader_controller_dir)
+    offloader._db.bus = MagicMock()
+    _prime_offloader_identity_for_spawn(offloader)
+    for host, port in (("a.local", 6055), ("b.local", 6055)):
+        offloader._spawn_peer_link_client(
+            _stub_pairing(receiver_hostname=host, receiver_port=port, status=PeerStatus.APPROVED)
+        )
+    await asyncio.sleep(0)
+    tasks = list(offloader._peer_link_clients.values())
+    assert len(tasks) == 2
+
+    await offloader.stop()
+
+    assert offloader._peer_link_clients == {}
+    for task in tasks:
+        assert task.done()
+    # ``stop()`` already drained these tasks; gather one more time
+    # with ``return_exceptions=True`` so the test absorbs each
+    # task's captured ``CancelledError`` without it surfacing.
+    await asyncio.gather(*tasks, return_exceptions=True)
