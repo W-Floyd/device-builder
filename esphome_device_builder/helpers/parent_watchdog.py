@@ -157,7 +157,13 @@ def _wait_for_parent_handle_windows(parent_pid: int) -> bool:
     """
     import ctypes  # noqa: PLC0415 — Windows-only path, deferred to keep import cost off non-Windows
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    # ``WinDLL`` is only exposed by ``ctypes`` on Windows; type checkers
+    # running on Linux / macOS for CI see ``ctypes`` without it. The
+    # ``getattr`` avoids the ``attr-defined`` complaint while keeping
+    # the runtime behaviour identical (this function is only ever
+    # reached on win32 — :func:`watch_parent_and_exit_on_death` dispatches
+    # on :data:`sys.platform`).
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     handle = kernel32.OpenProcess(_WIN_PROCESS_SYNCHRONIZE, False, parent_pid)
     if not handle:
         # No permission or process already gone — caller
@@ -166,8 +172,11 @@ def _wait_for_parent_handle_windows(parent_pid: int) -> bool:
         # an immediate self-shutdown on startup.
         return False
     try:
+        # ``kernel32`` calls return ``Any`` (untyped C bindings) — the
+        # explicit ``bool()`` coerces the comparison so mypy doesn't
+        # flag the return as leaking ``Any`` to the caller.
         result = kernel32.WaitForSingleObject(handle, _WIN_INFINITE)
-        return result == _WIN_WAIT_OBJECT_0
+        return bool(result == _WIN_WAIT_OBJECT_0)
     finally:
         kernel32.CloseHandle(handle)
 
