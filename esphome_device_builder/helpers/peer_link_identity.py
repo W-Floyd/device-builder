@@ -13,13 +13,15 @@ is derived from the private key via :mod:`cryptography`'s
 half is recomputed each load rather than persisted, so a corrupted
 public-key file can't desync from the private half.
 
-This identity is **separate** from the dashboard's Ed25519 cert
-keypair (``.device-builder-key.pem``). The cert remains the
-dashboard's TLS identity for any externally-fronted HTTPS use;
-the X25519 keypair here is the dashboard's identity for
+This X25519 keypair is the dashboard's sole cryptographic
+identity for the remote-build feature. It drives the Noise XX
+mutual-authentication handshake in
 :class:`~esphome_device_builder.helpers.peer_link_noise.PeerLinkNoiseSession`
-(the Noise XX peer-link channel). The two have independent
-rotation lifecycles.
+and the SHA-256 of its public key is the ``pin_sha256`` that
+peers OOB-verify during pairing and broadcast in mDNS TXT.
+:mod:`helpers.dashboard_identity` composes this key's
+fingerprint with the persistent ``dashboard_id`` for the
+Settings UI.
 
 Generation is one ``X25519PrivateKey.generate()`` call plus a
 single atomic file write. Sync and blocking; async callers must
