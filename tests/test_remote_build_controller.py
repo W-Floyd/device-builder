@@ -21,7 +21,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from aiohttp_asyncmdnsresolver.api import AsyncDualMDNSResolver
 from zeroconf import ServiceStateChange
+from zeroconf.asyncio import AsyncZeroconf
 
 from esphome_device_builder.controllers.remote_build import RemoteBuildController
 from esphome_device_builder.controllers.remote_build import controller as rb
@@ -1319,6 +1321,137 @@ async def test_start_skips_when_zeroconf_unavailable(tmp_path: Path) -> None:
     controller._db.devices.zeroconf = None
     await controller.start()
     assert controller._browser is None
+
+
+@pytest.mark.asyncio
+async def test_start_leaves_peer_link_resolver_none_when_devices_controller_missing(
+    tmp_path: Path,
+) -> None:
+    """
+    No devices controller → no shared zeroconf → no mDNS resolver.
+
+    The peer-link clients accept ``resolver=None`` and fall back
+    to ``aiohttp``'s default OS resolver, preserving the
+    pre-mDNS-resolver behaviour for paths where the device-state
+    monitor never came up.
+    """
+    db = MagicMock()
+    db.devices = None
+    db.settings = MagicMock()
+    db.settings.config_dir = tmp_path
+    controller = RemoteBuildController(db)
+    await controller.start()
+    assert controller._peer_link_resolver is None
+
+
+@pytest.mark.asyncio
+async def test_start_leaves_peer_link_resolver_none_when_zeroconf_failed_to_bind(
+    tmp_path: Path,
+) -> None:
+    """
+    Devices controller up but zeroconf missing → no mDNS resolver.
+
+    Mirrors :class:`DeviceStateMonitor`'s fail-soft contract:
+    a zeroconf-side failure leaves the dashboard running but
+    without mDNS, and outbound peer-link connects fall back to
+    the OS resolver the same way the legacy plumbing did.
+    """
+    controller = _make_controller(config_dir=tmp_path)
+    controller._db.devices.zeroconf = None
+    await controller.start()
+    assert controller._peer_link_resolver is None
+
+
+@pytest.mark.asyncio
+async def test_start_swallows_peer_link_resolver_construction_errors(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A constructor-side resolver failure leaves the controller in a no-resolver state.
+
+    The upstream :class:`aiohttp.resolver.AsyncResolver`
+    ``__init__`` raises ``RuntimeError("Resolver requires
+    aiodns library")`` when ``aiodns`` isn't installed; the
+    transitive dep is usually present but a lean env path could
+    legitimately drop it. The controller must keep startup
+    going (same contract as the zeroconf-down branch) — the
+    resolver stays ``None`` and outbound connects fall back to
+    the OS resolver.
+    """
+    monkeypatch.setattr(
+        "esphome_device_builder.controllers.remote_build.controller.make_peer_link_resolver",
+        MagicMock(side_effect=RuntimeError("aiodns not installed")),
+    )
+    controller = _make_controller(config_dir=tmp_path)
+    controller._db.devices.zeroconf = MagicMock(spec=AsyncZeroconf)
+    with caplog.at_level(
+        "ERROR", logger="esphome_device_builder.controllers.remote_build.controller"
+    ):
+        await controller.start()
+    try:
+        assert controller._peer_link_resolver is None
+        assert any("Could not build peer-link mDNS resolver" in r.message for r in caplog.records)
+    finally:
+        await controller.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_swallows_peer_link_resolver_close_failures(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """
+    A failure in ``real_close`` doesn't crash ``stop``.
+
+    The teardown path must finish unwinding the rest of the
+    controller's state — peer-link clients, listener
+    unregistrations, debounced-save flush — even if the
+    underlying ``aiodns`` close raises. Logged at DEBUG and
+    swallowed; the resolver reference is cleared either way so
+    a subsequent ``start`` reconstructs cleanly.
+    """
+    controller = _make_controller(config_dir=tmp_path)
+    controller._db.devices.zeroconf = MagicMock(spec=AsyncZeroconf)
+    await controller.start()
+    assert controller._peer_link_resolver is not None
+    # Force the close path to raise; the controller should
+    # catch + log + clear the reference rather than propagate.
+    controller._peer_link_resolver.real_close = AsyncMock(  # type: ignore[method-assign]
+        side_effect=RuntimeError("aiodns gone")
+    )
+    with caplog.at_level(
+        "DEBUG", logger="esphome_device_builder.controllers.remote_build.controller"
+    ):
+        await controller.stop()
+    assert controller._peer_link_resolver is None
+    assert any("peer-link resolver close failed" in r.message for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_start_constructs_peer_link_resolver_when_zeroconf_is_up(
+    tmp_path: Path,
+) -> None:
+    """A bound zeroconf builds the shared mDNS resolver during ``start``.
+
+    The resolver is then handed to every :class:`PeerLinkClient`
+    spawned for an APPROVED pairing, so outbound ``.local``
+    receiver hostnames resolve through mDNS rather than the OS
+    resolver.
+    """
+    controller = _make_controller(config_dir=tmp_path)
+    # The shared fixture defaults ``zeroconf = None``; swap in a
+    # mock so the resolver-setup path doesn't bail on the
+    # availability gate.
+    controller._db.devices.zeroconf = MagicMock(spec=AsyncZeroconf)
+    await controller.start()
+    try:
+        assert controller._peer_link_resolver is not None
+        assert isinstance(controller._peer_link_resolver, AsyncDualMDNSResolver)
+    finally:
+        await controller.stop()
+        assert controller._peer_link_resolver is None
 
 
 @pytest.mark.asyncio
