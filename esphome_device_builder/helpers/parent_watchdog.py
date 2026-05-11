@@ -43,6 +43,7 @@ import logging
 import os
 import signal
 import sys
+import threading
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -121,12 +122,22 @@ async def _watch_unix(parent_pid: int, *, poll_seconds: float) -> None:
     under PID 1 (or a configured subreaper). The change is
     observable on the next ``getppid`` call — no signal
     handler or syscall hook required.
+
+    Worst-case lag between parent death and shutdown is
+    ``poll_seconds`` (the kernel reparents synchronously but
+    we only observe it on the next poll tick).
+
+    Does not catch :exc:`asyncio.CancelledError` — it propagates
+    out so a future caller that awaits the task directly can
+    distinguish "cancelled" from "parent died and we
+    shut down". The current consumer
+    (:meth:`DeviceBuilder._background_tasks` + ``gather(...,
+    return_exceptions=True)``) treats either outcome the same,
+    but suppressing cancellation here would silently regress
+    that distinction.
     """
     while True:
-        try:
-            await asyncio.sleep(poll_seconds)
-        except asyncio.CancelledError:
-            return
+        await asyncio.sleep(poll_seconds)
         current = os.getppid()
         if current != parent_pid:
             _LOGGER.warning(
@@ -143,47 +154,101 @@ async def _watch_unix(parent_pid: int, *, poll_seconds: float) -> None:
 # complain — these names are upstream Win32 macros and stay uppercase
 # by convention.
 _WIN_PROCESS_SYNCHRONIZE = 0x00100000
-_WIN_INFINITE = 0xFFFFFFFF
 _WIN_WAIT_OBJECT_0 = 0
+_WIN_WAIT_TIMEOUT = 0x102
+# ``WaitForSingleObject`` timeout per poll tick, in milliseconds.
+# Same cadence as the Unix path's ``_POLL_SECONDS`` so the
+# cross-platform contract — "shutdown within ~2 s of cancel
+# or parent death" — holds on both. A finite tick is what
+# distinguishes this fix from the previous ``INFINITE`` wait:
+# without it the worker thread can't observe ``cancel_event``
+# and would leak past dashboard shutdown.
+_WIN_POLL_MS = 2000
 
 
-def _wait_for_parent_handle_windows(parent_pid: int) -> bool:
-    """Block on the parent's process handle until it exits.
+def _wait_for_parent_handle_windows(parent_pid: int, cancel_event: threading.Event) -> bool:
+    """Wait for the parent's process handle to be signalled OR for cancel.
 
-    Returns True when the parent exited (i.e. the handle was
-    signalled); False if we couldn't open the handle in the
-    first place. Synchronous on purpose — meant to run inside
+    Polls :c:func:`WaitForSingleObject` with a ``_WIN_POLL_MS``
+    timeout. Each iteration checks the kernel handle (parent
+    exited → ``WAIT_OBJECT_0``) and, on timeout, peeks at
+    *cancel_event* before looping again. The polling loop is
+    what lets :func:`_watch_windows` propagate cancellation
+    back to the worker thread — a previous
+    ``WaitForSingleObject(handle, INFINITE)`` shape would have
+    left the thread blocked in the kernel until the parent
+    actually died (potentially past dashboard shutdown,
+    hanging ``ThreadPoolExecutor.shutdown(wait=True)`` at
+    interpreter exit).
+
+    Returns:
+    * ``True``  — parent process exited (handle signalled).
+    * ``False`` — couldn't open the handle (permission /
+      already gone), or *cancel_event* was set, or
+      ``WaitForSingleObject`` returned an unexpected status
+      (treated as "couldn't observe" rather than "parent
+      died" so we don't race an immediate shutdown at
+      startup).
+
+    Synchronous on purpose — meant to run inside
     :func:`asyncio.to_thread` so the asyncio loop stays free.
     """
     import ctypes  # noqa: PLC0415 — Windows-only path, deferred to keep import cost off non-Windows
 
     # ``WinDLL`` is only exposed by ``ctypes`` on Windows; type checkers
     # running on Linux / macOS for CI see ``ctypes`` without it. The
-    # ``getattr`` avoids the ``attr-defined`` complaint while keeping
-    # the runtime behaviour identical (this function is only ever
-    # reached on win32 — :func:`watch_parent_and_exit_on_death` dispatches
-    # on :data:`sys.platform`).
+    # ``# type: ignore`` keeps mypy quiet while leaving the runtime
+    # behaviour identical (this function is only ever reached on win32
+    # — :func:`watch_parent_and_exit_on_death` dispatches on
+    # :data:`sys.platform`).
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     handle = kernel32.OpenProcess(_WIN_PROCESS_SYNCHRONIZE, False, parent_pid)
     if not handle:
-        # No permission or process already gone — caller
-        # should treat this as "watchdog couldn't engage", not
-        # "parent died". Returning False keeps us from racing
-        # an immediate self-shutdown on startup.
         return False
     try:
-        # ``kernel32`` calls return ``Any`` (untyped C bindings) — the
-        # explicit ``bool()`` coerces the comparison so mypy doesn't
-        # flag the return as leaking ``Any`` to the caller.
-        result = kernel32.WaitForSingleObject(handle, _WIN_INFINITE)
-        return bool(result == _WIN_WAIT_OBJECT_0)
+        while not cancel_event.is_set():
+            # ``kernel32`` calls return ``Any`` (untyped C bindings).
+            result = int(kernel32.WaitForSingleObject(handle, _WIN_POLL_MS))
+            if result == _WIN_WAIT_OBJECT_0:
+                return True
+            if result != _WIN_WAIT_TIMEOUT:
+                # ``WAIT_FAILED`` / ``WAIT_ABANDONED`` / anything
+                # else — bail rather than spin. Same rationale as
+                # the ``OpenProcess`` failure path: prefer "can't
+                # observe" over "parent died" so a kernel quirk
+                # doesn't kick the dashboard offline at startup.
+                return False
+        return False
     finally:
         kernel32.CloseHandle(handle)
 
 
 async def _watch_windows(parent_pid: int) -> None:
-    """Block-in-thread on the parent's handle; trigger shutdown on exit."""
-    parent_exited = await asyncio.to_thread(_wait_for_parent_handle_windows, parent_pid)
+    """Block-in-thread on the parent's handle; trigger shutdown on exit.
+
+    Drives :func:`_wait_for_parent_handle_windows` via
+    :func:`asyncio.to_thread`. On :exc:`asyncio.CancelledError`
+    (normal dashboard shutdown), signal the worker thread via
+    *cancel_event* before re-raising so the thread exits within
+    one ``_WIN_POLL_MS`` tick instead of leaking until the
+    parent dies. Without that handshake the worker would still
+    be parked in ``WaitForSingleObject`` when Python's
+    interpreter-exit ``ThreadPoolExecutor.shutdown(wait=True)``
+    runs, hanging the whole process at exit time.
+    """
+    cancel_event = threading.Event()
+    try:
+        parent_exited = await asyncio.to_thread(
+            _wait_for_parent_handle_windows, parent_pid, cancel_event
+        )
+    except asyncio.CancelledError:
+        # Tell the worker thread to break out of its polling
+        # loop. The thread observes the flag on its next
+        # iteration (up to ``_WIN_POLL_MS`` later) and exits
+        # cleanly; we re-raise so the cancellation chains to
+        # our caller the way the Unix path does.
+        cancel_event.set()
+        raise
     if parent_exited:
         _LOGGER.warning(
             "parent-watchdog: parent %d exited (handle signalled); shutting down",
