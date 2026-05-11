@@ -199,18 +199,45 @@ def _default_hostname() -> str:
     """
     System mDNS hostname for the ``ServiceInfo.server`` SRV target.
 
-    Returns ``socket.gethostname()`` with ``.local`` appended when
-    the result has no dot. Doesn't use ``socket.getfqdn()``: on
-    macOS that resolver can return the reverse-DNS arpa form (e.g.
-    ``...ip6.arpa``) when reverse lookup fails, which is worse
-    than no hostname at all.
+    Always returns the leftmost label of ``socket.gethostname()``
+    with ``.local`` appended. The mDNS spec (RFC 6762) requires
+    SRV targets on the ``.local`` domain to end in ``.local.``;
+    a FQDN like ``mac.koston.org`` is not a valid mDNS hostname
+    and won't resolve on the ``.local`` domain peers are browsing.
+
+    ``socket.gethostname()`` returns whatever the kernel was
+    given at boot; that's often a bare label (``mac``,
+    ``MacBook-Pro``) but on macOS or Linux with a configured
+    domain, or under some DHCP setups, it can come back as the
+    full FQDN (``mac.koston.org``). The previous "if there's a
+    dot, trust it as-is" branch published that FQDN verbatim
+    into the SRV target, which broke discovery for any peer
+    expecting a ``.local`` hostname.
+
+    Doesn't use ``socket.getfqdn()``: on macOS that resolver can
+    return the reverse-DNS arpa form (e.g. ``...ip6.arpa``) when
+    reverse lookup fails, which is worse than no hostname at all.
     """
     raw = (socket.gethostname() or "").strip()
     if not raw:
         return ""
-    if "." in raw:
-        return raw
-    return f"{raw}.local"
+    # Strip any domain suffix the OS may have appended; the SRV
+    # target must live on the ``.local`` mDNS domain regardless
+    # of how the system's own resolver names itself.
+    label = raw.split(".", 1)[0]
+    if not label:
+        return ""
+    # Lowercase the label. mDNS hostnames are case-insensitive
+    # per RFC 6762 §16, but downstream consumers (URLs, log
+    # strings, dedupe keys keyed on hostname) may compare
+    # case-sensitively. Bonjour, Avahi, and ESPHome itself all
+    # advertise hostnames lowercase; normalising at the publish
+    # site stops the same machine showing up as ``Mac.local``
+    # in some flows and ``mac.local`` in others. The
+    # service-instance name (``_default_friendly_name``) keeps
+    # its case because that's user-visible display text the
+    # operator picked deliberately.
+    return f"{label.lower()}.local"
 
 
 class DashboardAdvertiser:

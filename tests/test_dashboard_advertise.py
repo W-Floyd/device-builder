@@ -70,16 +70,100 @@ def test_default_friendly_name_falls_back_when_empty(monkeypatch: pytest.MonkeyP
     assert _default_friendly_name() == "esphome-dashboard"
 
 
+def test_default_friendly_name_preserves_case(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    The user-visible friendly name keeps its case verbatim.
+
+    The friendly name lands in the mDNS service-instance name
+    (``<name>._esphomebuilder._tcp.local.``) and shows up in
+    browsers + dashboard UIs. Operators name their machines with
+    intentional case ("MacBook-Pro", "Office Server"); lowercasing
+    here would degrade their UX. Only the SRV hostname target
+    (``_default_hostname``) normalises to lowercase, because
+    that's a wire-protocol identifier where case-sensitive
+    consumers can drift.
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: "MacBook-Pro.local")
+    assert _default_friendly_name() == "MacBook-Pro"
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "Office-Server")
+    assert _default_friendly_name() == "Office-Server"
+
+
 def test_default_hostname_appends_local_when_no_dot(monkeypatch: pytest.MonkeyPatch) -> None:
     """A bare ``desktop`` becomes ``desktop.local`` for the TXT field."""
     monkeypatch.setattr(socket, "gethostname", lambda: "desktop")
     assert _default_hostname() == "desktop.local"
 
 
-def test_default_hostname_keeps_dotted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hostname with a dot is trusted as already-FQDN-ish."""
+def test_default_hostname_lowercases_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Mixed-case hostnames lowercase before the ``.local`` append.
+
+    mDNS hostnames are case-insensitive per RFC 6762 §16, but
+    downstream consumers may compare case-sensitively. Pin the
+    publish-site lowercase so the same machine doesn't show up
+    as ``Mac.local`` in one flow and ``mac.local`` in another.
+
+    The service-instance name (a separate
+    ``_default_friendly_name`` helper) keeps its case because
+    that's user-visible display text; only the SRV target gets
+    normalised.
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: "MacBook-Pro")
+    assert _default_hostname() == "macbook-pro.local"
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac")
+    assert _default_hostname() == "mac.local"
+
+
+def test_default_hostname_strips_fqdn_and_appends_local(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    A FQDN from ``gethostname`` is stripped to its leftmost label and gets ``.local``.
+
+    Regression test for the bug where ``socket.gethostname()``
+    returned a fully-qualified domain like ``mac.koston.org`` (which
+    happens on macOS / Linux with a configured search domain, or
+    under some DHCP setups) and the advertiser passed it through
+    verbatim into the SRV target. The mDNS spec (RFC 6762)
+    requires SRV targets on the ``.local`` domain to end in
+    ``.local.``, so publishing a ``.org`` FQDN broke discovery
+    for any peer expecting the canonical mDNS form.
+
+    Three shapes, same expected normalisation (lowercase + ``.local``):
+
+    * ``mac.koston.org`` → ``mac.local`` (the user's reported
+      shape, already lowercase).
+    * ``MacBook-Pro.local`` → ``macbook-pro.local`` (mixed-case
+      hostname; the label survives but lowercases).
+    * ``desktop.lan`` → ``desktop.local`` (corporate non-.local
+      search domain; same fix).
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: "mac.koston.org")
+    assert _default_hostname() == "mac.local"
+
+    monkeypatch.setattr(socket, "gethostname", lambda: "MacBook-Pro.local")
+    assert _default_hostname() == "macbook-pro.local"
+
     monkeypatch.setattr(socket, "gethostname", lambda: "desktop.lan")
-    assert _default_hostname() == "desktop.lan"
+    assert _default_hostname() == "desktop.local"
+
+
+def test_default_hostname_handles_leading_dot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    A pathological leading-dot hostname yields ``""`` rather than ``.local``.
+
+    ``socket.gethostname()`` returning ``".koston.org"`` (no
+    leading label) is implausible in practice but the boundary is
+    worth pinning: the leftmost label is empty, so the function
+    returns ``""`` and the advertiser falls back to whatever its
+    construction-time hostname was. Better than publishing
+    ``.local`` which would collide with the mDNS root.
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: ".koston.org")
+    assert _default_hostname() == ""
 
 
 def test_default_hostname_returns_empty_when_gethostname_blank(
