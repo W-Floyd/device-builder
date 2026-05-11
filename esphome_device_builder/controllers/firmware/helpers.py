@@ -374,18 +374,18 @@ def _ingest_output_line(job: FirmwareJob, bus: EventBus, line: str) -> None:
     ``failed`` status from the receiver instead of having to
     scrape stderr).
     """
+    # DNM: log EVERY line that flows into _ingest_output_line.
+    # Noisy by design — receiver-side compile is ~thousands of
+    # lines per job — but the user explicitly asked for the
+    # full byte stream rather than a filtered view, so we can
+    # see whether any upload-phase frames slip in via a path
+    # we didn't expect. Strip when the DNM is ripped out.
+    _LOGGER.info("[PROGRESS-DEBUG] ingest job_id=%s line=%r", job.job_id, line[:400])
     job.output.append(line)
     if len(job.output) > _MAX_OUTPUT_LINES_INFLIGHT:
         _trim_job_output(job, keep=_INFLIGHT_TRIM_KEEP)
     out_payload: JobOutputData = {"job_id": job.job_id, "line": line}
     bus.fire(EventType.JOB_OUTPUT, out_payload)
-    # Unconditional log for any line containing upload-phase
-    # markers, whether or not _parse_progress matched. Lets a
-    # receiver-side log surface the full flash-phase byte
-    # stream without firehosing the (thousands of) compile
-    # lines. Strip when the DNM is ripped out.
-    if "Uploading" in line or "Writing at" in line or "Done..." in line:
-        _LOGGER.info("[PROGRESS-DEBUG] upload-marker job_id=%s line=%r", job.job_id, line[:300])
     progress = _parse_progress(line)
     if progress is None:
         return
