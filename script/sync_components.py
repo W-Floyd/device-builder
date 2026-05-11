@@ -579,6 +579,29 @@ _DOC_PREFIX_TYPES: dict[str, str] = {
 # ``"5min"``, ``"1h30s"``. This regex matches that shape.
 _TIME_PERIOD_DEFAULT = re.compile(r"^\d+(\.\d+)?\s*(ms|us|ns|s|min|h|d)(\d+\s*\w+)*$")
 
+
+class Visibility(StrEnum):
+    """Consumer-side mirror of upstream esphome's ``cv.Visibility``.
+
+    Upstream (esphome/esphome#16267, 2026.5.0b1) models the
+    schema-author UI hint as a ``StrEnum`` and dumps the string
+    form (``"advanced"`` / ``"yaml_only"``) onto each field. The
+    key is absent when the author didn't mark the field. Mirror
+    that as a ``StrEnum`` here so the consumer compares against
+    a typed value rather than bare string literals; the enum
+    member's string value is what the dumper emits, so
+    ``raw["visibility"] == Visibility.ADVANCED`` works directly.
+
+    Two-tier strictness ordering: ``YAML_ONLY`` is strictly
+    stronger than ``ADVANCED``, which is strictly stronger than
+    no setting at all. The cascade pass below relies on that
+    ordering.
+    """
+
+    ADVANCED = "advanced"
+    YAML_ONLY = "yaml_only"
+
+
 # Base entity / framework fields that always render under "Advanced" by
 # default — valid but rarely tweaked. Same set as the previous sync.
 _ADVANCED_BASE_KEYS: frozenset[str] = frozenset(
@@ -1647,7 +1670,60 @@ def _extract_config_entries(
     schema = config_schema.get("schema") or {}
     if not schema:
         return []
-    return _convert_config_vars(schema, schema_dir, component_id=component_id)
+    entries = _convert_config_vars(schema, schema_dir, component_id=component_id)
+    # Apply the visibility-cascade rule once at the top of the
+    # tree: a stricter parent forces all descendants at-least
+    # as strict. ``YAML_ONLY`` > ``ADVANCED`` > no setting. The
+    # cascade is at-the-top so nested-NESTED structures get the
+    # full chain of ancestors considered without recursive
+    # bookkeeping inside ``_convert_field``.
+    _apply_visibility_cascade(entries, parent_advanced=False, parent_yaml_only=False)
+    return entries
+
+
+def _apply_visibility_cascade(
+    entries: list[dict],
+    *,
+    parent_advanced: bool,
+    parent_yaml_only: bool,
+) -> None:
+    """In-place push parent strictness onto descendants.
+
+    ``YAML_ONLY`` (mapped to ``hidden=True``) is strictly stronger
+    than ``ADVANCED`` (``advanced=True``), which is strictly
+    stronger than the un-marked default. A child can declare its
+    own setting independently — but the child's *effective*
+    setting after this pass is ``max(parent_chain, self)``.
+
+    The rationale is UX: if a parent block is "advanced", every
+    field inside it is at-least advanced (otherwise the disclosure
+    is leaky — you'd hide the parent header but render a child on
+    the main form). Same one level deeper for ``YAML_ONLY`` — a
+    block hidden from the editor must hide every descendant or
+    the user gets a half-rendered control with no way to set the
+    surrounding context.
+    """
+    for entry in entries:
+        own_advanced = entry.get("advanced", False)
+        own_hidden = entry.get("hidden", False)
+        # Strictness ordering: ``YAML_ONLY`` (``hidden=True``) is
+        # strictly stronger than ``ADVANCED`` (``advanced=True``).
+        # Apply that locally first — a self-hidden entry is also
+        # implicitly advanced — then OR with the parent's
+        # strictness so the cascade pushes both flags down.
+        entry["advanced"] = own_advanced or own_hidden or parent_advanced or parent_yaml_only
+        entry["hidden"] = own_hidden or parent_yaml_only
+        # Recurse into NESTED groups, MAP value templates, and any
+        # other shape that carries inner ``config_entries``. The
+        # child's effective state becomes the parent state for the
+        # next level.
+        inner = entry.get("config_entries")
+        if isinstance(inner, list):
+            _apply_visibility_cascade(
+                inner,
+                parent_advanced=entry["advanced"],
+                parent_yaml_only=entry["hidden"],
+            )
 
 
 def _convert_config_vars(
@@ -1847,7 +1923,26 @@ def _convert_field(key: str, raw: dict, schema_dir: Path) -> dict | None:  # noq
     # form even when optional — users almost always want to see what's
     # wired to what.
     is_structural = entry_type == "pin" or bool(references)
-    advanced = _classify_advanced(key, required=required, is_structural=is_structural)
+    # Schema-author UI hint from upstream esphome
+    # (esphome/esphome#16267): the dumper emits ``"visibility":
+    # "advanced" | "yaml_only"`` for fields whose ``cv.Optional`` /
+    # ``cv.Required`` set ``visibility=Visibility.ADVANCED`` or
+    # ``=Visibility.YAML_ONLY``. Absent → fall back to the name-based
+    # heuristic (the long tail of fields the schema doesn't yet
+    # annotate; as upstream adoption grows the heuristic rules out
+    # of ``_classify_advanced`` can shrink toward zero).
+    #
+    # The cascade rule (a stricter parent forces its descendants
+    # at-least as strict) is applied after leaf conversion by
+    # :func:`_apply_visibility_cascade`. This function records the
+    # per-field setting as the schema author wrote it; the cascade
+    # pass walks the resulting tree and pushes parent strictness
+    # down where descendants would otherwise be more visible.
+    schema_visibility = raw.get("visibility")
+    advanced = schema_visibility == Visibility.ADVANCED or _classify_advanced(
+        key, required=required, is_structural=is_structural
+    )
+    yaml_only = schema_visibility == Visibility.YAML_ONLY
 
     default_value, gated_component = _extract_default(raw, key=key)
     entry: dict[str, Any] = {
@@ -1871,7 +1966,11 @@ def _convert_field(key: str, raw: dict, schema_dir: Path) -> dict | None:  # noq
         "pin_features": _resolve_pin_features(raw) if entry_type == "pin" else [],
         "pin_mode": None,
         "advanced": advanced,
-        "hidden": False,
+        # ``yaml_only`` from the schema → ``hidden`` on the catalog
+        # entry. The frontend already knows how to skip ``hidden``
+        # entries; the rename keeps the consumer-facing surface
+        # unchanged.
+        "hidden": yaml_only,
         "help_link": docs.url,
         "translation_key": None,
         "translation_params": None,
