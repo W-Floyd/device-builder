@@ -454,6 +454,11 @@ async def _fetch_and_run_local_upload(
     via the cancel-aware ``_fail_locally`` when the user
     raced a Stop).
     """
+    _LOGGER.info(
+        "Remote job %s: requesting build artefacts for configuration=%r from receiver",
+        job.job_id,
+        job.configuration,
+    )
     try:
         packed = await client.download_artifacts(job_id=job.job_id)
     except (
@@ -461,10 +466,21 @@ async def _fetch_and_run_local_upload(
         SubmitJobSessionLostError,
         DownloadArtifactsError,
     ) as exc:
+        # Receiver-side WARNING logs carry the actionable
+        # detail (configuration, missing path, current status)
+        # for every soft-reject; point operators at the build
+        # server log either way. The previous shape only
+        # mentioned "missing path", which was misleading for
+        # non-``build_dir_missing`` rejects (``unknown_job`` /
+        # ``job_not_completed`` / session lost — none of which
+        # involve a path).
         _fail_locally(
             controller,
             job,
-            error=f"remote build: download_artifacts failed: {exc}",
+            error=(
+                f"remote build: download_artifacts failed: {exc} "
+                f"(check the build server logs for details)"
+            ),
         )
         return
 
