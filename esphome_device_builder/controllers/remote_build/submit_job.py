@@ -58,6 +58,8 @@ from __future__ import annotations
 import asyncio
 import binascii
 import logging
+import os
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -694,5 +696,75 @@ def _validate_write_extract_bundle(
         raise _PathEscapeError(str(target_dir)) from exc
     bundle_path.parent.mkdir(parents=True, exist_ok=True)
     bundle_path.write_bytes(bundle_bytes)
+    _strip_macos_metadata(target_dir)
     extracted: Path = prepare_bundle_for_compile(bundle_path, target_dir)
     return extracted
+
+
+def _strip_macos_metadata(target_dir: Path) -> None:
+    """Remove ``.DS_Store`` / ``._*`` sidecars under *target_dir*.
+
+    macOS Finder / QuickLook re-create ``.DS_Store`` inside any
+    directory a user views. AppleDouble ``._<name>`` resource
+    forks appear on copies to non-HFS+ filesystems. Both get
+    re-created between ``shutil.rmtree``'s scandir step and its
+    final ``os.rmdir``, surfacing as
+    ``OSError(ENOTEMPTY, "Directory not empty: build")`` inside
+    upstream :func:`prepare_bundle_for_compile`. Pre-cleaning
+    the sidecars shrinks the race window — the upstream walk
+    still has to finish its multi-second recursion through the
+    build tree, but it starts from a state where the top-level
+    directories don't contain re-creatable sidecars and the
+    odds of Finder racing back in during the few-ms scandir →
+    rmdir window drop sharply.
+
+    Uses :func:`os.walk` rather than :meth:`Path.rglob` —
+    same pattern :func:`helpers.build_size._compute_build_dir_size`
+    uses: ``os.walk`` delegates to :func:`os.scandir` and
+    gets cached ``d_type`` from ``readdir`` so we don't pay
+    a stat syscall per entry. ``rglob`` allocates a
+    :class:`Path` per entry and re-stats for ``is_file()``,
+    which roughly doubles the syscall count. A typical
+    ESP-IDF build is 5000+ entries; the install path is on
+    the user-visible latency budget, so the cheap walk
+    matters.
+
+    Best-effort: an :exc:`OSError` on the unlink (race with
+    a concurrent process, permissions, …) doesn't fail the
+    install. Upstream's cleanup walk is the real line of
+    defence; re-raising here would prevent it from running.
+    Counts removals + logs once at the end so the operator
+    sees how many sidecars the pre-clean caught, without one
+    log line per sidecar drowning the log on a 200+-folder
+    build tree.
+    """
+    if not target_dir.is_dir():
+        return
+    removed = 0
+    started = time.monotonic()
+    # ``onerror`` swallows top-level failures (missing dir,
+    # permission denied at root). Per-file ``unlink`` errors
+    # are caught individually below so a vanishing file
+    # mid-walk doesn't abort the whole pre-clean.
+    for dirpath, _dirnames, filenames in os.walk(target_dir, onerror=lambda _e: None):
+        for name in filenames:
+            if name == ".DS_Store" or name.startswith("._"):
+                path = os.path.join(dirpath, name)
+                try:
+                    os.unlink(path)
+                except OSError as exc:
+                    _LOGGER.debug(
+                        "strip_macos_metadata: unlink %s failed (errno=%s); "
+                        "deferring to upstream cleanup",
+                        path,
+                        exc.errno,
+                    )
+                    continue
+                removed += 1
+    if removed:
+        _LOGGER.info(
+            "strip_macos_metadata: removed %d sidecar file(s) under %s in %.3fs",
+            removed,
+            target_dir,
+            time.monotonic() - started,
+        )

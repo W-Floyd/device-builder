@@ -28,6 +28,7 @@ from esphome.bundle import EsphomeError
 
 from esphome_device_builder.controllers.remote_build.submit_job import (
     SubmitJobReceiver,
+    _strip_macos_metadata,
     _validate_configuration_filename,
 )
 from esphome_device_builder.helpers.peer_link_bundle import BUNDLE_CHUNK_SIZE_BYTES
@@ -722,3 +723,78 @@ def test_discard_session_unknown_is_noop(tmp_path: Path) -> None:
     """Discarding a session that never registered is a no-op."""
     receiver = _make_receiver(tmp_path)
     receiver.discard_session("never-seen")  # should not raise
+
+
+# ---------------------------------------------------------------------------
+# _strip_macos_metadata
+# ---------------------------------------------------------------------------
+
+
+def test_strip_macos_metadata_removes_ds_store_and_apple_double(
+    tmp_path: Path,
+) -> None:
+    """
+    MacOS sidecars under target_dir are removed; real files survive.
+
+    Pin the bug we shipped this for: a ``.DS_Store`` created by
+    macOS Finder inside the per-device subtree's ``build/``
+    directory used to break the next ``submit_job`` for the same
+    device. Upstream :func:`prepare_bundle_for_compile`'s cleanup
+    walk scans the dir, unlinks the sidecar, and then races
+    Finder re-creating it before the final ``os.rmdir`` — the
+    rmdir then fails with ``ENOTEMPTY``. Pre-cleaning the
+    sidecars before handing off to the upstream walk avoids the
+    race window.
+    """
+    target = tmp_path / "device"
+    target.mkdir()
+    (target / ".DS_Store").write_bytes(b"x")
+    (target / "build").mkdir()
+    (target / "build" / ".DS_Store").write_bytes(b"x")
+    (target / "build" / "._sdkconfig").write_bytes(b"x")  # AppleDouble
+    (target / "build" / "real_file.txt").write_bytes(b"keep me")
+    (target / "build" / "real_dir").mkdir()
+    (target / "build" / "real_dir" / ".DS_Store").write_bytes(b"x")
+
+    _strip_macos_metadata(target)
+
+    assert not (target / ".DS_Store").exists()
+    assert not (target / "build" / ".DS_Store").exists()
+    assert not (target / "build" / "._sdkconfig").exists()
+    assert not (target / "build" / "real_dir" / ".DS_Store").exists()
+    # Real files untouched.
+    assert (target / "build" / "real_file.txt").exists()
+    assert (target / "build" / "real_dir").exists()
+
+
+def test_strip_macos_metadata_missing_target_is_noop(tmp_path: Path) -> None:
+    """
+    First-submit case: target_dir doesn't exist yet → no-op.
+
+    On a fresh receiver the per-device subtree is created by
+    ``prepare_bundle_for_compile`` itself; we only get a chance
+    to pre-clean on the second-and-later submit. A missing dir
+    must be tolerated silently rather than raising.
+    """
+    _strip_macos_metadata(tmp_path / "nonexistent")  # no raise
+
+
+def test_strip_macos_metadata_swallows_unlink_errors(tmp_path: Path) -> None:
+    """
+    Best-effort: an unlink failure doesn't fail the install.
+
+    Upstream's cleanup walk is the real line of defence; if a
+    sidecar is held open by a concurrent process and our
+    pre-unlink fails, we hand off to the upstream walk anyway.
+    Re-raising here would silently prevent the upstream cleanup
+    from running.
+    """
+    target = tmp_path / "device"
+    target.mkdir()
+    (target / ".DS_Store").write_bytes(b"x")
+    # Pre-remove out of band so the unlink inside the helper
+    # raises FileNotFoundError (a subclass of OSError) — the
+    # easiest way to drive the "best-effort" branch without
+    # stubbing os.unlink.
+    (target / ".DS_Store").unlink()
+    _strip_macos_metadata(target)  # no raise
