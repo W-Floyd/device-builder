@@ -31,8 +31,8 @@ from esphome_device_builder.helpers.dashboard_advertise import (
     SERVICE_TYPE,
     DashboardAdvertiser,
     _default_friendly_name,
-    _default_hostname,
     _local_addresses,
+    build_mdns_hostname,
 )
 
 
@@ -70,34 +70,137 @@ def test_default_friendly_name_falls_back_when_empty(monkeypatch: pytest.MonkeyP
     assert _default_friendly_name() == "esphome-dashboard"
 
 
-def test_default_hostname_appends_local_when_no_dot(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A bare ``desktop`` becomes ``desktop.local`` for the TXT field."""
-    monkeypatch.setattr(socket, "gethostname", lambda: "desktop")
-    assert _default_hostname() == "desktop.local"
-
-
-def test_default_hostname_keeps_dotted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A hostname with a dot is trusted as already-FQDN-ish."""
-    monkeypatch.setattr(socket, "gethostname", lambda: "desktop.lan")
-    assert _default_hostname() == "desktop.lan"
-
-
-def test_default_hostname_returns_empty_when_gethostname_blank(
+def test_build_mdns_hostname_combines_hostname_and_dashboard_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A blank ``gethostname`` (rare but seen on minimal containers) yields ``""``."""
-    monkeypatch.setattr(socket, "gethostname", lambda: "")
-    assert _default_hostname() == ""
-
-
-def test_default_hostname_does_not_use_getfqdn(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    The default-hostname path must NOT route through ``socket.getfqdn``.
+    Production path: ``{hostname}-{short_id}.local``.
 
-    On macOS that resolver can return the reverse-DNS arpa form (e.g.
-    a long ``...ip6.arpa`` string) when reverse lookup fails, which
-    would land in the published TXT record. Pin the implementation
-    so a future refactor doesn't reintroduce the call.
+    Pins the collision-resistant SRV target shape Home Assistant
+    uses: a human-recognisable hostname prefix plus a stable
+    per-install identifier suffix, so two machines named ``mac``
+    on the same LAN advertise distinct mDNS hostnames. The
+    suffix is *up to* :data:`_DASHBOARD_ID_SUFFIX_CHARS` (8)
+    characters of the dashboard_id; a hyphen-derived character
+    at the truncation boundary lands on a 7-char suffix in ~6%
+    of installs after the trailing-hyphen strip. Sample below
+    picks a dashboard_id whose first 8 chars are all
+    base64url-alphanumerics so the assertion checks the 8-char
+    happy path; another test covers the boundary-strip case.
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: "mac")
+    assert (
+        build_mdns_hostname(dashboard_id="jWyWNVeRrwl0qjPYTzGV70RyMnDsqaTH") == "mac-jwywnver.local"
+    )
+
+
+def test_build_mdns_hostname_suffix_strips_trailing_hyphen(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A dashboard_id with ``_`` or ``-`` at position 8 yields a 7-char suffix.
+
+    ``secrets.token_urlsafe`` produces base64url; the alphabet
+    maps ``_`` → ``-`` after sanitisation, and a ``-`` at the
+    truncation boundary would leave a trailing-hyphen label.
+    The implementation strips trailing hyphens to keep the
+    label strictly RFC 1123-compliant, so the suffix can be
+    one short of the cap. Entropy claim still holds (~42 bits
+    for 7 base64url chars).
+    """
+    monkeypatch.setattr(socket, "gethostname", lambda: "mac")
+    # Underscore at position 8 → sanitises to ``-`` → trailing-strip → 7-char suffix.
+    assert (
+        build_mdns_hostname(dashboard_id="jWyWNVe_rwl0qjPYTzGV70RyMnDsqaTH") == "mac-jwywnve.local"
+    )
+
+
+def test_build_mdns_hostname_strips_fqdn_and_lowercases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    System FQDNs and mixed-case hostnames normalise.
+
+    Regression for the original user report: ``socket.gethostname()``
+    returning ``Mac.koston.org`` (the user's MBP under a configured
+    search domain) had been leaking the ``.koston.org`` FQDN into
+    the SRV target. The helper takes only the leftmost label and
+    lowercases it, so any of these shapes lands at the same
+    ``mac-jwywnver.local``.
+    """
+    for raw in ("Mac.koston.org", "Mac", "MAC.lan", "macbook-pro.local"):
+        monkeypatch.setattr(socket, "gethostname", lambda r=raw: r)
+        result = build_mdns_hostname(dashboard_id="jWyWNVeRrwl0qjPYTzGV70RyMnDsqaTH")
+        assert result.endswith("-jwywnver.local")
+        assert "koston.org" not in result
+        assert result.lower() == result
+
+
+def test_build_mdns_hostname_caps_long_hostname_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """
+    Overlong system hostnames truncate to a safe DNS-label width.
+
+    RFC 1035 §2.3.4 caps each DNS label at 63 octets. The helper
+    truncates the hostname prefix at
+    :data:`_HOSTNAME_PREFIX_MAX_CHARS` (32), leaving comfortable
+    headroom for the ``-{8 chars}`` suffix and the ``.local``
+    tail. Pins the cap because a comically long system hostname
+    on a CI runner or an enterprise-named workstation would
+    otherwise push the SRV target past what zeroconf is willing
+    to publish.
+    """
+    monkeypatch.setattr(
+        socket,
+        "gethostname",
+        lambda: "veryveryveryverylonglonglonglonglonglonglonglong",
+    )
+    result = build_mdns_hostname(dashboard_id="jWyWNVeRrwl0qjPYTzGV70RyMnDsqaTH")
+    label = result.removesuffix(".local")
+    # Each DNS label must be ≤63 octets per RFC 1035; the
+    # implementation caps at 32 chars + 1 hyphen + 8 chars = 41.
+    assert len(label) <= 63
+    assert label.endswith("-jwywnver")
+    # Prefix is bounded by the cap, not arbitrary.
+    assert len(label) - len("-jwywnver") <= 32
+
+
+def test_build_mdns_hostname_falls_back_when_hostname_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No hostname → ``dashboard-{short_id}.local`` so we still advertise an identifier."""
+    monkeypatch.setattr(socket, "gethostname", lambda: "")
+    assert (
+        build_mdns_hostname(dashboard_id="jWyWNVeRrwl0qjPYTzGV70RyMnDsqaTH")
+        == "dashboard-jwywnver.local"
+    )
+
+
+def test_build_mdns_hostname_falls_back_when_dashboard_id_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No dashboard_id → ``{hostname}.local``; collision risk degrades to pre-fix behaviour."""
+    monkeypatch.setattr(socket, "gethostname", lambda: "Mac")
+    assert build_mdns_hostname(dashboard_id="") == "mac.local"
+
+
+def test_build_mdns_hostname_returns_empty_when_everything_blank(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neither hostname nor dashboard_id → empty string; caller fails soft and skips advertise."""
+    monkeypatch.setattr(socket, "gethostname", lambda: "")
+    assert build_mdns_hostname(dashboard_id="") == ""
+
+
+def test_build_mdns_hostname_does_not_use_getfqdn(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    The helper must NOT route through ``socket.getfqdn``.
+
+    On macOS that resolver can return the reverse-DNS arpa form
+    (a long ``...ip6.arpa`` string) when reverse lookup fails,
+    which would corrupt the published SRV target. Pin the
+    implementation so a future refactor doesn't reintroduce the
+    call.
     """
     monkeypatch.setattr(socket, "gethostname", lambda: "host")
 
@@ -106,7 +209,10 @@ def test_default_hostname_does_not_use_getfqdn(monkeypatch: pytest.MonkeyPatch) 
         raise AssertionError(msg)
 
     monkeypatch.setattr(socket, "getfqdn", _boom)
-    assert _default_hostname() == "host.local"
+    assert (
+        build_mdns_hostname(dashboard_id="jWyWNVeRrwl0qjPYTzGV70RyMnDsqaTH")
+        == "host-jwywnver.local"
+    )
 
 
 # ---------------------------------------------------------------------------
