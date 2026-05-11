@@ -60,6 +60,48 @@ toggle in the official ESPHome container and Home Assistant add-on.
   at the top of every module so we can use modern type syntax on
   Python 3.12+.
 
+- **File size: 800-line soft cap.** When a Python module reaches
+  ~800 lines, plan a split before adding more. The cap exists
+  because: large modules degrade LLM context budget (every edit
+  pays the full file size in input tokens), they slow human
+  review (a 5000-line controller is hard to hold in working
+  memory), and they accumulate cross-concern coupling that's
+  invisible until you try to test one piece in isolation.
+
+  The split pattern this codebase uses is: replace
+  `controllers/X.py` with a `controllers/X/` package containing
+  `controller.py` (the main class + public API) plus per-concern
+  submodules (`controllers/X/foo.py` for the foo concern,
+  `controllers/X/bar.py` for the bar concern). `__init__.py`
+  re-exports the controller class so existing
+  `from .controllers.X import XController` callers keep working.
+  See `controllers/devices/`, `controllers/firmware/`, and
+  `controllers/remote_build/` for the canonical shape.
+
+  Existing modules over 800 lines (audit `wc -l` periodically;
+  the worst offender at the time of writing was 5176 lines) are
+  grandfathered. The split rule is scoped to invasive changes:
+
+  * **Small bugfix headed for a patch release**: ship the fix,
+    skip the split. Blocking a few-line patch on a 5000-line
+    refactor would delay releases and force the refactor under
+    bugfix pressure (the wrong context for an invasive
+    behavior-free move). The cap is a soft cap; readability
+    isn't worth a delayed patch.
+  * **Invasive change** (new feature, significant refactor,
+    structural touch): **split first**. Land the split as a
+    behavior-free refactor PR; then layer the actual change on
+    top in a follow-up PR. Each PR is reviewable as one
+    concern: the refactor diff is a pure move; the feature
+    diff is the actual change.
+
+  A drive-by split inside an unrelated bugfix PR is scope creep
+  regardless. Opportunistic refactor PRs targeting the largest
+  offenders are welcome and should land as their own PRs.
+
+  A PR that touches a module *already over* 800 lines should
+  not make it worse. New top-level modules start under the cap.
+
 ## Commit / PR conventions
 
 - **No `Co-Authored-By: Claude` trailer.** Project preference.
