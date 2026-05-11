@@ -338,6 +338,7 @@ def _fire_job_progress(job: FirmwareJob, bus: EventBus, progress: int) -> None:
     where it's readable.
     """
     job.progress = progress
+    _LOGGER.info("[PROGRESS-DEBUG] fire JOB_PROGRESS job_id=%s progress=%s", job.job_id, progress)
     payload: JobProgressData = {"job_id": job.job_id, "progress": progress}
     bus.fire(EventType.JOB_PROGRESS, payload)
 
@@ -379,6 +380,20 @@ def _ingest_output_line(job: FirmwareJob, bus: EventBus, line: str) -> None:
     out_payload: JobOutputData = {"job_id": job.job_id, "line": line}
     bus.fire(EventType.JOB_OUTPUT, out_payload)
     progress = _parse_progress(line)
-    if progress is None or progress <= (job.progress or 0):
+    if progress is None:
         return
+    if progress <= (job.progress or 0):
+        _LOGGER.info(
+            "[PROGRESS-DEBUG] clamped parsed=%s current=%s line=%r",
+            progress,
+            job.progress,
+            line[:200],
+        )
+        return
+    _LOGGER.info(
+        "[PROGRESS-DEBUG] parsed progress=%s (was %s) line=%r",
+        progress,
+        job.progress,
+        line[:200],
+    )
     _fire_job_progress(job, bus, progress)

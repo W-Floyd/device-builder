@@ -555,6 +555,7 @@ async def _fetch_and_run_local_upload(
     # Firing through :func:`_fire_job_progress` (no clamp)
     # rather than the ingest path keeps the reset explicit at
     # this phase boundary.
+    _LOGGER.info("[PROGRESS-DEBUG] seam reset entering upload phase for job_id=%s", job.job_id)
     _fire_job_progress(job, bus, 0)
 
     # ``tempfile.TemporaryDirectory`` ctor calls
@@ -633,6 +634,7 @@ async def _run_upload_subprocess(
     ``firmware/cancel`` lands SIGTERM on the upload chain
     just like it does for the local-only path.
     """
+    _LOGGER.info("[PROGRESS-DEBUG] upload subprocess spawning cmd=%s", " ".join(cmd))
     async with controller._tracked_subprocess(
         *cmd,
         stdout=asyncio.subprocess.PIPE,
@@ -651,10 +653,29 @@ async def _run_upload_subprocess(
             await controller._terminate_current_process()
 
         assert proc.stdout is not None  # type narrowing
+        line_count = 0
         async for line in iter_lines_with_progress(proc.stdout):
+            line_count += 1
+            # Log every yielded line from the upload subprocess
+            # so we can see the raw bytes (including ``\r``-only
+            # frames) that arrive on the pipe. ``%r`` preserves
+            # the carriage-return / newline characters so the
+            # frame boundary is unambiguous in the log.
+            _LOGGER.info(
+                "[PROGRESS-DEBUG] upload-line #%d job_id=%s line=%r",
+                line_count,
+                job.job_id,
+                line[:300],
+            )
             _ingest_output_line(job, bus, line)
 
         exit_code = await proc.wait()
+        _LOGGER.info(
+            "[PROGRESS-DEBUG] upload subprocess EOF job_id=%s exit=%s total_lines=%d",
+            job.job_id,
+            exit_code,
+            line_count,
+        )
 
     if job.job_id in controller._cancel_requested:
         controller._finalize_cancelled(job)
