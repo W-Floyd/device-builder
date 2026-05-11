@@ -379,6 +379,13 @@ def _ingest_output_line(job: FirmwareJob, bus: EventBus, line: str) -> None:
         _trim_job_output(job, keep=_INFLIGHT_TRIM_KEEP)
     out_payload: JobOutputData = {"job_id": job.job_id, "line": line}
     bus.fire(EventType.JOB_OUTPUT, out_payload)
+    # Unconditional log for any line containing upload-phase
+    # markers, whether or not _parse_progress matched. Lets a
+    # receiver-side log surface the full flash-phase byte
+    # stream without firehosing the (thousands of) compile
+    # lines. Strip when the DNM is ripped out.
+    if "Uploading" in line or "Writing at" in line or "Done..." in line:
+        _LOGGER.info("[PROGRESS-DEBUG] upload-marker job_id=%s line=%r", job.job_id, line[:300])
     progress = _parse_progress(line)
     if progress is None:
         return
