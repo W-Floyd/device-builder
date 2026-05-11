@@ -21,7 +21,9 @@ import asyncio
 
 import pytest
 
+from esphome_device_builder import device_builder as device_builder_module
 from esphome_device_builder.device_builder import DeviceBuilder
+from esphome_device_builder.helpers import parent_watchdog
 
 from .conftest import MakeSettingsFactory
 
@@ -141,6 +143,84 @@ async def test_start_spawns_background_polling_task(
 
         assert db._bg_task is not None
         assert not db._bg_task.done()
+    finally:
+        await db.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_schedules_parent_watchdog_when_force_enabled(
+    make_settings: MakeSettingsFactory,
+    _hermetic_lifecycle: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--exit-on-parent-changed`` schedules the parent watchdog task.
+
+    Pins the wiring at :meth:`DeviceBuilder.start`: when
+    ``exit_on_parent_changed`` is ``True`` the watchdog coroutine
+    is handed to ``create_background_task`` so it's auto-cancelled
+    and gathered on ``stop()``. Auto-detection (the ``None``
+    default) is exercised by ``test_parent_watchdog``'s
+    ``should_engage`` matrix; here we exercise the integration
+    seam with the explicit override.
+
+    The watchdog coroutine itself is stubbed — letting the real
+    polling loop run would either fire ``SIGTERM`` at the test
+    process or leave a hanging task; neither is helpful. We just
+    pin that ``create_background_task`` saw the coroutine.
+    """
+    captured: list[object] = []
+
+    async def _stub_watchdog(*_args: object, **_kwargs: object) -> None:
+        captured.append("called")
+
+    monkeypatch.setattr(parent_watchdog, "watch_parent_and_exit_on_death", _stub_watchdog)
+    # ``device_builder`` imports the symbol at module load — patch
+    # the imported name there too so the call site sees the stub.
+    monkeypatch.setattr(device_builder_module, "watch_parent_and_exit_on_death", _stub_watchdog)
+
+    settings = make_settings(with_core_path=True)
+    settings.exit_on_parent_changed = True  # force-engage regardless of launcher
+    db = DeviceBuilder(settings)
+    try:
+        await db.start()
+        # Yield once so the scheduled task runs.
+        await asyncio.sleep(0)
+        assert captured == ["called"]
+    finally:
+        await db.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_skips_parent_watchdog_when_force_disabled(
+    make_settings: MakeSettingsFactory,
+    _hermetic_lifecycle: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--no-exit-on-parent-changed`` skips the watchdog even under desktop spawn.
+
+    Belt-and-braces companion to the force-enabled test: with the
+    explicit opt-out, the watchdog should not be scheduled no
+    matter what ``sys.executable`` looks like.
+    """
+    captured: list[object] = []
+
+    async def _stub_watchdog(*_args: object, **_kwargs: object) -> None:
+        captured.append("called")
+
+    monkeypatch.setattr(parent_watchdog, "watch_parent_and_exit_on_death", _stub_watchdog)
+    monkeypatch.setattr(device_builder_module, "watch_parent_and_exit_on_death", _stub_watchdog)
+    # Force the auto-detect path to ``True`` — without the explicit
+    # opt-out below, this would engage the watchdog.
+    monkeypatch.setattr(parent_watchdog, "_spawned_by_desktop_app", lambda: True)
+    monkeypatch.setattr(device_builder_module, "should_engage", parent_watchdog.should_engage)
+
+    settings = make_settings(with_core_path=True)
+    settings.exit_on_parent_changed = False  # explicit opt-out
+    db = DeviceBuilder(settings)
+    try:
+        await db.start()
+        await asyncio.sleep(0)
+        assert captured == []
     finally:
         await db.stop()
 
