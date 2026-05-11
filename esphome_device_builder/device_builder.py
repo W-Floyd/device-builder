@@ -49,6 +49,7 @@ from .helpers.auth import auth_middleware
 from .helpers.dashboard_advertise import DashboardAdvertiser
 from .helpers.event_bus import Event, EventBus, StreamControls, stream_events
 from .helpers.json import cors_middleware
+from .helpers.parent_watchdog import should_engage, watch_parent_and_exit_on_death
 from .helpers.peer_link_identity import get_or_create_peer_link_identity
 from .helpers.subscriber_presence import SubscriberPresence
 from .models import EventType
@@ -389,6 +390,16 @@ class DeviceBuilder:
 
         # Start background polling
         self._bg_task = asyncio.create_task(self._run_background())
+
+        # Opt-in parent watchdog: when launched by a supervisor that
+        # might force-quit / crash (notably the ESPHome Builder
+        # desktop app), exit cleanly on parent disappearance so the
+        # listening port is released rather than leaked under
+        # launchd / a subreaper. ``should_engage`` honours the
+        # explicit ``--exit-on-parent-changed`` / ``--no-...`` flags
+        # and falls back to auto-detection via ``sys.executable``.
+        if should_engage(self.settings.exit_on_parent_changed):
+            self.create_background_task(watch_parent_and_exit_on_death())
 
         _LOGGER.info(
             "Device Builder ready — config dir: %s, %d commands registered",

@@ -119,10 +119,23 @@ class DashboardSettings:
     # operators who want to acknowledge the knob without
     # restricting hosts.
     trusted_domains: list[str] = field(default_factory=list)
+    # ``--exit-on-parent-changed`` tri-state.
+    #
+    # ``None`` = auto-engage on launcher signature (the ESPHome
+    # Builder desktop app's bundled Python — see
+    # :func:`helpers.parent_watchdog.should_engage`).
+    # ``True`` = force-on regardless of launcher.
+    # ``False`` = force-off regardless.
+    #
+    # Lives on the settings dataclass rather than as a flag the
+    # watchdog reads at import time so the test fixtures can
+    # exercise all three states without monkeypatching env vars.
+    exit_on_parent_changed: bool | None = None
 
     def parse_args(self, args: Any) -> None:
         """Parse CLI arguments into settings."""
         self.on_ha_addon = getattr(args, "ha_addon", False)
+        self.exit_on_parent_changed = getattr(args, "exit_on_parent_changed", None)
         # Env-var fallback uses ``ESPHOME_*`` rather than the legacy
         # dashboard's bare ``USERNAME`` / ``PASSWORD``: the bare names
         # collide with login-shell / Windows system vars (``$USERNAME``

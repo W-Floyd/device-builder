@@ -201,6 +201,22 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--exit-on-parent-changed",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Exit cleanly when the original parent process disappears "
+            "(reparented to init / launchd on Unix; parent handle "
+            "signalled on Windows). Auto-enabled when the dashboard is "
+            "spawned by the ESPHome Builder desktop app — detected via "
+            "the ``io.esphome.builder`` marker in ``sys.executable``. "
+            "Pass ``--no-exit-on-parent-changed`` to disable the "
+            "auto-engage, or ``--exit-on-parent-changed`` to force-enable "
+            "(useful when launching under a custom supervisor that wants "
+            "the same behaviour)."
+        ),
+    )
+    parser.add_argument(
         "--trusted-domains",
         default=None,
         help=(
