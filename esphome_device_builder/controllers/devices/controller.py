@@ -337,6 +337,12 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
             return []
         return _build_address_cache_args(device, self._state_monitor)
 
+    def get_ota_address_cache_args(self, configuration: str, port: str | None) -> list[str]:
+        """Return cache args when ``port == "OTA"`` (or ``None`` for always-OTA flows)."""
+        if port is not None and port != "OTA":
+            return []
+        return self.get_address_cache_args(configuration)
+
     # ------------------------------------------------------------------
     # API commands — listing
     # ------------------------------------------------------------------
@@ -2142,13 +2148,20 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
         # an interactive port-choice prompt when multiple targets
         # are visible (serial + OTA); the stdin-less subprocess
         # then crashes with EOFError. (#636)
+        resolved_port = port or "OTA"
+        # Cache args must come before the subcommand — esphome parses
+        # ``--mdns/--dns-address-cache`` on the top-level parser, not
+        # ``logs``'s. Skip the round-trip the legacy dashboard already
+        # avoided.
+        cache_args = self.get_ota_address_cache_args(configuration, resolved_port)
         cmd = [
             *self._esphome_cmd,
             "--dashboard",
+            *cache_args,
             "logs",
             config_path,
             "--device",
-            port or "OTA",
+            resolved_port,
         ]
         if no_states:
             cmd.append("--no-states")
