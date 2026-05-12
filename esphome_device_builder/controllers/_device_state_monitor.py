@@ -416,7 +416,7 @@ class DeviceStateMonitor(TaskControllerBase):  # noqa: PLR0904 (grandfathered; n
         self._mdns_browser: AsyncServiceBrowser | None = None
         self._ping_task: asyncio.Task | None = None
         # ``self._tasks`` (fire-and-forget mDNS resolve refs) comes
-        # from :class:`TaskTracker`; see :meth:`_track_task`.
+        # from :class:`TaskControllerBase`; see :meth:`_track_task`.
         # DNS resolutions for non-mDNS hostnames are cached here so the
         # ping sweep, OTA cache args, and device.ip tracking all share
         # the same TTL'd lookup result instead of re-resolving every
