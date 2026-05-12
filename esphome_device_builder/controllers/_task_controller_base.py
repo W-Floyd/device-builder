@@ -1,18 +1,9 @@
 """Base class for controllers that schedule fire-and-forget background work.
 
-A bare :func:`asyncio.create_task` returns a weak reference: if no
-caller holds the task, the event loop can drop it mid-await and the
-GC reaps it. The standard remedy is "add to a set, schedule, set the
-discard-on-done callback" — repeated verbatim across several
-controllers. :class:`TaskControllerBase` provides that boilerplate
-as a single-inheritance base; subclasses ``super().__init__()`` and
-schedule via ``self._track_task(coro)`` instead of a bare
-:func:`asyncio.create_task`.
-
-Exposes:
-
-* :class:`TaskControllerBase` — base providing the ``_tasks`` set
-  and the ``_track_task`` helper.
+The event loop keeps only a weak ref to each
+:class:`~asyncio.Task`; an unreferenced task can be GC'd mid-await.
+:class:`TaskControllerBase` provides the strong-ref set + schedule
+helper so subclasses don't repeat the idiom inline.
 """
 
 from __future__ import annotations
