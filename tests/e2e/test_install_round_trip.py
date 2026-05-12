@@ -60,14 +60,19 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from esphome.core import CORE
+from esphome.storage_json import StorageJSON
 
 from esphome_device_builder.helpers.build_scheduler import (
     BuildPath,
     pick_build_path,
 )
+from esphome_device_builder.helpers.remote_artifacts_materialise import (
+    materialise_remote_artifacts,
+)
 from esphome_device_builder.helpers.remote_build_layout import (
     parse_from_configuration as parse_remote_build_path,
 )
+from esphome_device_builder.helpers.storage_path import resolve_storage_path
 from esphome_device_builder.models import (
     EventType,
     FirmwareJob,
@@ -192,8 +197,12 @@ def _write_build_artifacts_on_disk(tmp_path: Path, *, configuration: str) -> dic
         "the helper is e2e-specific and not meant for bare-basename inputs"
     )
     data_dir = remote_build_path.data_dir(Path(CORE.data_dir))
-    build_dir = data_dir / "build" / remote_build_path.device_name
-    build_dir.mkdir(parents=True, exist_ok=True)
+    device_name = remote_build_path.device_name
+    build_dir = data_dir / "build" / device_name
+    pioenvs = build_dir / ".pioenvs" / device_name
+    pioenvs.mkdir(parents=True, exist_ok=True)
+    # platformio.ini is now part of the packer's required set.
+    (build_dir / "platformio.ini").write_bytes(b"[env:e2e]\nplatform = espressif32\n")
     images: dict[str, bytes] = {
         "firmware.bin": b"firmware-bin-bytes",
         "bootloader.bin": b"bootloader-bytes",
@@ -201,7 +210,7 @@ def _write_build_artifacts_on_disk(tmp_path: Path, *, configuration: str) -> dic
     }
     image_paths: dict[str, Path] = {}
     for name, payload in images.items():
-        path = build_dir / name
+        path = pioenvs / name
         path.write_bytes(payload)
         image_paths[name] = path
 
@@ -463,6 +472,70 @@ async def test_remote_install_submit_then_lifecycle_then_download_on_one_session
     assert len(paired_instances.receiver_closed) == 0
     assert len(paired_instances.offloader_opened) == opened_at_start[0]
     assert len(paired_instances.receiver_opened) == opened_at_start[1]
+
+
+@pytest.mark.asyncio
+async def test_remote_compile_materialises_for_local_firmware_download(
+    paired_instances: PairedInstances,
+    tmp_path: Path,
+) -> None:
+    """#624: compile remote → materialise → firmware/download reads staged bytes."""
+    await paired_instances.wait_until_session_opened()
+    created_jobs = _wire_receiver_firmware_recorder(paired_instances)
+    state_changes = capture_events(
+        paired_instances.offloader_bus, EventType.OFFLOADER_JOB_STATE_CHANGED
+    )
+
+    # Fail loud if the scheduler would have picked LOCAL — silent
+    # local fallback masks the whole point of this test. The
+    # receiver's queue_status push can land before or after the
+    # paired_instances fixture returns (event-vs-fixture race);
+    # poll the cache + scheduler decision instead of waiting on
+    # a one-shot event we might have missed.
+    deadline = asyncio.get_event_loop().time() + 2.0
+    decision = pick_build_path(paired_instances.offloader.build_scheduler_snapshot())
+    while decision.path is not BuildPath.REMOTE and asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.02)
+        decision = pick_build_path(paired_instances.offloader.build_scheduler_snapshot())
+    assert decision.path is BuildPath.REMOTE, (
+        f"scheduler picked {decision.path} — expected REMOTE for the e2e to be meaningful"
+    )
+
+    handle = paired_instances.offloader._peer_link_clients[paired_instances.pin_sha256]
+    ack = await handle.client.submit_job(
+        job_id="off-compile-1",
+        configuration_filename="kitchen.yaml",
+        target="compile",
+        bundle_bytes=_build_real_bundle(),
+    )
+    assert ack["accepted"] is True
+    receiver_job = created_jobs[0]
+    images = _write_build_artifacts_on_disk(tmp_path, configuration=receiver_job.configuration)
+
+    paired_instances.receiver_bus.fire(EventType.JOB_QUEUED, JobLifecycleData(job=receiver_job))
+    paired_instances.receiver_bus.fire(EventType.JOB_STARTED, JobLifecycleData(job=receiver_job))
+    await asyncio.wait_for(state_changes.received.wait(), timeout=2.0)
+    state_changes.received.clear()
+    paired_instances.receiver_bus.fire(EventType.JOB_COMPLETED, JobLifecycleData(job=receiver_job))
+    await asyncio.wait_for(state_changes.received.wait(), timeout=2.0)
+    receiver_job.status = JobStatus.COMPLETED
+
+    packed = await handle.client.download_artifacts(job_id="off-compile-1")
+    build_path = await asyncio.to_thread(
+        materialise_remote_artifacts, packed.tarball, "kitchen.yaml"
+    )
+    assert (build_path / ".pioenvs" / "kitchen" / "firmware.bin").is_file()
+
+    def _load_staged() -> StorageJSON | None:
+        return StorageJSON.load(resolve_storage_path("kitchen.yaml"))
+
+    staged_storage = await asyncio.to_thread(_load_staged)
+    assert staged_storage is not None
+    assert staged_storage.firmware_bin_path is not None
+    download_dir = staged_storage.firmware_bin_path.parent
+    assert (download_dir / "firmware.bin").read_bytes() == images["firmware.bin"]
+    assert (download_dir / "bootloader.bin").read_bytes() == images["bootloader.bin"]
+    assert (download_dir / "partitions.bin").read_bytes() == images["partitions.bin"]
 
 
 def _drive_receiver_lifecycle(

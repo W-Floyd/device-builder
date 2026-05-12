@@ -30,13 +30,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import shutil
-import tempfile
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from ...helpers.api import CommandError
 from ...helpers.config_bundle import BundleBuildError, build_yaml_bundle
+from ...helpers.remote_artifacts_materialise import (
+    MaterialiseError,
+    materialise_remote_artifacts,
+)
 from ...helpers.subprocess import iter_lines_with_progress
 from ...models import (
     EventType,
@@ -47,7 +48,6 @@ from ...models import (
     OffloaderJobStateChangedData,
     OffloaderPeerLinkClosedData,
 )
-from ..remote_build.artifacts_tarball import UnpackArtifactsError, extract_firmware_bin
 from ..remote_build.peer_link_client import (
     DownloadArtifactsError,
     PeerLinkNoSessionError,
@@ -122,19 +122,14 @@ async def run_remote_job(
         _fail_locally(
             controller,
             job,
-            error=(
-                "remote source supports COMPILE/UPLOAD/INSTALL/CLEAN only "
-                f"(got {job.job_type.value})"
+            reason=(
+                f"unsupported job_type {job.job_type.value!r} (COMPILE/UPLOAD/INSTALL/CLEAN only)"
             ),
         )
         return
 
     if not job.source_pin_sha256:
-        _fail_locally(
-            controller,
-            job,
-            error="remote source missing source_pin_sha256",
-        )
+        _fail_locally(controller, job, reason="missing source_pin_sha256")
         return
 
     bus = controller.bus
@@ -223,7 +218,7 @@ async def run_remote_job(
         controller._cancel_events.pop(job.job_id, None)
 
 
-async def _dispatch_and_drive(  # noqa: PLR0911
+async def _dispatch_and_drive(
     *,
     controller: FirmwareController,
     job: FirmwareJob,
@@ -233,83 +228,99 @@ async def _dispatch_and_drive(  # noqa: PLR0911
 ) -> None:
     """Build the bundle, submit, then wait for the receiver's terminal frame.
 
-    Split out from :func:`run_remote_job` so the
-    listener attach / detach lives in one ``with`` block at the
-    outer call site — every early-return failure path here
-    still releases the bus subscriptions.
+    Split out from :func:`run_remote_job` so the listener
+    attach / detach lives in one ``with`` block at the outer
+    call site — every early-return failure path here still
+    releases the bus subscriptions.
     """
+    bundle_bytes = await _build_bundle_or_fail(controller, job)
+    if bundle_bytes is None:
+        return
+    client = _open_peer_link_client_or_fail(controller, job)
+    if client is None:
+        return
+    if not await _submit_job_to_receiver(
+        controller=controller, job=job, client=client, bundle_bytes=bundle_bytes
+    ):
+        return
+
+    wire_status = await _await_terminal(
+        controller=controller,
+        job=job,
+        terminal=terminal,
+        session_lost=session_lost,
+        cancel_event=cancel_event,
+    )
+    if wire_status != "completed":
+        # ``_await_terminal`` already finalised the job.
+        return
+
+    await _finalise_after_receiver_completed(controller=controller, job=job, client=client)
+
+
+async def _build_bundle_or_fail(controller: FirmwareController, job: FirmwareJob) -> bytes | None:
+    """Build the YAML bundle; ``None`` + ``_fail_locally`` on failure."""
     loop = asyncio.get_running_loop()
     yaml_path = await loop.run_in_executor(
         None, controller._db.settings.rel_path, job.configuration
     )
-
     try:
-        bundle_bytes = await build_yaml_bundle(yaml_path)
+        return await build_yaml_bundle(yaml_path)
     except FileNotFoundError:
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: configuration not found: {job.configuration}",
-        )
-        return
+        _fail_locally(controller, job, reason=f"configuration not found: {job.configuration}")
     except BundleBuildError as exc:
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: bundle failed: {exc.output or exc}",
-        )
-        return
+        _fail_locally(controller, job, reason=f"bundle failed: {exc.output or exc}")
+    return None
 
+
+def _open_peer_link_client_or_fail(
+    controller: FirmwareController, job: FirmwareJob
+) -> PeerLinkClient | None:
+    """Look up the offloader's open peer-link client; ``None`` on failure."""
     offloader = controller._db.remote_build_offloader
     if offloader is None:
-        _fail_locally(
-            controller,
-            job,
-            error="remote build: controller not initialised",
-        )
-        return
+        _fail_locally(controller, job, reason="controller not initialised")
+        return None
     try:
-        client = offloader._lookup_open_peer_link_client(
+        return offloader._lookup_open_peer_link_client(
             job.source_pin_sha256, label="firmware_remote"
         )
     except CommandError as exc:
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: receiver not reachable: {exc.message}",
-        )
-        return
+        _fail_locally(controller, job, reason=f"receiver not reachable: {exc.message}")
+        return None
 
-    # Look up the local Device entry so the receiver's
-    # firmware-tasks UI can render the device's actual name +
-    # friendly name instead of the cryptic
-    # ``.esphome/.remote_builds/<id>/<device>/<device>.yaml``
-    # path. The offloader already has both from its scanner —
-    # sending them on the wire avoids the receiver having to
-    # re-parse the bundled YAML just to render a title.
-    # ``getattr`` falls through cleanly when the devices
-    # controller isn't wired yet (pre-``start()`` race, test
-    # stubs without a Device list). A missing scanner entry
-    # for a real lookup leaves the fields empty and the
-    # receiver falls back to the path's device segment —
-    # happens for newly-added YAMLs whose scanner entry
-    # hasn't refreshed yet, not worth blocking on.
-    device_name = ""
-    device_friendly_name = ""
+
+def _local_device_display_for_job(
+    controller: FirmwareController, job: FirmwareJob
+) -> tuple[str, str]:
+    """Return ``(name, friendly_name)`` for *job*'s configuration; ``("", "")`` if unknown.
+
+    The receiver renders these in its firmware-tasks UI; sending
+    them on the wire avoids re-parsing the bundled YAML for a
+    title. ``getattr`` falls through cleanly when the devices
+    controller isn't wired yet.
+    """
     devices_controller = getattr(controller._db, "devices", None)
-    if devices_controller is not None:
-        for device in devices_controller.get_devices():
-            if device.configuration == job.configuration:
-                device_name = device.name
-                device_friendly_name = device.friendly_name
-                break
+    if devices_controller is None:
+        return "", ""
+    for device in devices_controller.get_devices():
+        if device.configuration == job.configuration:
+            return device.name, device.friendly_name
+    return "", ""
 
-    # Wire ``target`` is keyed off ``job.job_type``: CLEAN
-    # dispatches as ``target="clean"`` so the receiver runs
+
+async def _submit_job_to_receiver(
+    *,
+    controller: FirmwareController,
+    job: FirmwareJob,
+    client: PeerLinkClient,
+    bundle_bytes: bytes,
+) -> bool:
+    """Send ``submit_job`` and return ``True`` on accepted ack, ``False`` otherwise."""
+    device_name, device_friendly_name = _local_device_display_for_job(controller, job)
+    # CLEAN goes as target="clean" so the receiver runs
     # ``esphome clean`` after extract; everything else stays on
-    # ``target="compile"`` (the receiver only ever compiles —
-    # UPLOAD / INSTALL come back to flash locally via the
-    # post-completion artifact fetch below).
+    # "compile" — the receiver only ever compiles.
     wire_target: Literal["compile", "clean"] = (
         "clean" if job.job_type is JobType.CLEAN else "compile"
     )
@@ -323,45 +334,34 @@ async def _dispatch_and_drive(  # noqa: PLR0911
             device_friendly_name=device_friendly_name,
         )
     except (PeerLinkNoSessionError, SubmitJobTimeoutError, SubmitJobSessionLostError) as exc:
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: dispatch failed: {exc}",
-        )
-        return
-
+        _fail_locally(controller, job, reason=f"dispatch failed: {exc}")
+        return False
     if not ack["accepted"]:
         reason = ack.get("reason", "no reason given")
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: receiver rejected job: {reason}",
-        )
-        return
+        _fail_locally(controller, job, reason=f"receiver rejected job: {reason}")
+        return False
+    return True
 
-    wire_status = await _await_terminal(
-        controller=controller,
-        job=job,
-        terminal=terminal,
-        session_lost=session_lost,
-        cancel_event=cancel_event,
-    )
-    if wire_status != "completed":
-        # ``_await_terminal`` already finalised the job (cancel
-        # / failed / session-lost / explicit-cancelled). Nothing
-        # left to do.
-        return
 
-    # Receiver finished its half successfully. For COMPILE
-    # and CLEAN that's the whole job; for UPLOAD / INSTALL we
-    # still owe the local flash step using the receiver's
-    # bytes.
-    if job.job_type in (JobType.COMPILE, JobType.CLEAN):
-        # Stamp ``exit_code=0`` because the remote work didn't
-        # run a local subprocess. The legacy ``follow_job``
-        # framing coerces ``None`` to a failure code (``1``),
-        # so a missing stamp would land a successful run as a
-        # failure on the wire.
+async def _finalise_after_receiver_completed(
+    *,
+    controller: FirmwareController,
+    job: FirmwareJob,
+    client: PeerLinkClient,
+) -> None:
+    """Wire the post-completed dispatch by job_type.
+
+    CLEAN finalises immediately (wipe-only). COMPILE / UPLOAD /
+    INSTALL all materialise first; UPLOAD / INSTALL then spawn
+    the local flash subprocess.
+    """
+    if job.job_type is JobType.CLEAN:
+        job.exit_code = 0
+        _finalize_success(controller, job)
+        return
+    if not await _fetch_and_materialise(controller=controller, job=job, client=client):
+        return
+    if job.job_type is JobType.COMPILE:
         job.exit_code = 0
         _finalize_success(controller, job)
         return
@@ -457,7 +457,7 @@ async def _await_terminal(
                 _fail_locally(
                     controller,
                     job,
-                    error=f"remote build: peer-link session lost ({text})",
+                    reason=f"peer-link session lost ({text})",
                 )
                 return None
             if cancel_event.is_set() and not cancel_sent:
@@ -487,15 +487,10 @@ async def _await_terminal(
         controller._finalize_cancelled(job)
         return None
     if status == "failed":
-        # Receiver-supplied error text rides into ``job.error``;
-        # an empty ``error_message`` (older receiver, internal
-        # bug) falls back to a generic string so subscribers
-        # always see a non-empty reason.
-        _fail_locally(
-            controller,
-            job,
-            error=data["error_message"] or "remote build failed",
-        )
+        # Receiver-supplied error text rides into job.error; an
+        # empty error_message (older receiver, internal bug)
+        # falls back so subscribers always see a non-empty reason.
+        _fail_locally(controller, job, reason=data["error_message"] or "compile failed")
         return None
     # ``completed`` — the only status the caller must act on.
     # Don't finalise here; the caller owes a local flash step
@@ -503,42 +498,18 @@ async def _await_terminal(
     return status
 
 
-async def _fetch_and_run_local_upload(
+async def _fetch_and_materialise(
     *,
     controller: FirmwareController,
     job: FirmwareJob,
     client: PeerLinkClient,
-) -> None:
-    """
-    Pull the receiver's compile artifacts and flash the device locally.
+) -> bool:
+    """Download the receiver's tarball and materialise it on the offloader.
 
-    Called once the receiver returned ``completed`` for an
-    ``UPLOAD`` / ``INSTALL`` job. The transparent install
-    contract says the offloader owns the flash step — only
-    the *compile* hops to the receiver. So:
-
-    1. Fetch the artifact tarball via
-       :meth:`PeerLinkClient.download_artifacts`.
-    2. Extract ``firmware.bin`` to a per-run tmpdir (the
-       only piece the OTA / web_server flash paths need; the
-       multi-image set required for ESP32 wired flash isn't
-       supported by transparent install — serial REMOTE installs
-       are rejected at the install handler).
-    3. Spawn ``esphome upload --device <port> --file
-       <staged>`` through :meth:`FirmwareController._tracked_subprocess`
-       so the cancel handler's SIGTERM lands on the subprocess
-       if the user clicks Stop mid-upload.
-    4. Stream stdout through :func:`helpers._ingest_output_line`
-       — same per-line bookkeeping (buffer / trim / fire
-       ``JOB_OUTPUT`` + ``JOB_PROGRESS``) every local
-       subscriber already consumes.
-    5. Finalise based on exit code + cancel state, same shape
-       the local subprocess path uses.
-
-    Wire / unpack failures and a non-zero upload exit fail
-    the job locally with ``JOB_FAILED`` (or ``JOB_CANCELLED``
-    via the cancel-aware ``_fail_locally`` when the user
-    raced a Stop).
+    Returns ``True`` when staging succeeded and the caller
+    should continue, ``False`` when it already finalised the
+    job (download / materialise failure, or a cancel raced in
+    after the receiver completed).
     """
     _LOGGER.info(
         "Remote job %s: requesting build artefacts for configuration=%r from receiver",
@@ -552,47 +523,52 @@ async def _fetch_and_run_local_upload(
         SubmitJobSessionLostError,
         DownloadArtifactsError,
     ) as exc:
-        # Receiver-side WARNING logs carry the actionable
-        # detail (configuration, missing path, current status)
-        # for every soft-reject; point operators at the build
-        # server log either way. The previous shape only
-        # mentioned "missing path", which was misleading for
-        # non-``build_dir_missing`` rejects (``unknown_job`` /
-        # ``job_not_completed`` / session lost — none of which
-        # involve a path).
         _fail_locally(
             controller,
             job,
-            error=(
-                f"remote build: download_artifacts failed: {exc} "
-                f"(check the build server logs for details)"
-            ),
+            reason=(f"download_artifacts failed: {exc} (check the build server logs for details)"),
         )
-        return
+        return False
 
-    # Extract firmware.bin from the receiver's gzipped tarball.
-    # The receiver-side packer guarantees ``firmware.bin`` is
-    # always present (see ``ArtifactsDownloadSender``); a
-    # missing entry means the wire shape drifted, so surface
-    # as a clean error rather than letting the upload step
-    # silently flash whatever was at the tmpdir path.
     try:
-        firmware_bytes = await asyncio.get_running_loop().run_in_executor(
-            None, extract_firmware_bin, packed.tarball
+        await asyncio.get_running_loop().run_in_executor(
+            None, materialise_remote_artifacts, packed.tarball, job.configuration
         )
-    except UnpackArtifactsError as exc:
-        _fail_locally(
-            controller,
-            job,
-            error=f"remote build: tarball: {exc}",
-        )
-        return
+    except MaterialiseError as exc:
+        _fail_locally(controller, job, reason=f"materialise failed: {exc}")
+        return False
+    except OSError as exc:
+        # Disk full / permission denied / transient IO. Catch
+        # at this seam so the runner task doesn't crash; the
+        # MaterialiseError branch covers the wire-shape failures.
+        _fail_locally(controller, job, reason=f"materialise IO error: {exc}")
+        return False
 
     # Honour a cancel that arrived between the receiver's
-    # completed frame and us getting here — no point staging
-    # bytes or spawning a flash subprocess for a job the user
-    # already aborted. ``_fail_locally`` is cancel-aware and
-    # routes through ``_finalize_cancelled`` in this case.
+    # completed frame and us getting here.
+    if job.job_id in controller._cancel_requested:
+        controller._finalize_cancelled(job)
+        return False
+    return True
+
+
+async def _fetch_and_run_local_upload(
+    *,
+    controller: FirmwareController,
+    job: FirmwareJob,
+    client: PeerLinkClient,
+) -> None:
+    """Flash the device locally after the receiver's COMPILE half is staged.
+
+    Pre-condition: :func:`_fetch_and_materialise` has already
+    pulled the tarball and staged it; the offloader's filesystem
+    now looks as if a local compile produced the build, so
+    ``esphome upload <yaml> --device <port>`` resolves through
+    esphome's per-platform dispatch (no ``--file`` needed).
+    """
+    # Cancel that landed after ``_fetch_and_materialise``'s
+    # own check returned True — same race window the old
+    # one-shot helper covered.
     if job.job_id in controller._cancel_requested:
         controller._finalize_cancelled(job)
         return
@@ -618,41 +594,26 @@ async def _fetch_and_run_local_upload(
     # this phase boundary.
     _fire_job_progress(job, bus, 0)
 
-    # ``tempfile.TemporaryDirectory`` ctor calls
-    # :func:`os.mkdir` synchronously — blockbuster catches
-    # that on CI. Use :func:`tempfile.mkdtemp` via an executor
-    # and clean up by hand in the ``finally`` so the blocking
-    # syscalls (``os.mkdir`` / ``shutil.rmtree``) never run on
-    # the event loop.
-    tmpdir = await loop.run_in_executor(None, tempfile.mkdtemp, "", "esphome-remote-firmware-")
-    try:
-        firmware_path = Path(tmpdir) / "firmware.bin"
-        await loop.run_in_executor(None, firmware_path.write_bytes, firmware_bytes)
+    cache_args = controller._build_cache_args(job)
+    cmd = [
+        *controller._esphome_cmd,
+        "--dashboard",
+        *cache_args,
+        "upload",
+        str(yaml_path),
+        "--device",
+        job.port,
+    ]
+    _LOGGER.debug("Remote upload subprocess: %s", " ".join(cmd))
 
-        cache_args = controller._build_cache_args(job)
-        cmd = [
-            *controller._esphome_cmd,
-            "--dashboard",
-            *cache_args,
-            "upload",
-            str(yaml_path),
-            "--device",
-            job.port,
-            "--file",
-            str(firmware_path),
-        ]
-        _LOGGER.debug("Remote upload subprocess: %s", " ".join(cmd))
-
-        env = {**os.environ, **ESPHOME_SUBPROCESS_ENV}
-        exit_code = await _run_upload_subprocess(
-            controller=controller,
-            job=job,
-            bus=bus,
-            cmd=cmd,
-            env=env,
-        )
-    finally:
-        await loop.run_in_executor(None, shutil.rmtree, tmpdir, True)
+    env = {**os.environ, **ESPHOME_SUBPROCESS_ENV}
+    exit_code = await _run_upload_subprocess(
+        controller=controller,
+        job=job,
+        bus=bus,
+        cmd=cmd,
+        env=env,
+    )
 
     if exit_code is None:
         # ``_run_upload_subprocess`` already finalised the
@@ -665,7 +626,7 @@ async def _fetch_and_run_local_upload(
         _fail_locally(
             controller,
             job,
-            error=f"remote build: local upload failed (exit {exit_code})",
+            reason=f"local upload failed (exit {exit_code})",
         )
 
 
@@ -799,30 +760,23 @@ async def _send_cancel_or_finalise(
     return True
 
 
+_REMOTE_BUILD_ERROR_PREFIX = "remote build: "
+
+
 def _fail_locally(
     controller: FirmwareController,
     job: FirmwareJob,
     *,
-    error: str,
+    reason: str,
 ) -> None:
-    """Mark *job* FAILED with *error* and fire ``JOB_FAILED`` on the local bus.
+    """Mark *job* FAILED with ``"remote build: {reason}"`` and fire ``JOB_FAILED`` locally.
 
-    Centralises the "remote path can't proceed, finalise
-    terminally" sequence so every early-exit failure branch
-    above stays one line at the call site. The text rides
-    into ``job.error`` so a frontend that already renders
-    ``error`` for local failures shows the remote failure
-    with no special-case code.
-
-    Cancel intent wins: if the user already flipped
-    ``_cancel_requested`` for this job (Stop click landed
-    during bundle build / lookup / dispatch / session-lost
-    detection — anywhere before the receiver could emit a
-    terminal frame), finalise as CANCELLED instead. Mirrors
-    the local subprocess path's contract — a Stop that
-    happened to race a failure should not show up as a red
-    error badge.
+    Cancel intent wins: a Stop that flipped
+    ``_cancel_requested`` before the receiver's terminal frame
+    finalises as CANCELLED instead, mirroring the local
+    subprocess path's contract.
     """
+    error = f"{_REMOTE_BUILD_ERROR_PREFIX}{reason}"
     if job.job_id in controller._cancel_requested:
         controller._finalize_cancelled(job)
         _LOGGER.info("Remote job %s cancelled (failure path: %s)", job.job_id, error)

@@ -2,50 +2,85 @@
 Pack / unpack the receiver's build-artifact tarball.
 
 The remote-build feature ships compiled firmware between two
-dashboards by serialising the receiver's flash-artifact set
-(``firmware.bin`` plus the platform's auxiliary images +
-``idedata.json``) into a single gzipped tarball. This module
-owns the pack + unpack helpers — pure data transforms with no
-WS / wire-flow knowledge — so the two end-to-end surfaces that
-consume the format (the receiver-side
-:class:`ArtifactsDownloadSender` streamer and the offloader-side
-``download_artifacts`` WS unpacker / source-routed runner) call
-into one place instead of re-implementing the format twice.
+dashboards by serialising the receiver's build tree into a
+single gzipped tarball. This module owns the pack + unpack
+helpers — pure data transforms with no WS / wire-flow
+knowledge — so the two end-to-end surfaces that consume the
+format (the receiver-side :class:`ArtifactsDownloadSender`
+streamer and the offloader-side ``download_artifacts`` WS
+unpacker / source-routed runner) call into one place instead
+of re-implementing the format twice.
 
-Tarball layout (flat — no subdirectories):
+Tarball layout (materialise-locally wire format):
 
 .. code-block:: text
 
-    idedata.json
-    firmware.bin
-    bootloader.bin       (ESP32 / native IDF only)
-    partitions.bin       (ESP32 / native IDF only)
-    ota_data_initial.bin (ESP32 / native IDF only)
+    storage.json     # receiver's <data_dir>/storage/<basename>.json
+    idedata.json     # receiver's <data_dir>/idedata/<name>.json (esphome's cache copy)
+    platformio.ini   # receiver's <build_path>/platformio.ini
+    <per-platform build-tree files>  # see artifact_platforms/*.py
 
-The offsets for each image live inside ``idedata.json``'s
-``extra.flash_images`` array (and on the receiver-resolved
-``firmware_offset`` for ``firmware.bin`` itself, which upstream
-tracks separately from the ``extra`` block). The receiver's
-absolute build-dir paths in the manifest are rewritten to
-basenames on the offloader side — see
-:func:`_rewrite_idedata_paths`.
+The three metadata members at the top of the tarball are
+platform-independent — every build ships them. The
+:mod:`controllers.remote_build.artifact_platforms` registry
+drives which build-tree files travel alongside them; see the
+per-platform modules for the exact paths each platform ships.
+
+The offloader-side materialiser
+(:func:`helpers.remote_artifacts_materialise.materialise_remote_artifacts`)
+reads ``storage.json`` + ``idedata.json``, rewrites their
+receiver-absolute path fields to offloader-absolute, and stages
+them at the offloader's canonical cache locations:
+``<data_dir>/storage/<basename>.json`` and
+``<data_dir>/idedata/<name>.json``. The build tree extracts as-is
+under ``<data_dir>/build/<name>/``.
+
+The :func:`unpack_artifacts_response` adapter is a separate
+consumer — it serves the multi-image set to the browser-side
+Web Serial flasher via the offloader's
+``remote_build/download_artifacts`` WS command, keyed by image
+basename (the frontend doesn't care about the build-tree
+layout). See :func:`_rewrite_idedata_paths` for the basename
+rewrite the frontend's lookup relies on.
 """
 
 from __future__ import annotations
 
 import base64
+import importlib
 import io
+import logging
 import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
-from ...helpers.build_artifacts import load_build_artifacts
+from esphome.storage_json import StorageJSON
+
+from ...helpers.build_artifacts import _firmware_offset_for_platform
 from ...helpers.json import loads as json_loads
 from ...helpers.peer_link_bundle import FIRMWARE_MAX_TOTAL_BYTES
+from ...helpers.storage_path import resolve_idedata_path, resolve_storage_path
+from .artifact_platforms import build_files_for_platform
 
 if TYPE_CHECKING:
     from .peer_link_client import DownloadArtifactsResult
+
+_LOGGER = logging.getLogger(__name__)
+
+# Tarball member names that ride alongside the build tree. The
+# offloader-side materialiser pulls these out of the tarball and
+# stages them at the offloader's canonical cache locations; the
+# WS-adapter (:func:`unpack_artifacts_response`) ignores
+# ``storage.json`` / ``platformio.ini`` (they're not flash images)
+# and reads ``idedata.json`` to recover the upstream-canonical
+# flash-image manifest.
+STORAGE_MEMBER_NAME = "storage.json"
+IDEDATA_MEMBER_NAME = "idedata.json"
+PLATFORMIO_INI_MEMBER_NAME = "platformio.ini"
+_METADATA_MEMBERS: frozenset[str] = frozenset(
+    {STORAGE_MEMBER_NAME, IDEDATA_MEMBER_NAME, PLATFORMIO_INI_MEMBER_NAME}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -72,95 +107,164 @@ class PackedArtifacts:
 
 
 def pack_build_artifacts(configuration: str) -> PackedArtifacts:
-    """Pack the build's flash artifacts for *configuration* into a gzipped tarball.
+    """Pack the build for *configuration* into the materialise-locally tarball.
 
-    Synchronous; meant to run inside an executor. Calls
-    :func:`helpers.build_artifacts.load_build_artifacts` to
-    discover the flash-image set + idedata bytes, then packs
-    every image (flattened to its basename) +
-    ``idedata.json`` into a single gzipped tarball.
-
-    Tarball layout matches the module docstring; flat files
-    only. The offloader-side install path needs the bytes +
-    the offsets from ``idedata.extra.flash_images`` (plus
-    ``firmware.bin``'s offset on the start frame because
-    upstream tracks the firmware partition separately).
-
-    Raises :class:`FileNotFoundError` from
-    :func:`load_build_artifacts` when the StorageJSON sidecar
-    or any required artifact is missing. Raises
-    :class:`RuntimeError` on duplicate-basename collision
-    (defensive — upstream esphome doesn't emit this shape
-    today, but we fail loudly rather than ship a silently-
-    truncated set) or when the artifact set exceeds
-    :data:`FIRMWARE_MAX_TOTAL_BYTES`. Two cap checks fire:
-    the uncompressed walking sum (cheap, lets us short-
-    circuit before reading huge files), and a final
-    compressed-size check on the rendered tarball (the
-    offloader's :class:`BundleAssembler` caps on
-    ``ArtifactsStartFrameData.total_bytes``, the wire-side
-    length, so the receiver-side ceiling needs to match).
-    Compression usually shrinks the payload, so the
-    uncompressed gate fires first in practice; the
-    post-render check exists for the incompressible-data +
-    tar-header-overhead corner where ``len(tarball)`` could
-    technically exceed the uncompressed total. The caller
-    (:meth:`ArtifactsDownloadSender.handle_download_artifacts`)
-    catches both and surfaces a structured reject reason.
+    Synchronous; meant to run inside an executor. Raises
+    :class:`FileNotFoundError` when the StorageJSON sidecar /
+    cached idedata / platformio.ini aren't on disk;
+    :class:`RuntimeError` on unknown ``target_platform`` or
+    when the artifact set exceeds :data:`FIRMWARE_MAX_TOTAL_BYTES`
+    (per-member walking sum + post-render check, the latter
+    matching the offloader-side BundleAssembler cap).
     """
-    artifacts = load_build_artifacts(configuration)
-    buf = io.BytesIO()
-    total_uncompressed = len(artifacts.idedata_bytes)
-    if total_uncompressed > FIRMWARE_MAX_TOTAL_BYTES:
+    storage_path, storage = _load_storage_for_pack(configuration)
+    build_path = Path(storage.build_path)
+    members = _collect_pack_members(
+        configuration=configuration,
+        storage=storage,
+        storage_path=storage_path,
+        build_path=build_path,
+    )
+    firmware_offset = _firmware_offset_for_platform(storage.target_platform or "")
+    tarball = _render_tarball(members, configuration=configuration)
+    return PackedArtifacts(tarball=tarball, firmware_offset=firmware_offset)
+
+
+def _load_storage_for_pack(configuration: str) -> tuple[Path, StorageJSON]:
+    """Load + validate the StorageJSON sidecar for the receiver-side pack."""
+    storage_path = resolve_storage_path(configuration)
+    storage = StorageJSON.load(storage_path)
+    if storage is None:
+        msg = f"StorageJSON sidecar missing for {configuration}: {storage_path}"
+        raise FileNotFoundError(msg)
+    if storage.firmware_bin_path is None:
+        msg = f"firmware_bin_path unset in StorageJSON for {configuration}"
+        raise FileNotFoundError(msg)
+    if storage.build_path is None:
+        msg = f"build_path unset in StorageJSON for {configuration}"
+        raise FileNotFoundError(msg)
+    if not isinstance(storage.name, str) or not storage.name:
+        msg = f"StorageJSON name unset / non-string for {configuration}: {storage.name!r}"
+        raise FileNotFoundError(msg)
+    return storage_path, storage
+
+
+def _collect_pack_members(
+    *,
+    configuration: str,
+    storage: StorageJSON,
+    storage_path: Path,
+    build_path: Path,
+) -> list[tuple[str, Path]]:
+    """Return ``(arcname, src_path)`` pairs for the tarball, in write order."""
+    target_platform = (storage.target_platform or "").lower()
+    build_files = build_files_for_platform(target_platform)
+    if not build_files:
         msg = (
-            f"idedata.json for {configuration} ({total_uncompressed} bytes) "
-            f"already exceeds FIRMWARE_MAX_TOTAL_BYTES {FIRMWARE_MAX_TOTAL_BYTES}"
+            f"no artifact_platforms module for target_platform="
+            f"{storage.target_platform!r} (configuration={configuration!r})"
         )
         raise RuntimeError(msg)
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        # ``idedata.json`` first so the offloader can peek at
-        # the manifest before chunking the binaries.
-        info = tarfile.TarInfo(name="idedata.json")
-        info.size = len(artifacts.idedata_bytes)
-        tar.addfile(info, io.BytesIO(artifacts.idedata_bytes))
 
-        seen_names: set[str] = set()
-        for image in artifacts.flash_images:
-            name = image.path.name
-            if name in seen_names:
-                msg = f"duplicate flash image basename {name!r} in idedata"
-                raise RuntimeError(msg)
-            seen_names.add(name)
-            image_bytes = image.path.read_bytes()
-            total_uncompressed += len(image_bytes)
-            if total_uncompressed > FIRMWARE_MAX_TOTAL_BYTES:
+    idedata_cache_path = resolve_idedata_path(configuration, name=storage.name)
+    platformio_ini = build_path / "platformio.ini"
+    if not idedata_cache_path.is_file():
+        msg = f"idedata cache missing for {configuration}: {idedata_cache_path}"
+        raise FileNotFoundError(msg)
+    if not platformio_ini.is_file():
+        msg = f"platformio.ini missing for {configuration}: {platformio_ini}"
+        raise FileNotFoundError(msg)
+
+    members: list[tuple[str, Path]] = [
+        (STORAGE_MEMBER_NAME, storage_path),
+        (IDEDATA_MEMBER_NAME, idedata_cache_path),
+        (PLATFORMIO_INI_MEMBER_NAME, platformio_ini),
+    ]
+    # Dedupe by basename, not full path: the WS-unpack adapter
+    # keys flash images by basename, so a build emitting both
+    # ``.pioenvs/<name>/firmware.factory.bin`` and
+    # ``build/firmware.factory.bin`` would otherwise produce a
+    # tarball the offloader's adapter rejects. First-wins
+    # ordering (BUILD_FILES list order) picks the canonical copy.
+    seen_basenames: set[str] = set()
+
+    def _maybe_add(rel: str) -> None:
+        abs_path = build_path / rel
+        if not abs_path.is_file():
+            return
+        basename = Path(rel).name
+        if basename in seen_basenames:
+            return
+        members.append((rel, abs_path))
+        seen_basenames.add(basename)
+
+    for template in build_files:
+        _maybe_add(template.format(name=storage.name))
+
+    # Every file ``get_download_types`` lists for this platform
+    # must travel too so the offloader's ``firmware/get_binaries``
+    # + ``firmware/download`` surface matches the legacy
+    # esphome.dashboard set.
+    firmware_bin = Path(storage.firmware_bin_path)
+    pioenvs_rel = _relative_or_raise(firmware_bin.parent, build_path, configuration=configuration)
+    for download_file in _download_type_files(storage):
+        _maybe_add(f"{pioenvs_rel}/{download_file}")
+
+    # firmware_bin_path MUST be in the tarball — otherwise the
+    # offloader stages a tree where firmware/download misses.
+    firmware_bin_rel = _relative_or_raise(firmware_bin, build_path, configuration=configuration)
+    if firmware_bin.name not in seen_basenames:
+        msg = (
+            f"firmware_bin_path {firmware_bin_rel!r} not covered by BUILD_FILES "
+            f"for target_platform={storage.target_platform!r}"
+        )
+        raise RuntimeError(msg)
+    return members
+
+
+def _download_type_files(storage: StorageJSON) -> list[str]:
+    """Return paths (relative to firmware_bin_path.parent) listed by ``get_download_types``."""
+    from ..firmware.controller import _resolve_download_component  # noqa: PLC0415
+
+    component = _resolve_download_component(storage.target_platform)
+    if not component:
+        return []
+    try:
+        module = importlib.import_module(f"esphome.components.{component}")
+        return [entry["file"] for entry in module.get_download_types(storage)]
+    except Exception:
+        _LOGGER.exception(
+            "Could not determine download types for target_platform=%r",
+            storage.target_platform,
+        )
+        return []
+
+
+def _render_tarball(members: list[tuple[str, Path]], *, configuration: str) -> bytes:
+    """Write *members* to a gzipped tarball, capping declared + rendered bytes."""
+    buf = io.BytesIO()
+    total_uncompressed = 0
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for arcname, src in members:
+            # Stat before read so a runaway build artefact trips
+            # the cap before we allocate its bytes into memory.
+            file_size = src.stat().st_size
+            if total_uncompressed + file_size > FIRMWARE_MAX_TOTAL_BYTES:
                 msg = (
                     f"build artifacts for {configuration} would exceed "
                     f"FIRMWARE_MAX_TOTAL_BYTES uncompressed "
-                    f"({total_uncompressed} > {FIRMWARE_MAX_TOTAL_BYTES})"
+                    f"({total_uncompressed + file_size} > {FIRMWARE_MAX_TOTAL_BYTES})"
                 )
                 raise RuntimeError(msg)
-            info = tarfile.TarInfo(name=name)
-            info.size = len(image_bytes)
-            tar.addfile(info, io.BytesIO(image_bytes))
-
-    # ``flash_images[0]`` is firmware.bin (load_build_artifacts
-    # invariant) — its offset is the value the offloader needs
-    # for the start frame, since idedata.json's manifest
-    # doesn't include the firmware partition itself.
+            payload = src.read_bytes()
+            total_uncompressed += len(payload)
+            info = tarfile.TarInfo(name=arcname)
+            info.size = len(payload)
+            tar.addfile(info, io.BytesIO(payload))
     tarball = buf.getvalue()
-    # Final post-render cap on the wire-side length. The
-    # uncompressed-walking gate above already short-circuits
-    # the common case, but tar adds 512-byte headers per
-    # member and gzip can grow incompressible data by a few
-    # percent — for an artifact set that lands right at the
-    # limit, ``len(tarball)`` could in principle exceed the
-    # uncompressed total even though the body fits. The
-    # offloader's ``BundleAssembler`` caps on
-    # ``ArtifactsStartFrameData.total_bytes`` (the
-    # post-render length), so without this match the receiver
-    # could deterministically ship a stream the offloader
-    # rejects.
+    # Final post-render cap on the wire-side length so the
+    # receiver-side ceiling matches the offloader's
+    # BundleAssembler check on ArtifactsStartFrameData.total_bytes.
     if len(tarball) > FIRMWARE_MAX_TOTAL_BYTES:
         msg = (
             f"build artifacts tarball for {configuration} would exceed "
@@ -168,7 +272,7 @@ def pack_build_artifacts(configuration: str) -> PackedArtifacts:
             f"({len(tarball)} > {FIRMWARE_MAX_TOTAL_BYTES})"
         )
         raise RuntimeError(msg)
-    return PackedArtifacts(tarball=tarball, firmware_offset=artifacts.flash_images[0].offset)
+    return tarball
 
 
 # ---------------------------------------------------------------------------
@@ -232,87 +336,32 @@ def unpack_artifacts_response(packed: DownloadArtifactsResult, job_id: str) -> d
     }
 
 
-def extract_firmware_bin(tarball_bytes: bytes) -> bytes:
-    """
-    Pull ``firmware.bin`` out of the receiver's gzipped tarball.
-
-    Synchronous; meant to run in an executor — the
-    :func:`tarfile.open` + member read are blocking
-    syscalls. Used by the source-routed runner's UPLOAD /
-    INSTALL branch: the runner only needs the firmware
-    image to feed into ``esphome upload --file``, not the
-    full idedata + multi-image set the WS unpacker
-    returns to a Web Serial / esptool consumer.
-
-    Raises :class:`UnpackArtifactsError` on any structural
-    problem (missing entry, non-file member, malformed
-    tarball) or when ``firmware.bin``'s declared size exceeds
-    :data:`FIRMWARE_MAX_TOTAL_BYTES`. The size gate is a
-    decompression-bomb guard: gzip can compress huge
-    zero-filled / sparse data to a tiny on-the-wire payload,
-    so reading without a header-side bound would let a hostile
-    peer expand a few-KiB tarball into multi-GiB memory.
-    """
-    try:
-        with tarfile.open(fileobj=io.BytesIO(tarball_bytes), mode="r:gz") as tar:
-            try:
-                member = tar.getmember("firmware.bin")
-            except KeyError as exc:
-                msg = "firmware.bin missing from receiver's tarball"
-                raise UnpackArtifactsError(msg) from exc
-            # ``isfile()`` rejects symlinks / hardlinks /
-            # device nodes / FIFOs / directories — anything
-            # that isn't a plain file entry. Load-bearing
-            # against a hostile peer: ``tarfile.extractfile()``
-            # follows symlinks + hardlinks transparently and
-            # returns a readable stream for them, so reading
-            # ``firmware.bin`` without this gate would
-            # silently flash whatever the link target resolved
-            # to on the receiver's filesystem. Matches
-            # :func:`_read_tarball_member`'s gate on the
-            # general-purpose unpack path.
-            if not member.isfile():
-                msg = f"firmware.bin in tarball is not a regular file ({member.type!r})"
-                raise UnpackArtifactsError(msg)
-            _check_member_size(member, total_so_far=0)
-            # ``isfile() == True`` is the stdlib contract for
-            # ``extractfile()`` returning a readable stream;
-            # the cast is safe because we've already gated on
-            # ``isfile()`` above.
-            payload = cast(io.BufferedReader, tar.extractfile(member))
-            bytes_payload: bytes = payload.read()
-            return bytes_payload
-    except tarfile.TarError as exc:
-        msg = f"malformed tarball: {exc}"
-        raise UnpackArtifactsError(msg) from exc
-
-
 def read_artifacts_tarball(tarball: bytes) -> tuple[dict[str, Any], dict[str, bytes]]:
     """
     Read every member of *tarball* into ``(idedata, files-by-basename)``.
 
     ``idedata`` is the parsed ``idedata.json`` object;
-    ``files-by-basename`` excludes ``idedata.json``. Raises
-    :class:`UnpackArtifactsError` on any structural problem
-    in the tarball, or when the cumulative decompressed
-    payload would exceed :data:`FIRMWARE_MAX_TOTAL_BYTES`
-    (decompression-bomb guard — see
-    :func:`extract_firmware_bin` for the same rationale on the
-    per-member size check).
+    ``files-by-basename`` carries every non-metadata tarball
+    member keyed on its basename (``Path(member.name).name``)
+    so the WS-adapter consumer's lookup ignores the
+    build-tree nesting the receiver shipped them under.
+    ``storage.json`` / ``platformio.ini`` are filtered out:
+    they belong to the materialiser, not the flash-image set.
+
+    Raises :class:`UnpackArtifactsError` on any structural
+    problem in the tarball (missing idedata, duplicate
+    basename across different build-tree members, malformed
+    gzip / tar framing) or when the cumulative decompressed
+    payload would exceed :data:`FIRMWARE_MAX_TOTAL_BYTES`.
+    The size gate is a decompression-bomb guard: gzip can
+    compress huge zero-filled / sparse data to a tiny
+    on-the-wire payload, so reading without a header-side
+    bound would let a hostile peer expand a few-KiB tarball
+    into multi-GiB memory.
     """
-    idedata: dict[str, Any] | None = None
-    image_bytes_by_name: dict[str, bytes] = {}
-    total_bytes = 0
     try:
         with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tar:
-            for member in tar:
-                _check_member_size(member, total_so_far=total_bytes)
-                payload = _read_tarball_member(tar, member)
-                total_bytes += len(payload)
-                if member.name == "idedata.json":
-                    idedata = _parse_idedata(payload)
-                else:
-                    image_bytes_by_name[member.name] = payload
+            idedata, image_bytes_by_name = _walk_artifacts_members(tar)
     except tarfile.TarError as exc:
         msg = f"artifacts tarball is malformed: {exc}"
         raise UnpackArtifactsError(msg) from exc
@@ -320,6 +369,50 @@ def read_artifacts_tarball(tarball: bytes) -> tuple[dict[str, Any], dict[str, by
         msg = "artifacts tarball missing idedata.json"
         raise UnpackArtifactsError(msg)
     return idedata, image_bytes_by_name
+
+
+def _walk_artifacts_members(
+    tar: tarfile.TarFile,
+) -> tuple[dict[str, Any] | None, dict[str, bytes]]:
+    """Walk *tar*'s members; return (idedata-or-None, basename → bytes)."""
+    idedata: dict[str, Any] | None = None
+    image_bytes_by_name: dict[str, bytes] = {}
+    # Origin path per basename so the duplicate-basename error
+    # message can name both members.
+    basename_origin: dict[str, str] = {}
+    total_bytes = 0
+    for member in tar:
+        _check_member_size(member, total_so_far=total_bytes)
+        payload = _read_tarball_member(tar, member)
+        total_bytes += len(payload)
+        if member.name == IDEDATA_MEMBER_NAME:
+            idedata = _parse_idedata(payload)
+            continue
+        if member.name in _METADATA_MEMBERS:
+            # storage.json + platformio.ini are materialiser-only.
+            continue
+        basename = Path(member.name).name
+        if basename in image_bytes_by_name:
+            msg = (
+                f"duplicate basename {basename!r} in artifacts tarball: "
+                f"{basename_origin[basename]!r} and {member.name!r}"
+            )
+            raise UnpackArtifactsError(msg)
+        image_bytes_by_name[basename] = payload
+        basename_origin[basename] = member.name
+    return idedata, image_bytes_by_name
+
+
+def _relative_or_raise(path: Path, base: Path, *, configuration: str) -> str:
+    """Return *path* relative to *base* as a posix string, or raise."""
+    try:
+        return path.relative_to(base).as_posix()
+    except ValueError as err:
+        msg = (
+            f"firmware_bin_path {path} for {configuration} not under "
+            f"build_path {base}; can't include in tarball"
+        )
+        raise RuntimeError(msg) from err
 
 
 def _check_member_size(member: tarfile.TarInfo, *, total_so_far: int) -> None:
@@ -390,13 +483,17 @@ def _build_images_response(
     Pop bytes from *image_bytes_by_name* in canonical order; base64-encode.
 
     Order is ``firmware.bin`` first, then every entry from
-    ``idedata.extra.flash_images`` in their declared order
-    (matches :attr:`BuildArtifacts.flash_images` on the
-    receiver side). Mutates *image_bytes_by_name*: every
-    image referenced by the manifest is popped; on return
-    the dict should be empty, and any leftover entry means
-    the tarball carried a file the manifest didn't account
-    for.
+    ``idedata.extra.flash_images`` in their declared order.
+    Mutates *image_bytes_by_name*: only the images the
+    manifest names are popped; leftover entries (the
+    materialise-locally tarball legitimately ships per-platform
+    aux files like ``firmware.elf`` for picotool symbol
+    resolution and ``firmware.uf2`` for libretiny/RP2040
+    ltchiptool flashing, neither of which is in
+    ``idedata.extra.flash_images``) are ignored. The size cap
+    in :func:`_check_member_size` already gates total payload,
+    so we don't need a "no leftovers" check to reject a
+    bloated tarball.
     """
     images: list[dict[str, Any]] = []
     firmware_bytes = image_bytes_by_name.pop("firmware.bin", None)
@@ -420,12 +517,6 @@ def _build_images_response(
             msg = f"artifacts tarball missing flash image {basename!r}"
             raise UnpackArtifactsError(msg)
         images.append(_image_entry(basename, offset, image_bytes))
-    if image_bytes_by_name:
-        msg = (
-            f"artifacts tarball contains unexpected files not referenced by idedata: "
-            f"{sorted(image_bytes_by_name)}"
-        )
-        raise UnpackArtifactsError(msg)
     return images
 
 

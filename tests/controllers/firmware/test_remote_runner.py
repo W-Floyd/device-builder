@@ -30,9 +30,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from esphome_device_builder.controllers.firmware import remote_runner
-from esphome_device_builder.controllers.remote_build.artifacts_tarball import (
-    UnpackArtifactsError,
-)
 from esphome_device_builder.controllers.remote_build.peer_link_client import (
     DownloadArtifactsError,
     DownloadArtifactsResult,
@@ -41,6 +38,7 @@ from esphome_device_builder.controllers.remote_build.peer_link_client import (
 from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.helpers.config_bundle import BundleBuildError
 from esphome_device_builder.helpers.event_bus import EventBus
+from esphome_device_builder.helpers.remote_artifacts_materialise import MaterialiseError
 from esphome_device_builder.models import (
     ErrorCode,
     EventType,
@@ -95,6 +93,10 @@ def _wire_remote_build(
     return remote_build, client
 
 
+def _make_packed_artifacts(tarball: bytes = b"FAKE-TARBALL") -> DownloadArtifactsResult:
+    return DownloadArtifactsResult(tarball=tarball, firmware_offset="0x10000")
+
+
 def _make_client(
     *,
     accepted: bool = True,
@@ -129,6 +131,12 @@ def _make_client(
         client.cancel_job = AsyncMock(side_effect=cancel_error)
     else:
         client.cancel_job = AsyncMock(return_value=cancel_return)
+    # Default so COMPILE / UPLOAD / INSTALL tests don't have to
+    # wire it per-test — the runner now goes through
+    # ``_fetch_and_materialise`` for every non-CLEAN COMPLETED
+    # job. Tests that want to inspect the call or simulate
+    # failure override this assignment.
+    client.download_artifacts = AsyncMock(return_value=_make_packed_artifacts())
     return client
 
 
@@ -364,6 +372,9 @@ async def test_remote_compile_translates_output_and_completes(
     assert len(captured[EventType.JOB_COMPLETED]) == 1
     assert captured[EventType.JOB_COMPLETED][0]["job"] is job
     assert captured[EventType.JOB_FAILED] == []
+    # COMPILE now goes through materialise so firmware/download
+    # serves the staged tree (#624).
+    client.download_artifacts.assert_awaited_once()
     client.submit_job.assert_awaited_once_with(
         job_id=job.job_id,
         configuration_filename="kitchen.yaml",
@@ -478,6 +489,41 @@ async def test_remote_compile_plumbs_device_names_from_local_scanner(
 
 
 @pytest.mark.asyncio
+async def test_remote_compile_falls_through_when_no_device_matches(
+    firmware_controller_factory: FirmwareControllerFactory,
+    patch_bundle: AsyncMock,
+) -> None:
+    """``submit_job`` ships empty names when the local scanner has no entry for the YAML."""
+    controller = firmware_controller_factory(with_terminate=True)
+    _capture_local_events(controller)
+    client = _make_client()
+    _wire_remote_build(controller, client=client)
+
+    unrelated_device = MagicMock()
+    unrelated_device.configuration = "other.yaml"
+    unrelated_device.name = "other"
+    unrelated_device.friendly_name = "Other"
+    devices_stub = MagicMock()
+    devices_stub.get_devices.return_value = [unrelated_device]
+    controller._db.devices = devices_stub
+
+    job = _make_remote_job()
+    runner = asyncio.create_task(remote_runner.run_remote_job(controller, job))
+    await _wait_until_dispatched(client)
+    _fire_state(controller, job_id=job.job_id, status="completed")
+    await asyncio.wait_for(runner, timeout=2.0)
+
+    client.submit_job.assert_awaited_once_with(
+        job_id=job.job_id,
+        configuration_filename="kitchen.yaml",
+        target="compile",
+        bundle_bytes=b"FAKEBUNDLE",
+        device_name="",
+        device_friendly_name="",
+    )
+
+
+@pytest.mark.asyncio
 async def test_remote_compile_progress_translates_to_local_progress_event(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
@@ -577,7 +623,7 @@ async def test_remote_compile_failed_status_fires_job_failed(
     await asyncio.wait_for(runner, timeout=2.0)
 
     assert job.status == JobStatus.FAILED
-    assert job.error == "syntax error in YAML"
+    assert job.error == "remote build: syntax error in YAML"
     assert len(captured[EventType.JOB_FAILED]) == 1
 
 
@@ -1418,22 +1464,17 @@ def _wire_upload_subprocess(
     controller._build_cache_args = lambda _job: []
 
 
-def _make_packed_artifacts(tarball: bytes = b"FAKE-TARBALL") -> DownloadArtifactsResult:
-    return DownloadArtifactsResult(tarball=tarball, firmware_offset="0x10000")
+@pytest.fixture(autouse=True)
+def patch_materialise(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    """Autouse: stub ``materialise_remote_artifacts`` so the runner skips real I/O.
 
-
-@pytest.fixture
-def patch_extract_firmware(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
-    """Replace :func:`extract_firmware_bin` with a stub that returns canned bytes.
-
-    The real implementation parses a gzipped tarball; tests
-    don't care about the parse, only about the bytes that
-    end up at the staged path. Patching the symbol on
-    ``remote_runner`` (where the import landed) is the
-    standard "intercept at the call site" pattern.
+    Every test in this file exercises the runner; the runner now
+    materialises for every non-CLEAN COMPLETED job. Autouse keeps
+    per-test signatures uncluttered; tests that want to inspect
+    or override the stub still request the fixture by name.
     """
-    stub = MagicMock(return_value=b"STAGED-FIRMWARE-BYTES")
-    monkeypatch.setattr(remote_runner, "extract_firmware_bin", stub)
+    stub = MagicMock(return_value=Path("/fake/staged/build/path"))
+    monkeypatch.setattr(remote_runner, "materialise_remote_artifacts", stub)
     return stub
 
 
@@ -1441,7 +1482,7 @@ def patch_extract_firmware(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
 async def test_remote_install_resets_progress_between_compile_and_upload(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
 ) -> None:
     """
     The compile → upload seam fires ``JOB_PROGRESS{0}`` and clears ``job.progress``.
@@ -1489,7 +1530,7 @@ async def test_remote_install_resets_progress_between_compile_and_upload(
 async def test_remote_install_completes_after_local_upload_succeeds(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
     tmp_path: Any,
 ) -> None:
     """
@@ -1521,14 +1562,14 @@ async def test_remote_install_completes_after_local_upload_succeeds(
     assert len(captured[EventType.JOB_COMPLETED]) == 1
     client.download_artifacts.assert_awaited_once_with(job_id=job.job_id)
     # ``firmware.bin`` was staged + ``esphome upload`` saw it.
-    patch_extract_firmware.assert_called_once()
+    patch_materialise.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_remote_install_local_upload_failure_fires_job_failed(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
 ) -> None:
     """A non-zero ``esphome upload`` exit lands as JOB_FAILED with exit-code in error."""
     controller = firmware_controller_factory(with_terminate=True)
@@ -1576,18 +1617,12 @@ async def test_remote_install_download_artifacts_failure_fires_job_failed(
 
 
 @pytest.mark.asyncio
-async def test_remote_install_malformed_tarball_fires_job_failed(
+async def test_remote_install_materialise_failure_fires_job_failed(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """
-    Tarball missing ``firmware.bin`` surfaces as JOB_FAILED with extract error.
-
-    Defensive — the receiver-side packer enforces the
-    layout, so a malformed tarball means an in-flight bug
-    or a misbehaving peer.
-    """
+    """Materialise failure (malformed tarball, missing member) lands as JOB_FAILED."""
     controller = firmware_controller_factory(with_terminate=True)
     captured = _capture_local_events(controller)
     client = _make_client()
@@ -1595,8 +1630,8 @@ async def test_remote_install_malformed_tarball_fires_job_failed(
     _wire_remote_build(controller, client=client)
     monkeypatch.setattr(
         remote_runner,
-        "extract_firmware_bin",
-        MagicMock(side_effect=UnpackArtifactsError("firmware.bin missing")),
+        "materialise_remote_artifacts",
+        MagicMock(side_effect=MaterialiseError("tarball missing required member: 'storage.json'")),
     )
     job = _make_remote_install_job()
 
@@ -1606,15 +1641,63 @@ async def test_remote_install_malformed_tarball_fires_job_failed(
     await asyncio.wait_for(runner, timeout=2.0)
 
     assert job.status == JobStatus.FAILED
-    assert job.error is not None and "firmware.bin missing" in job.error
+    assert job.error is not None and "materialise failed" in job.error
     assert len(captured[EventType.JOB_FAILED]) == 1
+
+
+@pytest.mark.asyncio
+async def test_remote_install_materialise_oserror_fires_job_failed(
+    firmware_controller_factory: FirmwareControllerFactory,
+    patch_bundle: AsyncMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An OSError from materialise (disk full / permissions) lands as JOB_FAILED."""
+    controller = firmware_controller_factory(with_terminate=True)
+    captured = _capture_local_events(controller)
+    client = _make_client()
+    _wire_remote_build(controller, client=client)
+    monkeypatch.setattr(
+        remote_runner,
+        "materialise_remote_artifacts",
+        MagicMock(side_effect=OSError("ENOSPC: disk full")),
+    )
+    job = _make_remote_install_job()
+
+    runner = asyncio.create_task(remote_runner.run_remote_job(controller, job))
+    await _wait_until_dispatched(client)
+    _fire_state(controller, job_id=job.job_id, status="completed")
+    await asyncio.wait_for(runner, timeout=2.0)
+
+    assert job.status == JobStatus.FAILED
+    assert job.error is not None and "materialise IO error" in job.error
+    assert len(captured[EventType.JOB_FAILED]) == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_and_run_local_upload_pre_spawn_cancel_finalises_locally(
+    firmware_controller_factory: FirmwareControllerFactory,
+) -> None:
+    """Cancel landing after ``_fetch_and_materialise`` returns but before the spawn."""
+    controller = firmware_controller_factory(with_terminate=True)
+    captured = _capture_local_events(controller)
+    client = _make_client()
+    job = _make_remote_install_job()
+    controller._cancel_requested.add(job.job_id)
+    controller._tracked_subprocess = MagicMock(  # type: ignore[method-assign]
+        side_effect=AssertionError("subprocess should not have spawned")
+    )
+
+    await remote_runner._fetch_and_run_local_upload(controller=controller, job=job, client=client)
+
+    assert job.status == JobStatus.CANCELLED
+    assert len(captured[EventType.JOB_CANCELLED]) == 1
 
 
 @pytest.mark.asyncio
 async def test_remote_install_cancel_during_local_upload_finalises_as_cancelled(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
 ) -> None:
     """
     User Stop during the ``esphome upload`` subprocess finalises as CANCELLED.
@@ -1677,7 +1760,7 @@ async def test_remote_install_cancel_during_local_upload_finalises_as_cancelled(
 @pytest.mark.asyncio
 async def test_run_upload_subprocess_cancel_landing_between_pre_check_and_spawn_terminates(
     firmware_controller_factory: FirmwareControllerFactory,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """
@@ -1718,19 +1801,15 @@ async def test_run_upload_subprocess_cancel_landing_between_pre_check_and_spawn_
     # regardless of the exit.
     _wire_upload_subprocess(controller, exit_code=0, stdout="ok\n")
 
-    # Patch ``Path.write_bytes`` so the executor hop that
-    # writes the staged firmware file flips
-    # ``_cancel_requested`` as a side effect. That puts the
-    # cancel into the gap between the pre-spawn check and
-    # the in-context-manager check.
-    original_write_bytes = Path.write_bytes
-
-    def _write_bytes_then_cancel(self: Path, data: bytes) -> int:
-        result = original_write_bytes(self, data)
+    # Flip ``_cancel_requested`` from inside ``_build_cache_args``,
+    # which runs after the pre-spawn check and before the
+    # subprocess spawn. The in-context-manager check fires
+    # post-spawn.
+    def _build_cache_args_then_cancel(_job: object) -> list[str]:
         controller._cancel_requested.add(job.job_id)
-        return result
+        return []
 
-    monkeypatch.setattr(Path, "write_bytes", _write_bytes_then_cancel)
+    controller._build_cache_args = _build_cache_args_then_cancel  # type: ignore[method-assign]
 
     await remote_runner._fetch_and_run_local_upload(controller=controller, job=job, client=client)
 
@@ -1744,56 +1823,39 @@ async def test_run_upload_subprocess_cancel_landing_between_pre_check_and_spawn_
 
 
 @pytest.mark.asyncio
-async def test_fetch_and_run_local_upload_cancel_pre_spawn_skips_subprocess(
+async def test_fetch_and_materialise_cancel_post_staging_finalises_locally(
     firmware_controller_factory: FirmwareControllerFactory,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
 ) -> None:
-    """
-    Cancel landing between extract + spawn skips the subprocess.
+    """Cancel landing during the wire / extract executor hops finalises the job locally.
 
-    The wire round-trip (``download_artifacts``) and the
-    in-executor tarball extract have already happened by the
-    time the check fires — those couldn't be cancelled
-    cleanly anyway. The check guards the staging + spawn
-    phase: a cancel that arrived between the executor hop
-    and the spawn finalises the job locally without writing
-    the tmpdir or starting ``esphome upload``.
-
-    Unit-tested directly because the outer runner routes
-    most cancel races through ``_await_terminal``'s in-loop
-    check — this defensive gate is only reachable via the
-    helper's own entry. Pinning it here keeps the branch
-    alive against a future refactor that introduces an
-    ``await`` between ``_await_terminal`` and this helper.
+    download_artifacts + materialise happen first (they can't be
+    cleanly cancelled mid-flight); the post-staging cancel check
+    then routes through ``_finalize_cancelled`` and returns
+    ``False`` so the caller skips the spawn.
     """
     controller = firmware_controller_factory(with_terminate=True)
     captured = _capture_local_events(controller)
     client = _make_client()
-    client.download_artifacts = AsyncMock(return_value=_make_packed_artifacts())
-
-    # Track spawn attempts: ``_tracked_subprocess`` is an
-    # async context manager on the controller; a successful
-    # cancel-pre-spawn skip means it's never invoked.
-    controller._tracked_subprocess = MagicMock(  # type: ignore[method-assign]
-        side_effect=AssertionError("subprocess should not have spawned")
-    )
-
     job = _make_remote_install_job()
     controller._cancel_requested.add(job.job_id)
 
-    await remote_runner._fetch_and_run_local_upload(controller=controller, job=job, client=client)
+    proceed = await remote_runner._fetch_and_materialise(
+        controller=controller, job=job, client=client
+    )
 
+    assert proceed is False
     assert job.status == JobStatus.CANCELLED
     assert len(captured[EventType.JOB_CANCELLED]) == 1
     client.download_artifacts.assert_awaited_once()
-    patch_extract_firmware.assert_called_once()
+    patch_materialise.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_remote_upload_runs_the_same_local_flash_chain_as_install(
     firmware_controller_factory: FirmwareControllerFactory,
     patch_bundle: AsyncMock,
-    patch_extract_firmware: MagicMock,
+    patch_materialise: MagicMock,
 ) -> None:
     """
     ``JobType.UPLOAD`` with REMOTE source follows the same artifact-fetch + flash chain.
