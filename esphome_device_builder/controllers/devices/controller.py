@@ -2130,16 +2130,26 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
         """
         Stream live device logs. Per-connection, not queued.
 
-        ``no_states`` passes ``--no-states`` through to ``esphome logs``
-        so component state-publish lines (sensor / binary_sensor /
-        switch / cover / climate ...) are suppressed at the source.
-        Mirrors the legacy dashboard's "Show entity state changes"
-        toggle.
+        ``port`` is forwarded to ``esphome logs`` as ``--device``
+        and defaults to ``OTA`` when missing or empty. ``no_states``
+        passes ``--no-states`` through so component state-publish
+        lines (sensor / binary_sensor / switch / cover / climate ...)
+        are suppressed at the source — mirrors the legacy
+        dashboard's "Show entity state changes" toggle.
         """
         config_path = str(self._db.settings.rel_path(configuration))
-        cmd = [*self._esphome_cmd, "--dashboard", "logs", config_path]
-        if port:
-            cmd.extend(["--device", port])
+        # Always pass --device. Without one, ``esphome logs`` enters
+        # an interactive port-choice prompt when multiple targets
+        # are visible (serial + OTA); the stdin-less subprocess
+        # then crashes with EOFError. (#636)
+        cmd = [
+            *self._esphome_cmd,
+            "--dashboard",
+            "logs",
+            config_path,
+            "--device",
+            port or "OTA",
+        ]
         if no_states:
             cmd.append("--no-states")
         await self._stream_subprocess(cmd, client, message_id)
