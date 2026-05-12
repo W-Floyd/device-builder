@@ -18,13 +18,17 @@ Tarball layout (materialise-locally wire format):
     storage.json     # receiver's <data_dir>/storage/<basename>.json
     idedata.json     # receiver's <data_dir>/idedata/<name>.json (esphome's cache copy)
     platformio.ini   # receiver's <build_path>/platformio.ini
+    build_info.json  # receiver's <build_path>/build_info.json (optional; #654)
     <per-platform build-tree files>  # see artifact_platforms/*.py
 
-The three metadata members at the top of the tarball are
-platform-independent — every build ships them. The
-:mod:`controllers.remote_build.artifact_platforms` registry
-drives which build-tree files travel alongside them; see the
-per-platform modules for the exact paths each platform ships.
+The metadata members at the top of the tarball are
+platform-independent — every build ships them
+(``build_info.json`` is optional: skipped when the receiver's
+build tree predates ESPHome's ``build_info.json`` write
+hook). The :mod:`controllers.remote_build.artifact_platforms`
+registry drives which build-tree files travel alongside them;
+see the per-platform modules for the exact paths each platform
+ships.
 
 The offloader-side materialiser
 (:func:`helpers.remote_artifacts_materialise.materialise_remote_artifacts`)
@@ -78,8 +82,16 @@ _LOGGER = logging.getLogger(__name__)
 STORAGE_MEMBER_NAME = "storage.json"
 IDEDATA_MEMBER_NAME = "idedata.json"
 PLATFORMIO_INI_MEMBER_NAME = "platformio.ini"
+# Read by the offloader's ``read_build_info_hash`` to populate
+# ``expected_config_hash`` post-build (see #654).
+BUILD_INFO_MEMBER_NAME = "build_info.json"
 _METADATA_MEMBERS: frozenset[str] = frozenset(
-    {STORAGE_MEMBER_NAME, IDEDATA_MEMBER_NAME, PLATFORMIO_INI_MEMBER_NAME}
+    {
+        STORAGE_MEMBER_NAME,
+        IDEDATA_MEMBER_NAME,
+        PLATFORMIO_INI_MEMBER_NAME,
+        BUILD_INFO_MEMBER_NAME,
+    }
 )
 
 
@@ -175,11 +187,14 @@ def _collect_pack_members(
         msg = f"platformio.ini missing for {configuration}: {platformio_ini}"
         raise FileNotFoundError(msg)
 
+    build_info_path = build_path / BUILD_INFO_MEMBER_NAME
     members: list[tuple[str, Path]] = [
         (STORAGE_MEMBER_NAME, storage_path),
         (IDEDATA_MEMBER_NAME, idedata_cache_path),
         (PLATFORMIO_INI_MEMBER_NAME, platformio_ini),
     ]
+    if build_info_path.is_file():
+        members.append((BUILD_INFO_MEMBER_NAME, build_info_path))
     # Dedupe by basename, not full path: the WS-unpack adapter
     # keys flash images by basename, so a build emitting both
     # ``.pioenvs/<name>/firmware.factory.bin`` and
