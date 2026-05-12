@@ -5,8 +5,11 @@ After :func:`materialise_remote_artifacts` returns, the offloader's
 filesystem looks as if a local compile produced the build:
 ``<data_dir>/build/<name>/`` carries the per-platform build tree,
 ``<data_dir>/storage/<basename>.json`` is the rewritten StorageJSON
-sidecar, and ``<data_dir>/idedata/<name>.json`` is the rewritten
-idedata cache (touched so ``_load_idedata``'s mtime gate hits).
+sidecar, ``<data_dir>/idedata/<name>.json`` is the rewritten idedata
+cache (touched so ``_load_idedata``'s mtime gate hits), and -- when
+the receiver-side esphome shipped one -- ``<basename>.validated.yaml``
+sits next to the JSON sidecar so the next local ``esphome upload`` /
+``esphome logs`` skips ``read_config()`` via esphome's fast path.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tarfile
 import time
 from pathlib import Path
@@ -27,11 +31,17 @@ from ..controllers.remote_build.artifacts_tarball import (
     IDEDATA_MEMBER_NAME,
     PLATFORMIO_INI_MEMBER_NAME,
     STORAGE_MEMBER_NAME,
+    VALIDATED_YAML_MEMBER_NAME,
 )
 from .json import dumps_indent
 from .json import loads as json_loads
 from .peer_link_bundle import FIRMWARE_MAX_TOTAL_BYTES
-from .storage_path import resolve_data_dir, resolve_idedata_path, resolve_storage_path
+from .storage_path import (
+    resolve_compiled_config_path,
+    resolve_data_dir,
+    resolve_idedata_path,
+    resolve_storage_path,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -53,6 +63,9 @@ class _ExtractedTarball(NamedTuple):
     idedata_bytes: bytes
     receiver_build_path: Path
     build_path: Path
+    # Optional: present when receiver-side esphome wrote a
+    # validated-config cache (>= 2026.6.0).
+    validated_yaml_bytes: bytes | None
 
 
 def materialise_remote_artifacts(tarball: bytes, configuration: str) -> Path:
@@ -83,6 +96,11 @@ def materialise_remote_artifacts(tarball: bytes, configuration: str) -> Path:
         platformio_ini=extracted.build_path / PLATFORMIO_INI_MEMBER_NAME,
         cached_idedata=cached_idedata_path,
     )
+    if extracted.validated_yaml_bytes is not None:
+        _stage_offloader_validated_yaml(
+            configuration=configuration,
+            payload=extracted.validated_yaml_bytes,
+        )
     return extracted.build_path
 
 
@@ -95,8 +113,19 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
     """
     try:
         with tarfile.open(fileobj=io.BytesIO(tarball), mode="r:gz") as tar:
-            storage_bytes = _read_member_required(tar, STORAGE_MEMBER_NAME)
-            idedata_bytes = _read_member_required(tar, IDEDATA_MEMBER_NAME)
+            # Thread one running total across every metadata read and
+            # the build-tree extract so the global FIRMWARE_MAX_TOTAL_BYTES
+            # cap holds for the whole tarball, not per-member.
+            total_bytes = 0
+            storage_bytes, total_bytes = _read_member_required(
+                tar, STORAGE_MEMBER_NAME, total_so_far=total_bytes
+            )
+            idedata_bytes, total_bytes = _read_member_required(
+                tar, IDEDATA_MEMBER_NAME, total_so_far=total_bytes
+            )
+            validated_yaml_bytes, total_bytes = _read_member_optional(
+                tar, VALIDATED_YAML_MEMBER_NAME, total_so_far=total_bytes
+            )
             receiver_storage = _parse_storage_json(storage_bytes)
             device_name = _device_name_from_storage(receiver_storage)
             receiver_build_path = _receiver_build_path_from_storage(receiver_storage)
@@ -111,7 +140,12 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
             _safe_extract_excluding(
                 tar,
                 build_path,
-                exclude={STORAGE_MEMBER_NAME, IDEDATA_MEMBER_NAME},
+                exclude={
+                    STORAGE_MEMBER_NAME,
+                    IDEDATA_MEMBER_NAME,
+                    VALIDATED_YAML_MEMBER_NAME,
+                },
+                initial_total_bytes=total_bytes,
             )
     except tarfile.TarError as err:
         raise MaterialiseError(f"tarball is malformed: {err}") from err
@@ -122,6 +156,7 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
         idedata_bytes=idedata_bytes,
         receiver_build_path=receiver_build_path,
         build_path=build_path,
+        validated_yaml_bytes=validated_yaml_bytes,
     )
 
 
@@ -145,13 +180,37 @@ def _receiver_build_path_from_storage(receiver_storage: dict[str, Any]) -> Path:
     return Path(receiver_build_path_str)
 
 
-def _read_member_required(tar: tarfile.TarFile, name: str) -> bytes:
-    """Return *name*'s bytes from *tar* or raise with a clear message.
+def _read_member_optional(
+    tar: tarfile.TarFile, name: str, *, total_so_far: int = 0
+) -> tuple[bytes | None, int]:
+    """Read *name* if present. Returns ``(payload-or-None, running total)``."""
+    try:
+        member = tar.getmember(name)
+    except KeyError:
+        return None, total_so_far
+    if not member.isfile():
+        raise MaterialiseError(f"tarball member {name!r} is not a regular file")
+    _check_member_size(member, total_so_far=total_so_far)
+    payload = tar.extractfile(member)
+    if payload is None:
+        raise MaterialiseError(f"tarball member {name!r} unreadable")
+    return payload.read(), total_so_far + member.size
+
+
+def _read_member_required(
+    tar: tarfile.TarFile, name: str, *, total_so_far: int = 0
+) -> tuple[bytes, int]:
+    """Read *name* or raise. Returns ``(payload, running total)``.
 
     Caps the declared member size against
     :data:`FIRMWARE_MAX_TOTAL_BYTES` before reading so a hostile
     peer can't expand a tiny gzipped tarball into multi-GiB
-    memory by inflating a metadata-member header.
+    memory by inflating a metadata-member header. *total_so_far*
+    threads the running cumulative-size accounting from the
+    caller; the cap is checked against
+    ``total_so_far + member.size`` so successive metadata reads
+    can't each fit under the cap individually while collectively
+    breaching it.
     """
     try:
         member = tar.getmember(name)
@@ -159,11 +218,11 @@ def _read_member_required(tar: tarfile.TarFile, name: str) -> bytes:
         raise MaterialiseError(f"tarball missing required member: {name!r}") from err
     if not member.isfile():
         raise MaterialiseError(f"tarball member {name!r} is not a regular file")
-    _check_member_size(member, total_so_far=0)
+    _check_member_size(member, total_so_far=total_so_far)
     payload = tar.extractfile(member)
     if payload is None:  # ``isfile()`` already gates this; defence
         raise MaterialiseError(f"tarball member {name!r} unreadable")
-    return payload.read()
+    return payload.read(), total_so_far + member.size
 
 
 def _check_member_size(member: tarfile.TarInfo, *, total_so_far: int) -> None:
@@ -180,11 +239,23 @@ def _check_member_size(member: tarfile.TarInfo, *, total_so_far: int) -> None:
         )
 
 
-def _safe_extract_excluding(tar: tarfile.TarFile, dest: Path, *, exclude: set[str]) -> None:
-    """Extract every member except *exclude*; reject any that escapes *dest* or breaches the cap."""
+def _safe_extract_excluding(
+    tar: tarfile.TarFile,
+    dest: Path,
+    *,
+    exclude: set[str],
+    initial_total_bytes: int = 0,
+) -> None:
+    """Extract every member except *exclude*; reject any that escapes *dest* or breaches the cap.
+
+    *initial_total_bytes* lets the caller seed the cumulative-size
+    counter with bytes already read out of the tarball (the metadata
+    members) so the cap applies across the whole archive, not just
+    the build-tree members.
+    """
     dest_resolved = dest.resolve()
     members_to_extract: list[tarfile.TarInfo] = []
-    total_bytes = 0
+    total_bytes = initial_total_bytes
     for member in tar.getmembers():
         if member.name in exclude:
             continue
@@ -302,6 +373,38 @@ def _remap_idedata_toolchain_path(data: dict[str, Any]) -> None:
         data.pop("cc_path", None)
     else:
         data["cc_path"] = remapped
+
+
+def _stage_offloader_validated_yaml(
+    *,
+    configuration: str,
+    payload: bytes,
+) -> None:
+    """Stage the receiver's validated-config cache at the offloader's path.
+
+    Written 0600 because the cache resolves !secret references inline.
+    mtime is touched to "now" so esphome's fast path (which gates on
+    cache mtime >= source YAML mtime) takes the cache instead of
+    re-running read_config.
+    """
+    path = resolve_compiled_config_path(configuration)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # Open with 0600 at creation time so the file is never momentarily
+    # readable at the process umask between write_bytes() and chmod().
+    # O_CREAT honours an existing inode's mode bits, so tighten with
+    # an explicit chmod afterwards too (no-op on Windows). O_BINARY
+    # only exists on Windows where it disables the CRLF translation
+    # that would otherwise corrupt the YAML bytes.
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0)
+    fd = os.open(path, flags, 0o600)
+    try:
+        os.write(fd, payload)
+    finally:
+        os.close(fd)
+    if sys.platform != "win32":
+        os.chmod(path, 0o600)
+    now = time.time()
+    os.utime(path, (now, now))
 
 
 def _force_idedata_cache_hit(*, platformio_ini: Path, cached_idedata: Path) -> None:
