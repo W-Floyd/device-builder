@@ -23,7 +23,10 @@ from unittest.mock import MagicMock
 import pytest
 
 from esphome_device_builder.controllers.firmware import FirmwareController
-from esphome_device_builder.controllers.firmware.helpers import _validate_port
+from esphome_device_builder.controllers.firmware.helpers import (
+    PortType,
+    _validate_port,
+)
 from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.models import ErrorCode, FirmwareJob, JobType
 
@@ -110,6 +113,25 @@ def test_validate_port_rejects_typos(port: str) -> None:
     # verbatim over WS to whichever command the user actually ran.
     assert "device target" in exc.value.message
     assert "install target" not in exc.value.message
+
+
+def test_validate_port_consults_get_port_type_for_serial_accept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_validate_port`` accepts via ``get_port_type(port) is PortType.SERIAL``."""
+    calls: list[str] = []
+
+    def fake(port: str) -> PortType:
+        calls.append(port)
+        return PortType.SERIAL
+
+    monkeypatch.setattr("esphome_device_builder.controllers.firmware.helpers.get_port_type", fake)
+
+    # An input the hostname/IP regex would reject — proves the SERIAL
+    # short-circuit was taken before the fallthrough branches ran.
+    _validate_port("not a valid hostname OR an IP")
+
+    assert calls == ["not a valid hostname OR an IP"]
 
 
 # ---------------------------------------------------------------------------
