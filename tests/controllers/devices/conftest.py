@@ -492,8 +492,7 @@ def make_controller() -> MakeControllerFactory:
             controller._regenerate_failed = set()
             controller._regenerate_lock = asyncio.Lock()
 
-        if esphome_cmd is not None:
-            controller._esphome_cmd = esphome_cmd
+        controller._esphome_cmd = esphome_cmd if esphome_cmd is not None else []
 
         return controller
 

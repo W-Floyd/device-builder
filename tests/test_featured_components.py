@@ -647,6 +647,7 @@ def _make_controller(catalog: ComponentCatalog, tmp_path: Any) -> DevicesControl
     ctrl._db.components = catalog
     ctrl._scanner = MagicMock()
     ctrl._scanner.scan = AsyncMock()
+    ctrl._esphome_cmd = []
     return ctrl
 
 
@@ -887,6 +888,24 @@ async def test_add_component_handles_secret_tags_in_existing_yaml(
     # mqtt block IS present (just uses !secret) — so MQTT fields stay.
     assert "availability:" in response.yaml
     assert "payload_available: online" in response.yaml
+
+
+async def test_add_component_schedules_storage_regenerate(
+    catalog: ComponentCatalog, tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``add_component`` schedules a StorageJSON regen after the write."""
+    (tmp_path / "plug.yaml").write_text("esphome:\n  name: plug\n", "utf-8")
+    ctrl = _make_controller(catalog, tmp_path)
+    scheduled: list[str] = []
+    monkeypatch.setattr(ctrl, "_schedule_storage_regenerate", scheduled.append, raising=False)
+
+    await ctrl.add_component(
+        configuration="plug.yaml",
+        component_id="featured.athom-smart-plug-v3.relay",
+        fields={},
+    )
+
+    assert scheduled == ["plug.yaml"]
 
 
 def test_drop_unconfigured_dependent_fields_recurses_into_nested_dicts() -> None:

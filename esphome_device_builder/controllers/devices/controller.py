@@ -1183,12 +1183,7 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
             configuration, new_content, action="update friendly name"
         )
 
-        # Routed through :meth:`_write_yaml_atomic_async`; the
-        # helper's docstring covers the canonical "stage-tempfile
-        # + atomic rename" rationale we lean on here for the
-        # user-editable YAML path.
-        await self._write_yaml_atomic_async(config_path, new_content)
-        await self._scanner.scan()
+        await self._persist_yaml_mutation(configuration, new_content)
         return {"configuration": configuration, "rewritten": True}
 
     def _yaml_content_for_create(
@@ -1436,20 +1431,8 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
 
     @api_command("devices/update_config")
     async def update_config(self, *, configuration: str, content: str, **kwargs: Any) -> None:
-        """Write device config YAML.
-
-        Routed through :meth:`_write_yaml_atomic_async` because the YAML
-        editor's "Save" button lands here; a non-atomic write would
-        lose the user's config on a mid-write crash.
-        """
-        await self._write_yaml_atomic_async(self._db.settings.rel_path(configuration), content)
-        await self._scanner.scan()
-        # Refresh ``StorageJSON`` so address / loaded_integrations /
-        # config_hash etc. reflect the new YAML without waiting for a
-        # full compile. Mirrors the upstream dashboard's
-        # ``async_schedule_storage_json_update`` (called from its
-        # ``EditRequestHandler`` after writing the YAML).
-        self._schedule_storage_regenerate(configuration)
+        """Write device config YAML."""
+        await self._persist_yaml_mutation(configuration, content)
 
     def _schedule_storage_regenerate(self, configuration: str) -> None:
         storage_regen.schedule(self, configuration)
@@ -1542,8 +1525,7 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
         new_yaml = merge_component_yaml(existing, component, fields)
         # Atomic write — wizard-driven add-component should not be
         # able to corrupt the source YAML on a mid-write crash.
-        await self._write_yaml_atomic_async(config_path, new_yaml)
-        await self._scanner.scan()
+        await self._persist_yaml_mutation(configuration, new_yaml)
 
         return AddComponentResponse(yaml=new_yaml)
 
@@ -1728,6 +1710,15 @@ class DevicesController:  # noqa: PLR0904 (grandfathered; new public methods nee
         """
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, atomic_write_file, path, content)
+
+    async def _persist_yaml_mutation(self, configuration: str, content: str) -> None:
+        """Atomic write + scan + StorageJSON regen for in-place YAML mutators."""
+        await self._write_yaml_atomic_async(self._db.settings.rel_path(configuration), content)
+        await self._scanner.scan()
+        # Mirrors the upstream dashboard's
+        # ``async_schedule_storage_json_update``; without it
+        # ``loaded_integrations`` stays at its pre-write state.
+        self._schedule_storage_regenerate(configuration)
 
     @staticmethod
     async def _read_yaml_async(path: Path) -> str:
