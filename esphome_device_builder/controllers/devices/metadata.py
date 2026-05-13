@@ -21,69 +21,21 @@ _LOGGER = logging.getLogger(__name__)
 
 
 class DeviceMetadataMixin:
-    """
-    Metadata resolution + persistence methods for ``DevicesController``.
+    """Metadata resolution + persistence for ``DevicesController``."""
 
-    Mixed in directly on ``DevicesController`` since every method
-    only reads ``self._db`` plus same-mixin methods; no reach into
-    other controller state. Test instance-patches on
-    ``_persist_device_metadata_async`` / ``_derive_board_id_from_yaml``
-    work as before because the methods are real attributes on the
-    instance via inheritance.
-    """
-
-    # Type stub for mypy: the host controller injects ``_db``. Declared
-    # under TYPE_CHECKING so the mixin doesn't shadow the host attribute
-    # at import time.
     if TYPE_CHECKING:
+        # Supplied by the host controller class.
         _db: DeviceBuilder
 
     def _resolve_device_metadata(self, config_dir: Path, filename: str) -> DeviceFileMetadata:
         """
         Resolve a device's persisted ``board_id`` / ``ip`` / config hash / MAC.
 
-        ``board_id`` priority:
-          1. The metadata sidecar — set explicitly when the user
-             picks a board through the UI, or backfilled by a
-             previous scan.
-          2. Parse the YAML's ``esphome.platform`` / ``board`` /
-             ``variant`` and match by PlatformIO board id
-             (``find_by_pio_board``).
-          3. Same YAML — match by platform + variant
-             (``find_by_platform_variant``). Picks up generic
-             ``esp32: { variant: esp32c3 }``-style configs that don't
-             name a specific PlatformIO ``board:``. Generic catalog
-             entries are preferred so the dashboard tags these with
-             the matching ``generic-esp32-c3`` rather than a random
-             vendor board that shares the variant.
-
-        On any successful YAML-derived match we persist the result to
-        metadata so subsequent scans skip the YAML parse.
-
-        ``ip`` is the last-known resolved address from the metadata
-        sidecar (``""`` if never seen).
-
-        ``expected_config_hash`` is read from
-        ``<build_path>/build_info.json`` — ESPHome's authoritative
-        post-codegen value. The metadata sidecar is consulted *only*
-        as a fallback for devices whose build directory was wiped
-        (clean) but where we'd previously cached a value. Reading
-        from ``build_info.json`` first keeps the dashboard from
-        getting stuck on a stale sidecar value if a previous run
-        wrote a wrong hash (e.g. the pre-codegen subprocess hash
-        the dashboard used to compute) — the next scan after this
-        change picks up the canonical value automatically.
-
-        ``mac_address`` is the canonical ``XX:XX:XX:XX:XX:XX`` form
-        last observed on the device's mDNS ``mac`` TXT, persisted
-        to the sidecar so the dashboard renders the value
-        immediately on restart (ESPHome devices are mDNS-silent
-        until probed). Empty when the device hasn't been seen yet
-        — the next mDNS announcement repopulates via
-        :meth:`_on_mac_address_change`. The derived
-        ``ethernet_mac`` / ``bluetooth_mac`` are recomputed by
-        :func:`derive_interface_macs` at ``Device`` construction
-        time, not stored in the sidecar.
+        ``board_id`` falls back through sidecar → YAML PlatformIO
+        ``board:`` → platform + variant; ``expected_config_hash``
+        reads ``build_info.json`` first since the sidecar can
+        carry a stale pre-codegen hash from older dashboard
+        versions.
         """
         md = get_device_metadata(config_dir, filename)
         ip = str(md.get("ip", ""))
@@ -95,17 +47,9 @@ class DeviceMetadataMixin:
         if not board_id:
             board_id = self._derive_board_id_from_yaml(config_dir, filename)
         mac_address = str(md.get("mac_address", ""))
-        # ``coerce_sidecar_int`` handles the bad-data fall-throughs
-        # (``None`` / object / decimal-string / etc.) — same
-        # defensive shape used by the build-size cache reads in
-        # ``helpers/build_size.py``. The metadata resolver is on
-        # the scanner's per-device hot path; a single corrupt
-        # entry shouldn't fail the whole scan.
+        # Defensive coercion / filter on the scanner's hot path; a
+        # single corrupt sidecar entry shouldn't fail the whole scan.
         build_size_bytes = coerce_sidecar_int(md.get("build_size_bytes"))
-        # Defensive filter: a hand-edited sidecar could land non-string
-        # entries in the labels list. The scanner is on the hot path,
-        # so silently drop bad entries rather than failing the whole
-        # device load.
         raw_labels = md.get("labels")
         labels: tuple[str, ...]
         if isinstance(raw_labels, list):
@@ -152,13 +96,7 @@ class DeviceMetadataMixin:
         await self._persist_device_metadata_async(configuration, ip=ip)
 
     async def _persist_device_metadata_async(self, configuration: str, **fields: Any) -> None:
-        """
-        Run a blocking ``set_device_metadata`` write on the default executor.
-
-        Centralises the ``run_in_executor`` + ``config_dir`` lookup
-        boilerplate that every async-context sidecar write was
-        repeating.
-        """
+        """Run a blocking ``set_device_metadata`` write on the default executor."""
         loop = asyncio.get_running_loop()
         config_dir = self._db.settings.config_dir
         await loop.run_in_executor(
