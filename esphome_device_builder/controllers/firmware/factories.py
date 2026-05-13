@@ -39,7 +39,8 @@ def create_job(
     device_name: str = "",
     device_friendly_name: str = "",
 ) -> FirmwareJob:
-    """Create a new job and add it to the in-memory map; *sync*, no I/O.
+    """
+    Create a new job and add it to the in-memory map; *sync*, no I/O.
 
     Caller validates ``configuration`` via
     ``_validate_configuration_boundary`` first. The ``remote_*``
@@ -95,7 +96,8 @@ def resolve_install_source(
 async def enqueue(
     controller: FirmwareController, job: FirmwareJob, *, supersede: bool = True
 ) -> FirmwareJob:
-    """Enqueue *job*, persist, fire JOB_QUEUED; cancel predecessors by default.
+    """
+    Enqueue *job*, persist, fire JOB_QUEUED; cancel predecessors by default.
 
     Fires JOB_QUEUED *before* cancelling any predecessor for the
     same configuration so frontends recognise the resulting
@@ -120,7 +122,8 @@ async def enqueue(
 
 
 def check_rename_lock(controller: FirmwareController, job: FirmwareJob) -> None:
-    """Reject *job* if an in-flight rename has either YAML name locked.
+    """
+    Reject *job* if an in-flight rename has either YAML name locked.
 
     A rename touches two filenames (the old it reads from + the
     new it creates on install success); conflicting jobs would
