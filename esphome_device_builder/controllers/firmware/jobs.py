@@ -43,7 +43,8 @@ async def get_job(controller: FirmwareController, *, job_id: str) -> FirmwareJob
 
 
 def active_remote_peer_jobs(controller: FirmwareController) -> Iterator[FirmwareJob]:
-    """Yield every QUEUED / RUNNING job that arrived via the peer-link.
+    """
+    Yield every QUEUED / RUNNING job that arrived via the peer-link.
 
     ``remote_peer`` is empty on locally-submitted jobs so they're
     filtered out; the public accessor exists so callers don't
@@ -58,7 +59,8 @@ def active_remote_peer_jobs(controller: FirmwareController) -> Iterator[Firmware
 
 
 async def cancel(controller: FirmwareController, *, job_id: str) -> None:
-    """Cancel a queued or running job; fires JOB_CANCELLED on the bus.
+    """
+    Cancel a queued or running job; fires JOB_CANCELLED on the bus.
 
     QUEUED → flipped to CANCELLED immediately. RUNNING → SIGTERM
     (escalated to SIGKILL after a short grace); the runner sees
