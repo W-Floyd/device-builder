@@ -15,6 +15,7 @@ import os
 import re
 import sys
 from datetime import UTC, datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -167,14 +168,40 @@ def _find_esphome_cmd() -> list[str]:
     ``python -m esphome`` and surfaces a friendlier traceback when
     something goes wrong inside esphome).
     """
+    return list(_find_sibling_cli("esphome"))
+
+
+def _find_esptool_cmd() -> list[str]:
+    """Locate the ``esptool`` CLI, preferring the same interpreter as ours.
+
+    Same sibling-script-first lookup as :func:`_find_esphome_cmd`.
+    The sibling script's shebang is pinned to our interpreter so it
+    can't accidentally jump to a different Python — and it dodges
+    the ``"No module named esptool"`` failure mode under VS Code's
+    debugpy launch chain, where ``python -m esptool`` from inside
+    a debug-wrapped process can fail module resolution in ways the
+    parent process doesn't.
+    """
+    return list(_find_sibling_cli("esptool"))
+
+
+@lru_cache(maxsize=8)
+def _find_sibling_cli(name: str) -> tuple[str, ...]:
+    """Sibling script next to ``sys.executable``, else ``python -m <name>``.
+
+    Result is cached so the ``sibling.exists()`` filesystem probe
+    runs once per ``name`` — async callers (``_run_esptool``,
+    ``verify_chip``) would otherwise trip ``blockbuster`` on every
+    invocation, since ``Path.exists`` calls ``os.stat`` synchronously.
+
+    Returns a tuple so the cached value can't be mutated by callers
+    that copy it into their own argv list.
+    """
     python = sys.executable
-    bin_dir = Path(python).parent
-
-    sibling_esphome = bin_dir / ("esphome.exe" if os.name == "nt" else "esphome")
-    if sibling_esphome.exists():
-        return [str(sibling_esphome)]
-
-    return [python, "-m", "esphome"]
+    sibling = Path(python).parent / (f"{name}.exe" if os.name == "nt" else name)
+    if sibling.exists():
+        return (str(sibling),)
+    return (python, "-m", name)
 
 
 def _parse_progress(line: str) -> int | None:
