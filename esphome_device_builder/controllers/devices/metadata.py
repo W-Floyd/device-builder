@@ -1,31 +1,24 @@
-"""Device-metadata resolution + sidecar-write mixin for ``DevicesController``."""
+"""Device-metadata resolution + sidecar-write base class for ``DevicesController``."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 from ...helpers.build_size import coerce_sidecar_int
 from ...helpers.config_hash import read_build_info_hash
 from ...helpers.device_yaml import parse_platform_from_yaml
+from .._device_builder_base import DeviceBuilderBase
 from .._device_scanner import DeviceFileMetadata
 from ..config import get_device_metadata, set_device_metadata
-
-if TYPE_CHECKING:
-    from pathlib import Path
-
-    from ...device_builder import DeviceBuilder
 
 _LOGGER = logging.getLogger(__name__)
 
 
-class DeviceMetadataMixin:
-    """Metadata resolution + persistence for ``DevicesController``."""
-
-    if TYPE_CHECKING:
-        # Supplied by the host controller class.
-        _db: DeviceBuilder
+class DeviceMetadataBase(DeviceBuilderBase):
+    """Metadata resolution + persistence; inherits ``_db`` from ``DeviceBuilderBase``."""
 
     def _resolve_device_metadata(self, config_dir: Path, filename: str) -> DeviceFileMetadata:
         """
