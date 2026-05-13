@@ -34,6 +34,10 @@ resolving after the subpackage split. Submodules:
   ``_persist_device_metadata_async``. Mixed in directly
   on ``DevicesController`` since the methods only touch
   ``self._db`` and same-mixin siblings.
+- ``state_callbacks`` — ``DeviceStateCallbacksMixin``
+  carrying the six ``_on_*_change`` callbacks
+  (state / ip / version / mac / api_encryption /
+  config_hash). Same mixin shape as ``metadata``.
 - ``reachability`` — per-device reachability streaming + the
   on-subscription mDNS A-record refresh loop.
 - ``storage_regen`` — background ``--only-generate`` scheduler
