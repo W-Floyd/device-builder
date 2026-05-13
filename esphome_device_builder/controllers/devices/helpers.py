@@ -79,7 +79,7 @@ def _rewrite_required_yaml_leaf(
         leaf_dotted = ".".join(leaf_path)
         raise CommandError(
             ErrorCode.INVALID_ARGS,
-            f"No {leaf_dotted} line found in this YAML; add one "
+            f"No {leaf_dotted} line found in this YAML — add one "
             "directly, or edit the package / !include where it's "
             "defined.",
         )
@@ -239,7 +239,7 @@ def _apply_featured_presets(
             if preset.value is None:
                 msg = (
                     f"Featured component {record.full_id} field '{key}' has "
-                    f"locked=true without a value; board manifest is malformed"
+                    f"locked=true without a value — board manifest is malformed"
                 )
                 raise ValueError(msg)
             if user_supplied and compare_user != compare_preset:
