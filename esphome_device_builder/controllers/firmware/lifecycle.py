@@ -23,7 +23,8 @@ _STATUS_TO_TERMINAL_EVENT: dict[JobStatus, EventType] = {
 
 
 def finalize_terminal(controller: FirmwareController, job: FirmwareJob, status: JobStatus) -> None:
-    """Stamp *job* terminal, release the runner slot, fire the matching event.
+    """
+    Stamp *job* terminal, release the runner slot, fire the matching event.
 
     Step ordering matters: runner-slot release lands *before* the
     ``bus.fire`` so the ``queue_status`` broadcaster's sync
@@ -45,7 +46,8 @@ def finalize_terminal(controller: FirmwareController, job: FirmwareJob, status: 
 
 
 def finalize_cancelled(controller: FirmwareController, job: FirmwareJob) -> None:
-    """Runtime-cancel finalisation: discard the cancel flag, finalize as CANCELLED.
+    """
+    Runtime-cancel finalisation: discard the cancel flag, finalize as CANCELLED.
 
     Skips the disk I/O the QUEUED-cancel path in
     :meth:`FirmwareController.cancel` runs (``_prune_history`` +
@@ -58,7 +60,8 @@ def finalize_cancelled(controller: FirmwareController, job: FirmwareJob) -> None
 
 
 def raise_if_cancelled(controller: FirmwareController, job: FirmwareJob, phase: str) -> None:
-    """Raise ``ValueError`` if a cancel landed mid-*phase*; else no-op.
+    """
+    Raise ``ValueError`` if a cancel landed mid-*phase*; else no-op.
 
     ``ValueError`` (rather than a custom type) is what the runner's
     cancel-aware ``except Exception`` branch keys off to finalise
@@ -70,7 +73,8 @@ def raise_if_cancelled(controller: FirmwareController, job: FirmwareJob, phase: 
 
 
 async def terminate_current_process(controller: FirmwareController) -> None:
-    """Signal the running subprocess + children; escalate if it lingers.
+    """
+    Signal the running subprocess + children; escalate if it lingers.
 
     Walks the whole process group via
     :func:`terminate_subtree_with_grace` so SIGTERM reaches
