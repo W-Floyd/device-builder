@@ -21,7 +21,8 @@ async def compile_bulk(
     configurations: list[str],
     force_local: bool = False,
 ) -> list[FirmwareJob]:
-    """Queue compile for *configurations*; skip per-device errors and keep going.
+    """
+    Queue compile for *configurations*; skip per-device errors and keep going.
 
     ``force_local=True`` keeps every job LOCAL (otherwise paired-build
     auto-routing may send some REMOTE).
@@ -47,7 +48,8 @@ async def compile_bulk(
 async def install_bulk(
     controller: FirmwareController, *, configurations: list[str], port: str = "OTA"
 ) -> list[FirmwareJob]:
-    """Queue install (compile + upload) for *configurations*; defaults to OTA.
+    """
+    Queue install (compile + upload) for *configurations*; defaults to OTA.
 
     ``port`` is shared across every queued job — pass an explicit IP
     only when every device should install against the same target.
