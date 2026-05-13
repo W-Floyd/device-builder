@@ -1,12 +1,4 @@
-"""
-Pure helpers for the devices controller.
-
-Free functions only — no controller state. A small subset of helpers
-is imported outside ``controller.py``, including by tests, and
-``friendly_name_slugify`` is re-exported here to keep a single import
-path for the rest of the codebase regardless of where esphome
-upstream decides to keep it.
-"""
+"""Pure helpers for the devices controller (no controller state)."""
 
 from __future__ import annotations
 
@@ -18,13 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 try:
     # ``friendly_name_slugify`` lives in ``esphome.helpers`` from
-    # esphome/esphome#16206 onwards so it survives the legacy
-    # dashboard's eventual removal. Older esphome releases still
-    # expose it from ``esphome.dashboard.util.text``; fall through
-    # only for that back-compat case so we don't carry a hard
-    # dependency on the dashboard package once it's gone.
+    # esphome/esphome#16206 onwards. The fallback is for older
+    # esphome releases that still expose it from the dashboard
+    # package; once those drop the hard dependency goes away.
     from esphome.helpers import friendly_name_slugify
-except ImportError:  # pragma: no cover — covered by the import below
+except ImportError:  # pragma: no cover; covered by the import below
     from esphome.dashboard.util.text import friendly_name_slugify
 
 from esphome.helpers import sort_ip_addresses
@@ -45,12 +35,9 @@ if TYPE_CHECKING:
     from .._device_state_monitor import DeviceStateMonitor
     from ..components import _FeaturedRecord
 
-# Top-level YAML key matcher: line starts at column zero with an
-# identifier, followed by ``:``. ``re.MULTILINE`` so ``^`` matches the
-# start of every line, not just the document. Used instead of
-# ``yaml.safe_load`` for top-level-block detection because ESPHome
-# configs commonly carry custom tags (``!secret``, ``!include``) the
-# standard loader can't handle.
+# Top-level YAML key matcher; used instead of yaml.safe_load
+# because ESPHome configs commonly carry custom tags
+# (``!secret``, ``!include``) the standard loader can't handle.
 _TOP_LEVEL_KEY_RE = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*:", re.MULTILINE)
 
 __all__ = [
@@ -77,38 +64,22 @@ def _rewrite_required_yaml_leaf(
     new_value: str,
 ) -> str:
     """
-    Rewrite the leaf scalar at *leaf_path* in *content* — raise if missing.
+    Rewrite the leaf scalar at *leaf_path* in *content*; raise if missing.
 
-    Thin wrapper around :func:`rewrite_name_or_substitution` that
-    folds in the precondition the clone path needs: the leaf has
-    to actually exist in *this* file. Silently no-op'ing on a
-    missing leaf would let the clone produce a duplicate device
-    under the source's hostname (no in-file ``esphome.name`` to
-    rewrite ⇒ rewrite is a no-op ⇒ clone keeps the source's
-    hostname).
-
-    Friendly-name edit (``devices/edit_friendly_name``) doesn't
-    use this helper — it goes through
-    :func:`upsert_yaml_leaf_under_top_block` instead, which
-    *inserts* a missing leaf rather than rejecting. That's the
-    right choice for a display-label edit (ESPHome's package
-    merge gives the local leaf precedence over the included
-    one); for a hostname rewrite a duplicate would collide on
-    mDNS, so reject is correct there.
-
-    The leaf can be missing for two reasons that look the same to
-    us — either the field is genuinely absent from this YAML or
-    it lives in a ``packages:`` / ``!include``d file. The error
-    message names the missing path and points at both fixes
-    ("add it here, or edit the included source") so the dialog
-    can surface something concrete the user can act on without
-    us having to disambiguate.
+    Wrapper around :func:`rewrite_name_or_substitution` that
+    rejects missing leaves rather than silently no-op'ing. The
+    clone path needs the rejection: a missing in-file
+    ``esphome.name`` would otherwise let the clone keep the
+    source's hostname and collide on mDNS. The error message
+    points at both fixes (add directly, or edit the included
+    source) since the leaf can be missing for genuine-absence
+    or packages-defined reasons.
     """
     if read_yaml_scalar(content, leaf_path) is None:
         leaf_dotted = ".".join(leaf_path)
         raise CommandError(
             ErrorCode.INVALID_ARGS,
-            f"No {leaf_dotted} line found in this YAML — add one "
+            f"No {leaf_dotted} line found in this YAML; add one "
             "directly, or edit the package / !include where it's "
             "defined.",
         )
@@ -116,12 +87,11 @@ def _rewrite_required_yaml_leaf(
 
 
 def _wipe_device_build_dir(configuration: str) -> None:
-    """Remove the per-device build dir if one exists.
+    """
+    Remove the per-device build dir if one exists.
 
-    Reads the canonical ``build_path`` off the StorageJSON sidecar
-    (set during compile) and ``shutil.rmtree``s it. No-op when the
-    sidecar is gone or the device has never been built. Used by
-    archive and delete; both treat compile output as dead weight.
+    No-op when the StorageJSON sidecar is gone or the device
+    has never been built.
     """
     storage_path = resolve_storage_path(configuration)
     storage = StorageJSON.load(storage_path)
@@ -130,18 +100,11 @@ def _wipe_device_build_dir(configuration: str) -> None:
 
 
 def _remove_device_sidecars(config_dir: Path, configuration: str) -> None:
-    """Remove the StorageJSON sidecar and device-metadata entry.
+    """
+    Remove the StorageJSON sidecar and device-metadata entry.
 
-    Best-effort — failures are logged but don't propagate, so a
-    partial cleanup (e.g. permission error on one file) doesn't
-    block the rest of the delete flow. Used by ``delete`` and
-    ``delete_archived``; both want a "leave no trace under this
-    filename" semantic at the end of their flow.
-
-    For ``archive`` see ``_archive_clear_device_sidecars`` —
-    archive needs to preserve identity fields (``board_id``,
-    ``friendly_name``, ``comment``) so an unarchive of the same
-    YAML restores the user-visible state unchanged.
+    Best-effort; failures are logged so a partial cleanup
+    doesn't block the rest of the delete flow.
     """
     storage_path = resolve_storage_path(configuration)
     try:
@@ -155,24 +118,13 @@ def _remove_device_sidecars(config_dir: Path, configuration: str) -> None:
 
 
 def _archive_clear_device_sidecars(config_dir: Path, configuration: str) -> None:
-    """Wipe build artifacts but keep stable identity metadata.
+    """
+    Wipe build artifacts but keep stable identity metadata.
 
-    Variant of ``_remove_device_sidecars`` for the archive flow.
-    The StorageJSON sidecar is a build artifact (carries the
-    last compile's ``firmware_bin_path`` / ``loaded_integrations``
-    / target_platform) and goes stale immediately on archive —
-    same wipe behaviour as ``_remove_device_sidecars``. The
-    device-metadata sidecar is mixed: identity fields
-    (``board_id``, ``friendly_name``, ``comment``) survive an
-    archive → unarchive cycle by design, so we only clear the
-    volatile fields. ``board_id`` in particular is the catalog
-    → YAML match key; losing it on every archive cycle forced a
-    re-derive (or a re-pick by the user) on unarchive that wasn't
-    necessary.
-
-    Best-effort with the same failure semantics as
-    ``_remove_device_sidecars`` — a partial wipe doesn't block
-    the YAML move that already happened upstream of this call.
+    Archive-flow variant; clears volatile metadata but
+    preserves identity fields (``board_id``, ``friendly_name``,
+    ``comment``) so an unarchive of the same YAML restores the
+    user-visible state without needing a board re-derive.
     """
     storage_path = resolve_storage_path(configuration)
     try:
@@ -186,31 +138,20 @@ def _archive_clear_device_sidecars(config_dir: Path, configuration: str) -> None
 
 
 def _validate_archive_configuration(configuration: str) -> None:
-    """Reject anything that isn't a pure basename.
+    """
+    Reject anything that isn't a pure basename.
 
-    Defense-in-depth at the public-command boundary for archive /
-    unarchive / delete_archived. Each helper builds paths from the
-    user-supplied filename (``<config_dir>/archive/<configuration>``
-    — used directly without ``Path.name`` collapse — and
-    ``resolve_storage_path(configuration)`` which keys on
-    ``Path(configuration).name`` so it lands at
-    ``data_dir/storage/<basename>.json``). The archive path joins
-    the raw value; a configuration containing path separators or
-    ``..`` segments would resolve outside ``<config_dir>/archive``
-    and let the caller unlink / overwrite an arbitrary file. The
-    storage path is basename-collapsed by ``resolve_storage_path``
-    so the traversal can't escape ``data_dir/storage`` directly,
-    but a value like ``../etc/passwd`` would still collapse to
-    ``passwd.json`` and let a malicious caller target an
-    attacker-named sidecar inside ``data_dir/storage`` (e.g.
-    after writing a file there via another vector). Rejecting
-    non-basename inputs closes both gaps at the WS boundary.
-
-    Reject anything where ``Path(value).name != value`` (catches
-    ``../foo``, ``sub/foo``, backslash-separated paths on Windows),
-    the empty string, and the special path components ``.`` / ``..``
-    that pass the ``.name`` round-trip but are still traversal
-    vectors.
+    Defense-in-depth at the public archive / unarchive /
+    delete_archived boundary; the helpers build paths like
+    ``<config_dir>/archive/<configuration>`` directly. A value
+    containing path separators or ``..`` segments would resolve
+    outside the archive dir and let the caller unlink an
+    arbitrary file. ``resolve_storage_path`` collapses to the
+    basename so even traversal-into-storage would only land at
+    ``<basename>.json``, but a ``../etc/passwd``-style value
+    would still let an attacker target an attacker-named
+    sidecar inside ``data_dir/storage``. Rejecting non-basenames
+    closes both gaps at the WS boundary.
     """
     if not configuration:
         raise CommandError(ErrorCode.INVALID_ARGS, "configuration must not be empty")
@@ -242,14 +183,11 @@ def _normalize_pin_value(value: Any) -> Any:
     """
     Reduce a rich pin mapping to its bare GPIO for comparison.
 
-    ESPHome accepts pins as either a bare integer / string label or as
-    a ``{number, mode, inverted, ...}`` mapping. Featured-component
-    presets express ``suggestions`` and bare-int ``value``s as scalars;
-    the frontend submits the mapping form. Returning the inner
-    ``number`` (when present) lets the locked / suggestion checks
-    treat both shapes equivalently.
-
-    ``bool`` is excluded explicitly since it's an ``int`` subclass.
+    ESPHome accepts pins as either a bare int / string label or
+    a ``{number, mode, inverted, ...}`` mapping; returning the
+    inner ``number`` lets locked / suggestion checks treat both
+    shapes equivalently. ``bool`` is excluded since it's an
+    ``int`` subclass.
     """
     if isinstance(value, dict):
         number = value.get("number")
@@ -265,32 +203,24 @@ def _apply_featured_presets(
     """
     Merge a featured component's presets onto *user_fields*.
 
-    Returns a new field map ready for the regular merge logic; raises
-    ``ValueError`` when *user_fields* violates a preset constraint.
+    Returns a new field map; raises ``ValueError`` when
+    *user_fields* violates a preset constraint.
 
     Per-field semantics:
 
-    - Locked: user must omit the key or supply the locked value verbatim.
-    - Suggestions: user-supplied value must be one of the listed values;
-      omission falls back to the preset's ``value`` (when set).
-    - Plain default: filled in only when the user didn't supply one.
+    - **Locked**: user must omit the key or supply the locked
+      value verbatim.
+    - **Suggestions**: user value must be one of the listed
+      values; omission falls back to the preset's ``value``.
+    - **Plain default**: filled in only when the user didn't
+      supply one.
 
-    The manifest is authoritative for featured components, so optional
-    default-fills the frontend echoes back from the form (a light's
-    ``gamma_correct: 2.8``, an output's ``frequency: 1kHz``, and so on)
-    are stripped before the YAML render. The filter is intentionally
-    narrow: a non-manifest, non-required key is dropped only when its
-    submitted value equals the catalog ``default_value`` for that
-    entry — a deliberate override (``gamma_correct: 1.5``) survives.
-    Catalog defaults for numeric and time-period fields are stored as
-    strings (``'2.8'``, ``'0 us'``) while the frontend submits parsed
-    scalars; the comparison stringifies both sides so the round-trip
-    matches without false positives on real overrides.
-
-    Pin-typed fields can arrive in two ESPHome shapes — bare GPIO
-    (``pin: 12``) or rich mapping (``pin: {number: 12, mode: ..., inverted: ...}``).
-    Equality / membership checks compare on the bare GPIO so a manifest's
-    ``suggestions: [4, 5]`` accepts whichever shape the frontend submits.
+    After the merge, fields that just echo their catalog
+    ``default_value`` are stripped (a deliberate override
+    survives). Pin-typed fields normalise to their bare GPIO
+    for comparison so the manifest's ``suggestions: [4, 5]``
+    accepts either the bare or the mapping shape the frontend
+    might submit.
     """
     entries_by_key = {ce.key: ce for ce in record.underlying.config_entries}
     merged: dict[str, Any] = dict(user_fields)
@@ -303,13 +233,13 @@ def _apply_featured_presets(
         compare_user = _normalize_pin_value(user_value) if is_pin else user_value
         compare_preset = _normalize_pin_value(preset.value) if is_pin else preset.value
         if preset.locked:
-            # Schema validation rejects ``locked: true`` without a value, but
-            # guard the runtime too so a malformed manifest fails fast with a
-            # clear error instead of "locked to None".
+            # Schema validation rejects ``locked: true`` without a
+            # value; runtime guard here so a malformed manifest
+            # fails fast instead of "locked to None".
             if preset.value is None:
                 msg = (
                     f"Featured component {record.full_id} field '{key}' has "
-                    f"locked=true without a value — board manifest is malformed"
+                    f"locked=true without a value; board manifest is malformed"
                 )
                 raise ValueError(msg)
             if user_supplied and compare_user != compare_preset:
@@ -346,12 +276,12 @@ def _strip_default_echoes(
     keep_unconditional: set[str],
 ) -> dict[str, Any]:
     """
-    Drop fields that just echo their catalog default back at us.
+    Drop fields that just echo their catalog default back.
 
-    Unknown keys (no matching catalog entry) and entries with no
-    ``default_value`` ride through — we have no baseline to call them
-    an echo of, and silently dropping a typo would mask input rather
-    than failing visibly.
+    Unknown keys (no catalog entry) and entries with no
+    ``default_value`` ride through; we have no baseline to call
+    them an echo of, and silently dropping a typo would mask
+    input rather than failing visibly.
     """
     filtered: dict[str, Any] = {}
     for key, value in fields.items():
@@ -368,15 +298,14 @@ def _strip_default_echoes(
 
 
 def _is_catalog_default_echo(value: Any, default: Any) -> bool:
-    """Return True when *value* is just an unmodified echo of *default*.
+    """
+    Return True when *value* is just an unmodified echo of *default*.
 
-    Plain ``==`` first (handles bool/bool, str/str, int/int matches),
-    then a stringified compare for the cross-type case where the
-    catalog stores numeric and time-period defaults as strings
-    (``'2.8'``, ``'0 us'``) and the frontend submits the parsed
-    scalar. Container values (dicts, lists) are never treated as an
-    echo — those are nested sub-blocks the user opts into explicitly,
-    and the catalog default is always ``None`` for them anyway.
+    Plain ``==`` first (bool/bool, str/str, int/int), then a
+    stringified compare for the cross-type case where the
+    catalog stores numeric / time-period defaults as strings
+    (``'2.8'``, ``'0 us'``) while the frontend submits parsed
+    scalars. Containers are never treated as echoes.
     """
     if value == default:
         return True
@@ -393,27 +322,17 @@ def _drop_unconfigured_dependent_fields(
     """
     Strip fields whose ``depends_on_component`` block isn't in *existing_yaml*.
 
-    Returns a new field map with fields that gate on a separate
-    top-level component (``mqtt:``, ``web_server:``, ``zigbee:``, ...)
-    removed when that block isn't configured on the device. Featured
-    components target the dashboard's native-API setup, which doesn't
-    carry an ``mqtt:`` block — emitting ``availability:`` /
-    ``state_topic:`` / ``qos:`` defaults the frontend pre-fills would
-    produce a YAML config ESPHome rejects (or silently ignores).
+    Fields that gate on a separate top-level component (``mqtt:``,
+    ``web_server:``, ``zigbee:``, ...) are dropped when that block
+    isn't configured. The component currently being added counts
+    as configured, so adding ``mqtt`` itself with
+    ``discovery: true`` keeps the discovery field.
 
-    The component currently being added counts as configured — adding
-    ``mqtt`` itself with ``discovery: true`` keeps the discovery field
-    even though ``mqtt:`` isn't in the existing YAML yet.
-
-    Recurses into nested dict fields so sub-fields carrying their own
-    ``depends_on_component`` (multi-phase sensors with per-phase MQTT
-    options, ...) get the same gate.
-
-    Top-level blocks contributed by ``packages:`` aren't detected — the
-    scan is regex-based on the file text rather than a full ESPHome
-    package merge, so a device gating MQTT fields on a package-provided
-    ``mqtt:`` block won't see those fields kept. Standard ESPHome tags
-    (``!secret``, ``!include``) ride through unaffected.
+    Recurses into nested dict fields so sub-fields with their
+    own ``depends_on_component`` get the same gate. Top-level
+    blocks contributed by ``packages:`` aren't detected since
+    the scan is regex-based on the file text rather than a full
+    package merge.
     """
     configured_blocks = set(_TOP_LEVEL_KEY_RE.findall(existing_yaml))
     # ``component.id`` is qualified for platform-style entries
@@ -460,16 +379,19 @@ def _build_address_cache_args(device: Device, monitor: DeviceStateMonitor | None
     if not address:
         return []
 
-    # mDNS hostnames are case-insensitive and may carry a trailing dot;
-    # normalise once so the CLI cache key matches what it'll look up.
+    # mDNS hostnames are case-insensitive and may carry a
+    # trailing dot; normalise once so the CLI cache key matches
+    # what it'll look up.
     normalized = normalize_hostname(address)
     is_local = is_local_hostname(address)
 
     # Preferred source per host type:
-    #   .local  → zeroconf cache (mDNS-only, freshest while the browser is alive)
-    #   non-.local → DNS cache populated by the ping sweep's pre-resolve pass
-    # Either falls back to ``device.ip`` (the last-known resolved IP) so
-    # an expired cache entry doesn't strip the cache args entirely.
+    #   .local      -> zeroconf cache (mDNS-only, freshest while
+    #                  the browser is alive)
+    #   non-.local  -> DNS cache populated by the ping sweep's
+    #                  pre-resolve pass
+    # Either falls back to ``device.ip`` (last-known resolved IP)
+    # so an expired cache entry doesn't strip cache args entirely.
     addresses: list[str] = []
     if monitor is not None:
         cached = (
