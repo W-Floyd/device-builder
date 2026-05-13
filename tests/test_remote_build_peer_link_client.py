@@ -5682,3 +5682,87 @@ async def test_controller_download_artifacts_malformed_tarball_maps_to_invalid_a
             return_exceptions=True,
         )
     assert exc_info.value.code == ErrorCode.INVALID_ARGS
+
+
+# ---------------------------------------------------------------------------
+# Connection-target + receiver-side accept diagnostics (pin-drift triage)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_receiver_logs_accept_and_handshake_ok_on_preview_session(
+    receiver_server: tuple[TestServer, ReceiverController, str, bytes],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Receiver emits ``WS accepted`` + ``handshake ... ok`` for every completed session."""
+    server, _, _, _ = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+
+    with caplog.at_level(
+        "INFO", logger="esphome_device_builder.controllers.remote_build.peer_link"
+    ):
+        await preview_pair(
+            hostname="127.0.0.1",
+            port=server.port,
+            identity_priv=initiator_priv,
+        )
+
+    accept = [rec for rec in caplog.records if "peer-link WS accepted from" in rec.getMessage()]
+    handshake = [rec for rec in caplog.records if "peer-link handshake from" in rec.getMessage()]
+    assert len(accept) >= 1
+    assert len(handshake) >= 1
+    initiator_pub = (
+        X25519PrivateKey.from_private_bytes(initiator_priv).public_key().public_bytes_raw()
+    )
+    expected_offloader_pin = pin_sha256_for_pubkey(initiator_pub)
+    assert f"observed_offloader_pin={expected_offloader_pin}" in handshake[-1].getMessage()
+    assert "intent=preview" in handshake[-1].getMessage()
+
+
+@pytest.mark.asyncio
+async def test_run_one_session_logs_connected_peer_after_tcp_connect(
+    receiver_server: tuple[TestServer, ReceiverController, str, bytes],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A successful WS connect logs the actual peer address from ``ws.get_extra_info``."""
+    server, receiver, _, receiver_pub = receiver_server
+    initiator_priv = secrets.token_bytes(32)
+    await _seed_approved_peer_for_initiator(
+        receiver, dashboard_id="alpha", initiator_priv=initiator_priv
+    )
+
+    bus = EventBus()
+    opened = capture_events(bus, EventType.OFFLOADER_PEER_LINK_OPENED)
+
+    client = PeerLinkClient(
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=initiator_priv,
+        dashboard_id="alpha",
+        pinned_static_x25519_pub=receiver_pub,
+        pin_sha256=pin_sha256_for_pubkey(receiver_pub),
+        receiver_label="test-receiver",
+        bus=bus,
+    )
+    with caplog.at_level(
+        "INFO",
+        logger="esphome_device_builder.controllers.remote_build.peer_link_client.client",
+    ):
+        task = asyncio.create_task(client.run())
+        try:
+            await asyncio.wait_for(opened.received.wait(), timeout=2.0)
+        finally:
+            await cancel_and_drain(task)
+
+    records = [
+        rec
+        for rec in caplog.records
+        if f"peer-link client connected to 127.0.0.1:{server.port}" in rec.getMessage()
+    ]
+    assert len(records) >= 1
+    msg = records[0].getMessage()
+    # ``peer=`` carries the actual remote address from the transport's
+    # ``peername``, which is what tells the operator whether the
+    # reconnect landed on a different host than expected.
+    assert "peer=" in msg
+    assert "127.0.0.1" in msg.split("peer=", 1)[1]

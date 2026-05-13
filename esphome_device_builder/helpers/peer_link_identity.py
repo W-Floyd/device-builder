@@ -104,10 +104,12 @@ def get_or_create_peer_link_identity(config_dir: Path) -> PeerLinkIdentity:
     public_bytes = (
         X25519PrivateKey.from_private_bytes(private_bytes).public_key().public_bytes_raw()
     )
+    pin_sha256 = hashlib.sha256(public_bytes).hexdigest()
+    _log_loaded_identity(key_path, public_bytes, pin_sha256)
     return PeerLinkIdentity(
         private_bytes=private_bytes,
         public_bytes=public_bytes,
-        pin_sha256=hashlib.sha256(public_bytes).hexdigest(),
+        pin_sha256=pin_sha256,
     )
 
 
@@ -134,16 +136,42 @@ def rotate_peer_link_identity(config_dir: Path) -> PeerLinkIdentity:
     public_bytes = (
         X25519PrivateKey.from_private_bytes(private_bytes).public_key().public_bytes_raw()
     )
+    pin_sha256 = hashlib.sha256(public_bytes).hexdigest()
+    _log_loaded_identity(key_path, public_bytes, pin_sha256)
     return PeerLinkIdentity(
         private_bytes=private_bytes,
         public_bytes=public_bytes,
-        pin_sha256=hashlib.sha256(public_bytes).hexdigest(),
+        pin_sha256=pin_sha256,
     )
 
 
 # ---------------------------------------------------------------------------
 # Internals
 # ---------------------------------------------------------------------------
+
+
+def _log_loaded_identity(key_path: Path, public_bytes: bytes, pin_sha256: str) -> None:
+    """Emit one INFO line with key-file stat, raw pubkey hex, and pin."""
+    try:
+        stat = key_path.stat()
+    except OSError as exc:
+        _LOGGER.info(
+            "Loaded peer-link identity from %s (stat_failed: %s: %s pub=%s pin=%s)",
+            key_path,
+            type(exc).__name__,
+            exc,
+            public_bytes.hex(),
+            pin_sha256,
+        )
+        return
+    _LOGGER.info(
+        "Loaded peer-link identity from %s (size=%d mtime=%.0f pub=%s pin=%s)",
+        key_path,
+        stat.st_size,
+        stat.st_mtime,
+        public_bytes.hex(),
+        pin_sha256,
+    )
 
 
 def _load_key(key_path: Path) -> bytes | None:

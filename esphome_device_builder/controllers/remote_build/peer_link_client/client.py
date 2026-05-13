@@ -338,6 +338,12 @@ class PeerLinkClient:
                 make_peer_link_http_session(timeout=timeout, resolver=self._resolver) as http,
                 http.ws_connect(url, max_msg_size=APP_FRAME_MAX_BYTES) as ws,
             ):
+                _LOGGER.info(
+                    "peer-link client connected to %s:%d (peer=%s)",
+                    self._hostname,
+                    self._port,
+                    ws.get_extra_info("peername"),
+                )
                 session = PeerLinkNoiseSession.initiator(self._identity_priv)
                 msg3_payload = _json.dumps({"dashboard_id": self._dashboard_id})
                 response_ct = await _drive_initiator_handshake_and_read_response(
