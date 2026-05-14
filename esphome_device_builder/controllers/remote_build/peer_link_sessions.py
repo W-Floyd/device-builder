@@ -27,7 +27,8 @@ _CANCEL_JOB_SCHEMA = frame_schema({"job_id": str})
 
 
 def on_firmware_queue_transition(controller: ReceiverController, event: Event[Any]) -> None:
-    """Bus listener: broadcast ``queue_status`` to paired offloaders.
+    """
+    Bus listener: broadcast ``queue_status`` to paired offloaders.
 
     Called on every ``JOB_QUEUED`` / ``JOB_STARTED`` /
     terminal event. Builds a snapshot from the firmware
@@ -51,7 +52,8 @@ def on_firmware_queue_transition(controller: ReceiverController, event: Event[An
 async def broadcast_queue_status(
     controller: ReceiverController, idle: bool, running: bool, queue_depth: int
 ) -> None:
-    """Send a ``queue_status`` frame to every active peer-link session.
+    """
+    Send a ``queue_status`` frame to every active peer-link session.
 
     Snapshot the registry to a list before iterating so a
     concurrent register / unregister mid-walk doesn't mutate
@@ -87,7 +89,8 @@ async def broadcast_queue_status(
 async def register_peer_link_session(
     controller: ReceiverController, session: PeerLinkSession
 ) -> None:
-    """Register *session*; evict a stale same-``dashboard_id`` slot via SUPERSEDED.
+    """
+    Register *session*; evict a stale same-``dashboard_id`` slot via SUPERSEDED.
 
     Install runs before the terminate await so concurrent
     dispatches see the freshest entry. Pushes an initial
@@ -164,7 +167,8 @@ def unregister_peer_link_session(controller: ReceiverController, session: PeerLi
 async def handle_cancel_job(
     controller: ReceiverController, session: PeerLinkSession, frame: dict[str, Any]
 ) -> None:
-    """Receiver-side dispatch for inbound ``cancel_job`` frames.
+    """
+    Receiver-side dispatch for inbound ``cancel_job`` frames.
 
     Resolves the offloader's ``job_id`` to the receiver-local
     :class:`FirmwareJob` via :class:`JobFanout` and routes

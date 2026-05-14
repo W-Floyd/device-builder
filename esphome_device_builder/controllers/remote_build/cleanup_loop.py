@@ -21,7 +21,8 @@ _CLEANUP_SWEEP_INTERVAL_SECONDS = 60 * 60
 
 
 async def run_cleanup_loop(controller: ReceiverController) -> None:
-    """Sweep cold remote-build subtrees every ``_CLEANUP_SWEEP_INTERVAL_SECONDS``.
+    """
+    Sweep cold remote-build subtrees every ``_CLEANUP_SWEEP_INTERVAL_SECONDS``.
 
     Sleeps before the first cycle — a fresh install has no
     subtrees to reclaim and the TTL is 24h. Per-cycle

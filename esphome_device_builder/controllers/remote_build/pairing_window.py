@@ -75,7 +75,8 @@ def is_pairing_window_open(controller: ReceiverController) -> bool:
 
 
 def clear_pending_peers_on_window_close(controller: ReceiverController) -> None:
-    """Drop every PENDING peer + fire ``status="removed"`` for each.
+    """
+    Drop every PENDING peer + fire ``status="removed"`` for each.
 
     Wakes any in-flight ``lookup_peer_for_status`` long-poll
     so its offloader sees REJECTED.

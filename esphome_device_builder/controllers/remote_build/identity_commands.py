@@ -21,7 +21,8 @@ if TYPE_CHECKING:
 
 
 async def get_identity(controller: ReceiverController) -> IdentityView:
-    """Return this dashboard's stable identity (id + pin + versions + bind state).
+    """
+    Return this dashboard's stable identity (id + pin + versions + bind state).
 
     The X25519 private key is never returned; only
     ``pin_sha256`` (the fingerprint mDNS broadcasts and

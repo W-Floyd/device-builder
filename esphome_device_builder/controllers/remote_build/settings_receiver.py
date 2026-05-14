@@ -28,7 +28,8 @@ async def get_settings(controller: ReceiverController) -> RemoteBuildSettingsVie
 def to_view(
     controller: ReceiverController, settings: RemoteBuildSettings
 ) -> RemoteBuildSettingsView:
-    """Project receiver settings to wire view, merging in-memory peers.
+    """
+    Project receiver settings to wire view, merging in-memory peers.
 
     The peer list is RAM-canonical: PENDING entries live in
     ``state.pending_peers`` for the active pairing window's
