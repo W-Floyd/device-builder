@@ -200,6 +200,33 @@ def firmware_controller_factory(
     return _make
 
 
+BareFirmwareControllerFactory = Callable[..., FirmwareController]
+
+
+@pytest.fixture
+def bare_firmware_controller_factory() -> BareFirmwareControllerFactory:
+    """Build a bare ``FirmwareController`` shell — ``state`` only, no DB / bus / runner kit."""
+
+    def _make(
+        *,
+        esphome_cmd: list[str] | None = None,
+        current_job: object | None = None,
+        with_mock_db: bool = False,
+    ) -> FirmwareController:
+        controller = FirmwareController.__new__(FirmwareController)
+        controller.state = FirmwareState()
+        if esphome_cmd is not None:
+            controller.state.esphome_cmd = esphome_cmd
+        if current_job is not None:
+            controller.state.current_job = current_job
+        if with_mock_db:
+            controller._db = MagicMock()
+            controller._db.devices = None
+        return controller
+
+    return _make
+
+
 CaptureEventsFactory = Callable[..., list[Event]]
 CaptureEnqueueOrderFactory = Callable[..., list[tuple[EnqueueStep, Any]]]
 
