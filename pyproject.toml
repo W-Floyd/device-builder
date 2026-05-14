@@ -143,7 +143,12 @@ select = [
   "F", # pyflakes
   "FLY", # flynt: convert string formatting to f-strings
   "FURB", # refurb
+  "G", # flake8-logging-format — flag % / .format / f-string in logger calls
   "I", # isort
+  "ICN", # flake8-import-conventions — pin canonical import aliases
+  "INP", # flake8-no-pep420 — flag implicit namespace packages (missing __init__.py)
+  "ISC", # flake8-implicit-str-concat — flag accidental ``"a" "b"`` adjacent-string concat
+  "LOG", # flake8-logging — catch ``logging.warn`` / wrong exception handling on the logger
   "N", # pep8-naming
   "PERF", # performance
   "PL", # pylint
@@ -188,7 +193,9 @@ select = [
 # module importable for unit tests without PyGithub installed, and the temp
 # file path is a runner-controlled location not user input. SLF001 is also
 # waived so action unit tests can call into helper-private methods directly.
-".github/actions/**" = ["T20", "S108", "PLC0415", "BLE001", "SLF001"]
+# INP001 (implicit namespace package) is waived because action directories
+# are standalone scripts, not part of the Python package tree.
+".github/actions/**" = ["T20", "S108", "PLC0415", "BLE001", "SLF001", "INP001"]
 
 [tool.codespell]
 skip = "*.json,*/definitions/*"
