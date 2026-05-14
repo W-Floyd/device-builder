@@ -31,8 +31,9 @@ from ....helpers.peer_link_noise import (
     NOISE_ERRORS,
     PeerLinkNoiseSession,
     pin_sha256_for_pubkey,
+    public_bytes_for_priv,
 )
-from ....helpers.peer_link_resolver import make_peer_link_http_session
+from ....helpers.peer_link_resolver import _SkipHostsResolver, make_peer_link_http_session
 from ....models import (
     IntentResponse,
     PeerLinkIntent,
@@ -128,11 +129,21 @@ class PeerLinkClient:
         self._hostname = receiver_hostname
         self._port = receiver_port
         self._identity_priv = identity_priv
+        self._identity_pub = public_bytes_for_priv(identity_priv)
+        # Peer IPs we've self-loopbacked against. Read live by the
+        # resolver wrapper below so the next reconnect picks a
+        # different A record from aiohttp's cached resolution.
+        # IPv4-shaped: IPv6 doesn't manifest the docker-bridge
+        # self-loopback shape (no shared default ULA prefix) so
+        # we don't normalise v6 representations here.
+        self._self_loopback_ips: set[str] = set()
+        # ``None`` falls back to aiohttp's default resolver — the
+        # only viable shape for unit tests that don't construct a
+        # real Zeroconf.
+        self._http_resolver: AbstractResolver | None = (
+            _SkipHostsResolver(resolver, self._self_loopback_ips) if resolver is not None else None
+        )
         self._dashboard_id = dashboard_id
-        # ``None`` falls back to aiohttp's default resolver —
-        # the only viable shape for unit tests that don't
-        # construct a real Zeroconf.
-        self._resolver = resolver
         # Compared against ``session.remote_static_pub``
         # post-handshake on every connect so an attacker with
         # their own keypair can't complete Noise XX against this
@@ -335,14 +346,15 @@ class PeerLinkClient:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=_DEFAULT_TIMEOUT_SECONDS)
         try:
             async with (
-                make_peer_link_http_session(timeout=timeout, resolver=self._resolver) as http,
+                make_peer_link_http_session(timeout=timeout, resolver=self._http_resolver) as http,
                 http.ws_connect(url, max_msg_size=APP_FRAME_MAX_BYTES) as ws,
             ):
+                peer = ws.get_extra_info("peername")
                 _LOGGER.info(
                     "peer-link client connected to %s:%d (peer=%s)",
                     self._hostname,
                     self._port,
-                    ws.get_extra_info("peername"),
+                    peer,
                 )
                 session = PeerLinkNoiseSession.initiator(self._identity_priv)
                 msg3_payload = _json.dumps({"dashboard_id": self._dashboard_id})
@@ -360,6 +372,8 @@ class PeerLinkClient:
                 # legitimate rotation or a MITM / mDNS spoof.
                 # Abort either way before any application frames.
                 observed = session.remote_static_pub
+                if observed == self._identity_pub:
+                    return self._on_self_static_observed(peer)
                 if observed != self._pinned_static_x25519_pub:
                     # ``stored_pin`` is the sha256 written to disk at
                     # pair time; ``expected_pin`` is what the raw
@@ -610,3 +624,20 @@ class PeerLinkClient:
 
     def _fire_queue_status(self, idle: bool, running: bool, queue_depth: int) -> None:
         _dispatch.fire_queue_status(self, idle, running, queue_depth)
+
+    def _on_self_static_observed(self, peer: Any) -> str:
+        """Skip *peer*'s IP next resolve, log ERROR, return the transport-error close reason."""
+        if isinstance(peer, tuple) and peer and isinstance(peer[0], str):
+            self._self_loopback_ips.add(peer[0])
+        _LOGGER.error(
+            "peer-link client to %s:%d observed our own static pubkey from the responder "
+            "(peer=%s pin=%s); check mDNS / routing (hostname resolves to one of this "
+            "host's own IPs) or identity collision (receiver running with a copy of our "
+            "peer-link key)",
+            self._hostname,
+            self._port,
+            peer,
+            self._pin_sha256,
+        )
+        self._last_connect_error = "self loopback"
+        return _LOCAL_CLOSE_TRANSPORT_ERROR

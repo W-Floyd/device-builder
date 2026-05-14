@@ -26,7 +26,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from contextlib import asynccontextmanager, closing
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import aiohttp
 import pytest
@@ -83,6 +83,7 @@ from esphome_device_builder.helpers.peer_link_noise import (
     PeerLinkNoiseSession,
     pin_sha256_for_pubkey,
 )
+from esphome_device_builder.helpers.peer_link_resolver import _SkipHostsResolver
 from esphome_device_builder.models import (
     PAIRING_VERSION_MAX_LEN,
     ErrorCode,
@@ -2498,6 +2499,7 @@ def _make_offloader_client(
     *,
     receiver_hostname: str = "receiver.local",
     receiver_port: int = 6055,
+    identity_priv: bytes | None = None,
     pinned_static_x25519_pub: bytes = b"\x00" * 32,
     pin_sha256: str = "a" * 64,
     receiver_label: str = "test-receiver",
@@ -2507,14 +2509,16 @@ def _make_offloader_client(
 
     Every constructor-arg has a default; tests that need a
     non-default ``receiver_hostname`` / ``pin_sha256`` /
-    ``pinned_static_x25519_pub`` pass overrides. The 8-line
+    ``pinned_static_x25519_pub`` pass overrides. ``identity_priv``
+    defaults to a fresh random 32 bytes; pass an explicit value to
+    model self-loopback / same-identity scenarios. The 8-line
     construction was repeated ~30 times across the file before
     this helper.
     """
     return PeerLinkClient(
         receiver_hostname=receiver_hostname,
         receiver_port=receiver_port,
-        identity_priv=secrets.token_bytes(32),
+        identity_priv=identity_priv if identity_priv is not None else secrets.token_bytes(32),
         dashboard_id=dashboard_id,
         pinned_static_x25519_pub=pinned_static_x25519_pub,
         pin_sha256=pin_sha256,
@@ -3282,6 +3286,86 @@ async def test_peer_link_client_pin_mismatch_aborts_and_orphans(
             assert f"observed_bytes={receiver_pub.hex()}" in msg
         finally:
             await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_peer_link_client_self_loopback_logs_error_and_retries(
+    receiver_server: tuple[TestServer, ReceiverController, str, bytes],
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """Responder presenting our own static key logs ERROR, closes transport_error, retries."""
+    server, _, _, receiver_pub = receiver_server
+    # Same priv on both sides exercises the ``observed ==
+    # _identity_pub`` branch — production hits this either via
+    # routing loopback (mDNS resolves to our own listener) or
+    # via identity collision (receiver running with a copy of
+    # this dashboard's peer-link key).
+    identity = await asyncio.get_running_loop().run_in_executor(
+        None, get_or_create_peer_link_identity, tmp_path
+    )
+    bus = EventBus()
+    opened = capture_events(bus, EventType.OFFLOADER_PEER_LINK_OPENED)
+    closed = capture_events(bus, EventType.OFFLOADER_PEER_LINK_CLOSED)
+    pin_mismatch = capture_events(bus, EventType.OFFLOADER_PAIR_PIN_MISMATCH)
+    other_pub = bytes([receiver_pub[0] ^ 0x01]) + receiver_pub[1:]
+    client = _make_offloader_client(
+        bus,
+        receiver_hostname="127.0.0.1",
+        receiver_port=server.port,
+        identity_priv=identity.private_bytes,
+        pinned_static_x25519_pub=other_pub,
+        pin_sha256=pin_sha256_for_pubkey(other_pub),
+        receiver_label="my-laptop",
+    )
+    with caplog.at_level(
+        "ERROR",
+        logger="esphome_device_builder.controllers.remote_build.peer_link_client.client",
+    ):
+        task = asyncio.create_task(client.run())
+        try:
+            await asyncio.wait_for(closed.received.wait(), timeout=2.0)
+            assert closed[0]["reason"] == "transport_error"
+            assert len(pin_mismatch) == 0
+            assert len(opened) == 0
+            assert client.is_orphaned is False
+            # Offending peer IP is captured so the next reconnect's
+            # resolver wrapper skips it (aiohttp would otherwise serve
+            # the same cached resolution and land on this IP forever).
+            assert "127.0.0.1" in client._self_loopback_ips
+            loopback = [
+                rec
+                for rec in caplog.records
+                if "observed our own static pubkey" in rec.getMessage()
+            ]
+            assert len(loopback) >= 1
+            assert loopback[0].levelname == "ERROR"
+            msg = loopback[0].getMessage()
+            assert "check mDNS / routing" in msg
+            assert "identity collision" in msg
+        finally:
+            await cancel_and_drain(task)
+
+
+@pytest.mark.asyncio
+async def test_skip_hosts_resolver_strips_skipped_entries_live() -> None:
+    """``_SkipHostsResolver.resolve`` filters skipped entries, picking up live edits."""
+    inner = MagicMock()
+    inner.resolve = AsyncMock(
+        return_value=[
+            {"host": "192.168.1.10", "port": 6055, "family": 0, "flags": 0, "hostname": "x"},
+            {"host": "172.17.0.1", "port": 6055, "family": 0, "flags": 0, "hostname": "x"},
+        ]
+    )
+    skip_hosts: set[str] = {"172.17.0.1"}
+    wrapper = _SkipHostsResolver(inner, skip_hosts)
+
+    assert [r["host"] for r in await wrapper.resolve("x", 6055)] == ["192.168.1.10"]
+    # Live mutation: the owning client appends to the set between
+    # resolves; the wrapper must read it fresh, not snapshot at
+    # construction.
+    skip_hosts.add("192.168.1.10")
+    assert await wrapper.resolve("x", 6055) == []
 
 
 @pytest.mark.asyncio
