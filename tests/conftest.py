@@ -299,6 +299,20 @@ def make_remote_build_controller(
     )
 
 
+def reset_offloader_firmware_stub(
+    handles: RemoteBuildTestHandles,
+    *,
+    reset_bus: bool = False,
+    **queue_status_kwargs: Any,
+) -> MagicMock:
+    """Re-stub the offloader's firmware mock; ``queue_status_kwargs`` go to ``MagicMock(...)``."""
+    if reset_bus:
+        handles.offloader._db.bus = MagicMock()
+    firmware = handles.offloader._db.firmware = MagicMock()
+    firmware.queue_status_snapshot = MagicMock(**queue_status_kwargs)
+    return firmware
+
+
 def wire_firmware_remote_peer_api_mocks(firmware: Any, jobs_by_id: dict[str, Any]) -> None:
     """Wire a MagicMock firmware controller's remote-peer lookup API against *jobs_by_id*.
 
