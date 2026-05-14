@@ -118,6 +118,33 @@ def _is_loopback_adapter(adapter: ifaddr.Adapter) -> bool:
     return name.startswith("lo") or "loopback" in nice
 
 
+# Interface-name prefixes for virtualisation / container bridges.
+# Their IPs are host-namespace-scoped; advertising e.g. ``docker0``
+# at ``172.17.0.1`` directs peers with the same Docker default
+# subnet at their own bridge gateway.
+_VIRTUAL_BRIDGE_PREFIXES: tuple[str, ...] = (
+    "docker",  # docker0, docker_gwbridge
+    "veth",  # virtual ethernet pair peer
+    "cni",  # Kubernetes CNI plugin bridges
+    "virbr",  # libvirt default bridges
+    "vethernet",  # Windows Hyper-V virtual switches
+)
+
+# Docker user-defined networks: ``br-`` plus a 12-hex-char network
+# ID. Anchored so real LAN bridge names (``br-lan``, ``br-guest``
+# on OpenWRT / homelab Linux setups) stay out of the filter.
+_DOCKER_USER_BRIDGE_RE = re.compile(r"^br-[0-9a-f]{12}$")
+
+
+def _is_virtual_bridge_adapter(adapter: ifaddr.Adapter) -> bool:
+    """Match a virtual-bridge prefix or Docker's ``br-<12 hex>`` user-network name."""
+    name = (adapter.name or "").lower()
+    nice = (adapter.nice_name or "").lower()
+    if _DOCKER_USER_BRIDGE_RE.match(name) or _DOCKER_USER_BRIDGE_RE.match(nice):
+        return True
+    return any(name.startswith(p) or nice.startswith(p) for p in _VIRTUAL_BRIDGE_PREFIXES)
+
+
 def _local_addresses() -> list[str]:
     """
     Return the IPv4 / IPv6 addresses to advertise.
@@ -125,7 +152,7 @@ def _local_addresses() -> list[str]:
     Enumerates every adapter via :mod:`ifaddr` (already a
     python-zeroconf dependency) and returns the bare addresses as
     plain strings suitable for :class:`~zeroconf.ServiceInfo`'s
-    ``parsed_addresses`` keyword. Drops three classes of addresses
+    ``parsed_addresses`` keyword. Drops four classes of addresses
     that would land on the wire but never help a peer:
 
     * **Loopback interfaces.** Filtering by interface (``lo`` /
@@ -145,6 +172,14 @@ def _local_addresses() -> list[str]:
       comes back. Hosts with many virtual interfaces (VPN, awdl,
       utun*) can carry a dozen link-local addresses that just
       inflate the announcement without adding reachability.
+    * **Virtualisation / container bridges** — ``docker*``,
+      ``veth*``, ``cni*``, ``virbr*``, ``vEthernet*`` prefixes
+      plus Docker's ``br-<12 hex>`` user-defined networks (real
+      LAN bridges like ``br-lan`` keep their IP). Host-namespace-
+      scoped; advertising ``172.17.0.1`` from ``docker0`` points
+      peers with the same default Docker subnet at their own
+      bridge gateway. See ``_VIRTUAL_BRIDGE_PREFIXES`` +
+      ``_DOCKER_USER_BRIDGE_RE``.
 
     Setting ``parsed_addresses`` explicitly is what fixes the
     "127.0.0.1 / ::1 / fe80::1 only" advertise we saw on macOS:
@@ -169,7 +204,7 @@ def _local_addresses() -> list[str]:
     seen: set[str] = set()
     out: list[str] = []
     for adapter in ifaddr.get_adapters():
-        if _is_loopback_adapter(adapter):
+        if _is_loopback_adapter(adapter) or _is_virtual_bridge_adapter(adapter):
             continue
         for ip in adapter.ips:
             # ``ifaddr.IP.ip`` is a ``str`` for IPv4 and a 3-tuple
