@@ -140,10 +140,11 @@ def unregister_peer_link_session(controller: ReceiverController, session: PeerLi
         # Drop any in-flight ``submit_job`` upload state so a
         # bundle reception that was mid-stream when the
         # session ended doesn't outlive the session that owns
-        # it. ``submit_job_receiver`` is set in :meth:`start`;
-        # this branch only runs for sessions registered after
-        # ``start`` (live wire), so the attribute is always
-        # populated by the time we get here.
+        # it. ``submit_job_receiver`` is set in
+        # :meth:`ReceiverController.start`; this branch only
+        # runs for sessions registered after ``start`` (live
+        # wire), so the attribute is always populated by the
+        # time we get here.
         if controller.state.submit_job_receiver is not None:
             controller.state.submit_job_receiver.discard_session(session.dashboard_id)
         if controller.state.artifacts_download_sender is not None:
