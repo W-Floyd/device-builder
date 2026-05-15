@@ -141,11 +141,19 @@ class EditorController:
         cfg_dir = Path(self._db.settings.config_dir).resolve()
         try:
             req_path = Path(requested).resolve()
-        except OSError:
-            req_path = Path(requested)
+        except (OSError, RuntimeError):
+            # Unresolvable (broken symlink / EACCES / 3.12 symlink-loop
+            # RuntimeError) can't be containment-checked — refuse.
+            return ""
         main_path = (cfg_dir / configuration).resolve()
-        if req_path == main_path or Path(requested).name == configuration:
+        # Structural equality, not basename: ``/tmp/kitchen.yaml`` must not
+        # ride the in-memory shortcut past the containment check below.
+        if req_path == main_path or Path(requested) == Path(configuration):
             return content
+        # Attacker-controlled ``!include /etc/passwd`` would otherwise echo
+        # the file's bytes back as ``yaml_errors`` parse snippets.
+        if not req_path.is_relative_to(cfg_dir):
+            return ""
         try:
             return req_path.read_text(encoding="utf-8")
         except OSError:

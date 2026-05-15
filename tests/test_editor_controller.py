@@ -112,6 +112,67 @@ def test_resolve_file_reads_disk_for_include(tmp_path: Path) -> None:
     assert result == "captive_portal:\n"
 
 
+def test_resolve_file_refuses_paths_outside_config_dir(tmp_path: Path) -> None:
+    """An absolute path outside ``config_dir`` is dropped to ``""``."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    outside = tmp_path / "secret.txt"
+    outside.write_text("super-secret\n", encoding="utf-8")
+
+    controller = _make_controller(config_dir)
+    result = controller._resolve_file(str(outside), "kitchen.yaml", "")
+    assert result == ""
+
+
+def test_resolve_file_refuses_symlink_escape(tmp_path: Path) -> None:
+    """A symlink inside ``config_dir`` pointing outside is refused after realpath."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    secret = tmp_path / "secret.txt"
+    secret.write_text("super-secret\n", encoding="utf-8")
+    link = config_dir / "leak.yaml"
+    link.symlink_to(secret)
+
+    controller = _make_controller(config_dir)
+    result = controller._resolve_file(str(link), "kitchen.yaml", "")
+    assert result == ""
+
+
+def test_resolve_file_basename_shortcut_rejects_abs_path_with_matching_name(
+    tmp_path: Path,
+) -> None:
+    """``/elsewhere/kitchen.yaml`` does not short-circuit to in-memory content."""
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    decoy = elsewhere / "kitchen.yaml"
+    decoy.write_text("on-disk-elsewhere\n", encoding="utf-8")
+
+    controller = _make_controller(config_dir)
+    result = controller._resolve_file(str(decoy), "kitchen.yaml", "esphome:\n  name: in-memory\n")
+    assert result == ""
+
+
+def test_resolve_file_returns_empty_on_symlink_loop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``Path.resolve()`` raising ``RuntimeError`` (symlink loop) → ``""``."""
+    controller = _make_controller(tmp_path)
+    include = tmp_path / "loop.yaml"
+
+    real_resolve = Path.resolve
+
+    def _raise_for_loop(self: Path, *args: Any, **kwargs: Any) -> Path:
+        if self.name == "loop.yaml":
+            raise RuntimeError("Symlink loop in path")
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", _raise_for_loop)
+
+    assert controller._resolve_file(str(include), "kitchen.yaml", "") == ""
+
+
 def test_resolve_file_returns_empty_on_missing_include(tmp_path: Path) -> None:
     """Missing include → empty string, never a raise.
 
@@ -594,17 +655,10 @@ async def test_terminate_subprocess_swallows_stdin_write_failure(
 # ---------------------------------------------------------------------------
 
 
-def test_resolve_file_falls_back_when_requested_path_unresolvable(
+def test_resolve_file_returns_empty_when_requested_path_unresolvable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``Path.resolve()`` raising on the requested path → use the unresolved Path.
-
-    macOS / Linux with a long enough path (or a path through a
-    broken symlink) can fault ``resolve()`` even when ``read_text``
-    later succeeds against the unresolved form. The except branch
-    keeps the read-from-disk fallback usable in that case rather
-    than 500-ing the validator round-trip.
-    """
+    """``Path.resolve()`` raising → ``""`` (unresolved paths can't be containment-checked)."""
     controller = _make_controller(tmp_path)
     include = tmp_path / "common.yaml"
     include.write_text("ok\n", encoding="utf-8")
@@ -623,7 +677,7 @@ def test_resolve_file_falls_back_when_requested_path_unresolvable(
 
     result = controller._resolve_file(str(include), "kitchen.yaml", "")
 
-    assert result == "ok\n"
+    assert result == ""
 
 
 # ---------------------------------------------------------------------------
