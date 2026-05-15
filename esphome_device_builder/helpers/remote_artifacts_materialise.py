@@ -21,6 +21,8 @@ import re
 import sys
 import tarfile
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -149,16 +151,18 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
                 except OSError as exc:
                     _LOGGER.debug("materialise: pre-extract rmtree(%s) failed: %s", build_path, exc)
             build_path.mkdir(parents=True, exist_ok=True)
-            _safe_extract_excluding(
-                tar,
-                build_path,
-                exclude={
-                    STORAGE_MEMBER_NAME,
-                    IDEDATA_MEMBER_NAME,
-                    VALIDATED_YAML_MEMBER_NAME,
-                },
-                initial_total_bytes=total_bytes,
-            )
+            pio_path = build_path / PLATFORMIO_INI_MEMBER_NAME
+            with _preserve_platformio_ini_mtime_if_unchanged(pio_path):
+                _safe_extract_excluding(
+                    tar,
+                    build_path,
+                    exclude={
+                        STORAGE_MEMBER_NAME,
+                        IDEDATA_MEMBER_NAME,
+                        VALIDATED_YAML_MEMBER_NAME,
+                    },
+                    initial_total_bytes=total_bytes,
+                )
     except tarfile.TarError as err:
         raise MaterialiseError(f"tarball is malformed: {err}") from err
     if not (build_path / PLATFORMIO_INI_MEMBER_NAME).is_file():
@@ -420,13 +424,40 @@ def _stage_offloader_validated_yaml(
     os.utime(path, (now, now))
 
 
+@contextmanager
+def _preserve_platformio_ini_mtime_if_unchanged(pio_path: Path) -> Iterator[None]:
+    """
+    Hold *pio_path*'s mtime stable across an enclosed write when the bytes don't change.
+
+    Same bytes → restore the prior mtime so SCons's per-object
+    cache survives; different bytes → bump to ``time.time_ns()``
+    so SCons unambiguously sees the file as newer than every
+    existing ``.pioenvs/<name>/*.o``.
+    """
+    prior_mtime_ns: int | None = None
+    prior_bytes: bytes | None = None
+    if pio_path.is_file():
+        prior_mtime_ns = pio_path.stat().st_mtime_ns
+        prior_bytes = pio_path.read_bytes()
+    # No try/finally: a partial extract leaves the file in an
+    # indeterminate state and restoring the prior mtime would lie
+    # about its contents.
+    yield
+    if not pio_path.is_file():
+        return
+    if prior_mtime_ns is not None and pio_path.read_bytes() == prior_bytes:
+        os.utime(pio_path, ns=(prior_mtime_ns, prior_mtime_ns))
+    else:
+        now_ns = time.time_ns()
+        os.utime(pio_path, ns=(now_ns, now_ns))
+
+
 def _force_idedata_cache_hit(*, platformio_ini: Path, cached_idedata: Path) -> None:
-    """Make platformio.ini.mtime < cached_idedata.mtime so _load_idedata's gate hits."""
+    """Push *cached_idedata*'s mtime past *platformio_ini*'s for esphome's _load_idedata gate."""
     if not platformio_ini.is_file() or not cached_idedata.is_file():
         return
-    now = time.time()
-    os.utime(cached_idedata, (now, now))
-    os.utime(platformio_ini, (now - 1, now - 1))
+    target_ns = max(time.time_ns(), platformio_ini.stat().st_mtime_ns + 1)
+    os.utime(cached_idedata, ns=(target_ns, target_ns))
 
 
 def _remap_to_offloader(

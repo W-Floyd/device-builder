@@ -435,6 +435,90 @@ def test_materialise_preserves_pioenvs_on_same_platform_rerun(
     assert cached.read_bytes() == b"CACHED-OBJ"
 
 
+def test_materialise_preserves_platformio_ini_mtime_when_unchanged(
+    paired_roots: tuple[Path, Path],
+) -> None:
+    """Same-content extract restores platformio.ini's prior mtime exactly."""
+    receiver_root, offloader_root = paired_roots
+    tarball = _pack_in_tmp(receiver_root)
+    first = _materialise_in_tmp(tarball, offloader_root)
+    pio_ini = first / "platformio.ini"
+    fixed_mtime_ns = int((time.time() - 3600) * 1_000_000_000)
+    os.utime(pio_ini, ns=(fixed_mtime_ns, fixed_mtime_ns))
+    # Re-read so the equality assertion compares against what the FS
+    # actually stored after rounding to its native resolution.
+    pinned_pio_ns = pio_ini.stat().st_mtime_ns
+
+    obj = first / ".pioenvs" / "kitchen" / "src" / "main.o"
+    obj.parent.mkdir(parents=True, exist_ok=True)
+    obj.write_bytes(b"OBJ")
+    obj_mtime_ns = pinned_pio_ns + 60 * 1_000_000_000
+    os.utime(obj, ns=(obj_mtime_ns, obj_mtime_ns))
+
+    _materialise_in_tmp(tarball, offloader_root)
+
+    assert pio_ini.stat().st_mtime_ns == pinned_pio_ns
+    assert pio_ini.stat().st_mtime_ns < obj.stat().st_mtime_ns
+
+
+def test_materialise_bumps_platformio_ini_mtime_when_content_changed(
+    paired_roots: tuple[Path, Path], tmp_path: Path
+) -> None:
+    """Different-content extract bumps platformio.ini's mtime to ~now."""
+    receiver_root, offloader_root = paired_roots
+    first_tarball = _pack_in_tmp(receiver_root)
+    first = _materialise_in_tmp(first_tarball, offloader_root)
+    pio_ini = first / "platformio.ini"
+    fixed_mtime_ns = int((time.time() - 3600) * 1_000_000_000)
+    os.utime(pio_ini, ns=(fixed_mtime_ns, fixed_mtime_ns))
+    pinned_pio_ns = pio_ini.stat().st_mtime_ns
+
+    receiver_root_2 = tmp_path / "receiver2"
+    receiver_root_2.mkdir()
+    sentinel_2 = receiver_root_2 / "___DASHBOARD_SENTINEL___.yaml"
+    with patch.object(CORE, "config_path", sentinel_2):
+        _write_receiver_state(receiver_root_2)
+        receiver_pio = receiver_root_2 / ".esphome" / "build" / "kitchen" / "platformio.ini"
+        receiver_pio.write_bytes(
+            b"[env:kitchen]\nplatform = espressif32\nbuild_flags = -DCHANGED\n"
+        )
+        second_tarball = pack_build_artifacts("kitchen.yaml").tarball
+
+    before_ns = time.time_ns()
+    _materialise_in_tmp(second_tarball, offloader_root)
+    after_ns = time.time_ns()
+
+    assert pio_ini.read_bytes() == receiver_pio.read_bytes()
+    post_ns = pio_ini.stat().st_mtime_ns
+    assert post_ns != pinned_pio_ns
+    assert before_ns <= post_ns <= after_ns
+
+
+def test_force_idedata_cache_hit_does_not_touch_platformio_ini_mtime(
+    paired_roots: tuple[Path, Path],
+) -> None:
+    """``_force_idedata_cache_hit`` only pushes the idedata mtime forward."""
+    receiver_root, offloader_root = paired_roots
+    tarball = _pack_in_tmp(receiver_root)
+    build_path = _materialise_in_tmp(tarball, offloader_root)
+    pio_ini = build_path / "platformio.ini"
+    fixed_mtime_ns = int((time.time() - 7200) * 1_000_000_000)
+    os.utime(pio_ini, ns=(fixed_mtime_ns, fixed_mtime_ns))
+    pinned_pio_ns = pio_ini.stat().st_mtime_ns
+
+    sentinel = offloader_root / "___DASHBOARD_SENTINEL___.yaml"
+    with patch.object(CORE, "config_path", sentinel):
+        cached = resolve_idedata_path("kitchen.yaml", name="kitchen")
+    # Pin idedata to before platformio.ini so the helper has work to do.
+    older_ns = pinned_pio_ns - 60 * 1_000_000_000
+    os.utime(cached, ns=(older_ns, older_ns))
+
+    _force_idedata_cache_hit(platformio_ini=pio_ini, cached_idedata=cached)
+
+    assert pio_ini.stat().st_mtime_ns == pinned_pio_ns
+    assert cached.stat().st_mtime_ns > pio_ini.stat().st_mtime_ns
+
+
 def test_materialise_wipes_build_tree_on_platform_swap(
     paired_roots: tuple[Path, Path], tmp_path: Path
 ) -> None:
