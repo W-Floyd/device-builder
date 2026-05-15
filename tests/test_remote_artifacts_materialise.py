@@ -608,6 +608,7 @@ def test_materialise_logs_preserve_decision_with_version_fields(
     _materialise_in_tmp(tarball, offloader_root)
 
     with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        caplog.clear()
         _materialise_in_tmp(tarball, offloader_root)
 
     preserve = [
@@ -635,6 +636,7 @@ def test_materialise_logs_wipe_decision_with_reason(
     shrunk_tarball = _pack_in_tmp(receiver_root_2, loaded_integrations=["esp32"])
 
     with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        caplog.clear()
         _materialise_in_tmp(shrunk_tarball, offloader_root)
 
     wipe = [
@@ -655,6 +657,7 @@ def test_materialise_logs_platformio_ini_unchanged(
     _materialise_in_tmp(tarball, offloader_root)
 
     with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        caplog.clear()
         _materialise_in_tmp(tarball, offloader_root)
 
     pio_msgs = [r.getMessage() for r in caplog.records if "platformio.ini" in r.getMessage()]
@@ -677,6 +680,7 @@ def test_materialise_logs_post_extract_object_count(
     (pioenvs / "extra.o").write_bytes(b"OBJ2")
 
     with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        caplog.clear()
         _materialise_in_tmp(tarball, offloader_root)
 
     summary = [r.getMessage() for r in caplog.records if ".o files remain in" in r.getMessage()]
