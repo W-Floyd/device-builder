@@ -216,7 +216,6 @@ async def test_async_resolve_handles_timeout(fake_resolver) -> None:
 
 
 def _device(**overrides):  # type: ignore[no-untyped-def]
-    """Local wrapper around ``make_device`` defaulting ``address`` for this file's DNS tests."""
     overrides.setdefault("address", "esp.example.com")
     return make_device(**overrides)
 

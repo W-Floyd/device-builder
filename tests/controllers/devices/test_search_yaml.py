@@ -38,7 +38,6 @@ if TYPE_CHECKING:
 
 
 def _device(name: str, *, friendly: str | None = None) -> Device:
-    """Local wrapper around ``make_device`` defaulting to ONLINE for these search-result tests."""
     return make_device(
         name=name,
         friendly_name=friendly or name.title(),

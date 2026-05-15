@@ -35,7 +35,6 @@ from .conftest import make_peer_link_session
 
 
 def _make_session(*, dashboard_id: str = "alpha") -> Any:
-    """Local wrapper around ``make_peer_link_session`` without a ``terminate`` mock."""
     return make_peer_link_session(dashboard_id=dashboard_id, with_terminate=False)
 
 

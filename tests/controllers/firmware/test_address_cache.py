@@ -21,7 +21,6 @@ from tests.controllers.devices.conftest import RecordingStateMonitor
 
 
 def _device(**overrides: Any) -> Device:
-    """Local wrapper around ``make_device`` defaulting ``loaded_integrations`` for this file."""
     overrides.setdefault("loaded_integrations", ["api"])
     return make_device(**overrides)
 

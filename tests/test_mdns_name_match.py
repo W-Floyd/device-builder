@@ -29,7 +29,6 @@ from .conftest import make_device, make_state_monitor_with_callbacks
 
 
 def _device(name: str) -> Device:
-    """Local wrapper around ``make_device`` keeping ``friendly_name == name`` for this file."""
     return make_device(name=name, friendly_name=name)
 
 

@@ -49,7 +49,6 @@ from tests.conftest import make_device
 
 
 def _device(name: str = "kitchen", **overrides: Any) -> Device:
-    """Local wrapper around ``make_device`` defaulting ``current_version`` for this file."""
     overrides.setdefault("current_version", "2026.5.0")
     return make_device(name=name, **overrides)
 

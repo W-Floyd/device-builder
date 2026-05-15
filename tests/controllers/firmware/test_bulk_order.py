@@ -26,7 +26,6 @@ def _device(
     has_pending_changes: bool = False,
     update_available: bool = False,
 ) -> Device:
-    """Local wrapper around ``make_device`` deriving ``name`` from *configuration*."""
     name = configuration.removesuffix(".yaml")
     return make_device(
         name=name,

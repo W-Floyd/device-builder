@@ -57,7 +57,6 @@ from .conftest import (
 
 
 def _device(name: str, *, ip: str = "", ip_addresses: list[str] | None = None) -> Device:
-    """Local wrapper around ``make_device`` defaulting to ONLINE for these IP-list tests."""
     return make_device(
         name=name,
         state=DeviceState.ONLINE,

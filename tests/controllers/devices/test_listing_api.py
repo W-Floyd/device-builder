@@ -42,7 +42,6 @@ from .conftest import CaptureDevicesEventsFactory, MakeControllerFactory
 
 
 def _device(name: str, *, state: DeviceState = DeviceState.ONLINE) -> Device:
-    """Local wrapper around ``make_device`` defaulting to ONLINE for these listing tests."""
     return make_device(name=name, state=state)
 
 

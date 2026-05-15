@@ -377,25 +377,12 @@ def make_remote_peer_job(
 
 
 def make_real_bundle(*, configuration_filename: str = "kitchen.yaml") -> bytes:
-    """Build a minimal-but-valid esphome bundle the upstream extractor accepts.
+    """
+    Build a minimal-but-valid esphome bundle the upstream extractor accepts.
 
-    Upstream :func:`esphome.bundle.extract_bundle` needs:
-
-    * A ``manifest.json`` member with
-      ``{"manifest_version": 1, "config_filename": "..."}``.
-    * The referenced ``config_filename`` member, with non-empty
-      content.
-
-    Nothing else; :func:`_validate_tar_members` rejects symlinks,
-    absolute paths, path traversal, and oversized archives, all
-    of which we naturally avoid by emitting two regular file
-    members at the top level.
-
-    Deliberately not going through :class:`BundleBuilder`: that
-    class drives ``BundleBuilder.discover_files`` off real
-    ``CORE.config_dir`` + ``CORE.config_path`` state, which would
-    couple the e2e tests to a real config-dir layout when all
-    they want is the wire-format contract.
+    Emits a ``manifest.json`` + the referenced YAML member; skips
+    :class:`BundleBuilder` so the test doesn't need a real
+    ``CORE.config_dir`` / ``CORE.config_path`` setup.
     """
     manifest = {
         "manifest_version": 1,

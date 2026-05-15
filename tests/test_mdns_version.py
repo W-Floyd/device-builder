@@ -28,7 +28,6 @@ from .conftest import (
 
 
 def _device(**overrides: Any) -> Device:
-    """Local wrapper around ``make_device`` defaulting ``current_version`` for this file."""
     overrides.setdefault("current_version", "2026.5.0")
     return make_device(**overrides)
 

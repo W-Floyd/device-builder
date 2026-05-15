@@ -29,7 +29,6 @@ from .conftest import make_device
 
 
 def _device(name: str, configuration: str, *, friendly_name: str | None = None) -> Device:
-    """Local wrapper around ``make_device`` for these path-keyed index tests."""
     return make_device(
         name=name,
         friendly_name=friendly_name or name.title(),

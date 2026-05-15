@@ -265,7 +265,6 @@ def _record_scheduled(coros: list[object]) -> Callable[[object], object]:
 
 
 def _device_kitchen(**overrides: Any) -> Device:
-    """Local wrapper around ``make_device`` omitting ``address`` for _on_* callback tests."""
     return make_device(address="", **overrides)
 
 

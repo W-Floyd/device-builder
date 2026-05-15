@@ -26,7 +26,6 @@ from .conftest import (
 
 
 def _device(configuration: str, **overrides: Any) -> Device:
-    """Local wrapper around ``make_device`` taking ``configuration`` positionally."""
     return make_device(configuration=configuration, **overrides)
 
 

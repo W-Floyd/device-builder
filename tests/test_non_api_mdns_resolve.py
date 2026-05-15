@@ -35,7 +35,6 @@ def _device(
     loaded_integrations: list[str] | None = None,
     state: DeviceState = DeviceState.UNKNOWN,
 ) -> Device:
-    """Local wrapper around ``make_device`` keeping ``friendly_name == name`` for this file."""
     return make_device(
         name=name,
         friendly_name=name,

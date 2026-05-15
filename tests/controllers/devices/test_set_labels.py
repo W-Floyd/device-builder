@@ -84,7 +84,6 @@ class _ReloadingScanner(RecordingScanner):
 
 
 def _make_device(filename: str = "kitchen.yaml", labels: list[str] | None = None) -> Device:
-    """Local wrapper taking ``configuration`` as ``filename`` for this file."""
     name = configuration_stem(filename)
     return make_device(
         name=name,

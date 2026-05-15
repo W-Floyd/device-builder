@@ -831,25 +831,8 @@ def make_state_monitor_with_callbacks(
     return monitor, callbacks
 
 
-# ---------------------------------------------------------------------------
-# Shared ``Device`` factory
-#
-# ~16 test files were each carrying a near-identical ``_device`` /
-# ``_make_device`` helper that builds a ``Device(name=..., friendly_name=...,
-# configuration=f"{name}.yaml", address=f"{name}.local", state=UNKNOWN)``
-# with one or two field overrides. Centralising the defaults here means a
-# new ``Device`` field doesn't need a touch in every per-file helper.
-# ---------------------------------------------------------------------------
-
-
 def make_device(name: str = "kitchen", **overrides: Any) -> Device:
-    """Build a ``Device`` with the defaults the test suite expects.
-
-    ``friendly_name``, ``configuration`` and ``address`` are
-    derived from *name* unless overridden. ``state`` defaults to
-    ``DeviceState.UNKNOWN``. Any other field passes straight
-    through to the :class:`Device` constructor.
-    """
+    """Build a ``Device`` deriving friendly_name / configuration / address from *name*."""
     base: dict[str, Any] = {
         "name": name,
         "friendly_name": name.title(),
@@ -861,28 +844,12 @@ def make_device(name: str = "kitchen", **overrides: Any) -> Device:
     return Device(**base)
 
 
-# ---------------------------------------------------------------------------
-# Peer-link session stub
-#
-# Three remote-build receiver-side test files (``test_remote_build_job_fanout``,
-# ``test_remote_build_submit_job``, ``test_remote_build_artifacts_download``)
-# were each carrying their own ``_make_session`` helper that builds a
-# ``MagicMock`` with ``dashboard_id`` set and ``send_app_frame`` (plus
-# sometimes ``terminate``) wired as ``AsyncMock``. Hoist into one factory.
-# ---------------------------------------------------------------------------
-
-
 def make_peer_link_session(
     *,
     dashboard_id: str = "alpha",
     with_terminate: bool = True,
 ) -> Any:
-    """Stub ``PeerLinkSession`` capturing ``send_app_frame`` payloads.
-
-    ``with_terminate=False`` skips wiring the ``terminate``
-    ``AsyncMock`` for tests that only exercise the
-    happy-path send loop.
-    """
+    """Stub ``PeerLinkSession`` with ``send_app_frame`` (and optionally terminate) as AsyncMock."""
     session = MagicMock()
     session.dashboard_id = dashboard_id
     session.send_app_frame = AsyncMock(return_value=True)
