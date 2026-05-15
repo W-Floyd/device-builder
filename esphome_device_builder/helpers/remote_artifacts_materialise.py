@@ -26,6 +26,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, NamedTuple
 
+from esphome.const import __version__ as _esphome_version
 from esphome.helpers import rmtree
 from esphome.storage_json import StorageJSON
 from esphome.writer import storage_should_clean
@@ -163,11 +164,13 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
             else:
                 _LOGGER.info(
                     "remote-build materialise(%s): preserving offloader build dir "
-                    "(%d .o files; receiver esphome=%s, offloader esphome=%s)",
+                    "(%d .o files; receiver esphome=%s, prior_sidecar_esphome=%s, "
+                    "offloader esphome=%s)",
                     configuration,
                     object_count_before,
                     new_storage.esphome_version,
                     prior_storage.esphome_version if prior_storage is not None else "<none>",
+                    _esphome_version,
                 )
             build_path.mkdir(parents=True, exist_ok=True)
             pio_path = build_path / PLATFORMIO_INI_MEMBER_NAME

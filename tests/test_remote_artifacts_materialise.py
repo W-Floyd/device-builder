@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import os
 import sys
 import tarfile
@@ -25,6 +26,7 @@ from typing import Any
 from unittest.mock import patch
 
 import pytest
+from esphome.const import __version__ as _offloader_esphome_version
 from esphome.core import CORE
 
 from esphome_device_builder.controllers.remote_build.artifacts_tarball import (
@@ -585,6 +587,101 @@ def test_materialise_wipes_when_prior_storage_is_corrupt(
     _materialise_in_tmp(tarball, offloader_root)
 
     assert not stale.exists()
+
+
+# ---------------------------------------------------------------------------
+# INFO-level triage diagnostics (temporary; will be ripped out once the
+# remote→local rebuild reports are understood).
+# ---------------------------------------------------------------------------
+
+
+_MATERIALISE_LOGGER = "esphome_device_builder.helpers.remote_artifacts_materialise"
+
+
+def test_materialise_logs_preserve_decision_with_version_fields(
+    paired_roots: tuple[Path, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The preserve-branch log carries receiver / prior_sidecar / offloader versions."""
+    receiver_root, offloader_root = paired_roots
+    tarball = _pack_in_tmp(receiver_root)
+    _materialise_in_tmp(tarball, offloader_root)
+
+    with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        _materialise_in_tmp(tarball, offloader_root)
+
+    preserve = [
+        r.getMessage() for r in caplog.records if "preserving offloader build dir" in r.getMessage()
+    ]
+    assert len(preserve) == 1, [r.getMessage() for r in caplog.records]
+    msg = preserve[0]
+    assert "receiver esphome=" in msg
+    assert "prior_sidecar_esphome=" in msg
+    assert f"offloader esphome={_offloader_esphome_version}" in msg
+
+
+def test_materialise_logs_wipe_decision_with_reason(
+    paired_roots: tuple[Path, Path],
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The wipe-branch log names the storage_should_clean reason that fired."""
+    receiver_root, offloader_root = paired_roots
+    first_tarball = _pack_in_tmp(receiver_root, loaded_integrations=["esp32", "dht"])
+    _materialise_in_tmp(first_tarball, offloader_root)
+
+    receiver_root_2 = tmp_path / "receiver2"
+    receiver_root_2.mkdir()
+    shrunk_tarball = _pack_in_tmp(receiver_root_2, loaded_integrations=["esp32"])
+
+    with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        _materialise_in_tmp(shrunk_tarball, offloader_root)
+
+    wipe = [
+        r.getMessage() for r in caplog.records if "wiping offloader build dir" in r.getMessage()
+    ]
+    assert len(wipe) == 1, [r.getMessage() for r in caplog.records]
+    assert "loaded_integrations removed:" in wipe[0]
+    assert "'dht'" in wipe[0]
+
+
+def test_materialise_logs_platformio_ini_unchanged(
+    paired_roots: tuple[Path, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The platformio.ini-unchanged path logs ``mtime preserved``."""
+    receiver_root, offloader_root = paired_roots
+    tarball = _pack_in_tmp(receiver_root)
+    _materialise_in_tmp(tarball, offloader_root)
+
+    with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        _materialise_in_tmp(tarball, offloader_root)
+
+    pio_msgs = [r.getMessage() for r in caplog.records if "platformio.ini" in r.getMessage()]
+    assert len(pio_msgs) == 1, [r.getMessage() for r in caplog.records]
+    assert "unchanged" in pio_msgs[0]
+    assert "mtime preserved" in pio_msgs[0]
+
+
+def test_materialise_logs_post_extract_object_count(
+    paired_roots: tuple[Path, Path],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The post-extract summary line carries the surviving ``.o`` count."""
+    receiver_root, offloader_root = paired_roots
+    tarball = _pack_in_tmp(receiver_root)
+    first = _materialise_in_tmp(tarball, offloader_root)
+    pioenvs = first / ".pioenvs" / "kitchen" / "src"
+    pioenvs.mkdir(parents=True, exist_ok=True)
+    (pioenvs / "main.o").write_bytes(b"OBJ")
+    (pioenvs / "extra.o").write_bytes(b"OBJ2")
+
+    with caplog.at_level(logging.INFO, logger=_MATERIALISE_LOGGER):
+        _materialise_in_tmp(tarball, offloader_root)
+
+    summary = [r.getMessage() for r in caplog.records if ".o files remain in" in r.getMessage()]
+    assert len(summary) == 1, [r.getMessage() for r in caplog.records]
+    assert "2 .o files remain in" in summary[0]
 
 
 # ---------------------------------------------------------------------------
