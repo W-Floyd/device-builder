@@ -141,18 +141,37 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
                 receiver_build_path=receiver_build_path,
                 offloader_build_path=build_path,
             )
-            # rmtree is best-effort: failures log + fall through, and
-            # the extract below overwrites every member named in the
-            # tarball, but stale files the tarball doesn't mention can
-            # survive a failed wipe.
-            if storage_should_clean(prior_storage, new_storage):
+            pioenvs_dir = build_path / ".pioenvs" / device_name
+            object_count_before = _count_pioenvs_objects(pioenvs_dir)
+            clean_reason = _storage_clean_reason(prior_storage, new_storage)
+            if clean_reason is not None:
+                _LOGGER.info(
+                    "remote-build materialise(%s): wiping offloader build dir "
+                    "(was %d .o files) -- %s",
+                    configuration,
+                    object_count_before,
+                    clean_reason,
+                )
+                # rmtree is best-effort: failures log + fall through, and
+                # the extract below overwrites every member named in the
+                # tarball, but stale files the tarball doesn't mention can
+                # survive a failed wipe.
                 try:
                     rmtree(build_path)
                 except OSError as exc:
                     _LOGGER.debug("materialise: pre-extract rmtree(%s) failed: %s", build_path, exc)
+            else:
+                _LOGGER.info(
+                    "remote-build materialise(%s): preserving offloader build dir "
+                    "(%d .o files; receiver esphome=%s, offloader esphome=%s)",
+                    configuration,
+                    object_count_before,
+                    new_storage.esphome_version,
+                    prior_storage.esphome_version if prior_storage is not None else "<none>",
+                )
             build_path.mkdir(parents=True, exist_ok=True)
             pio_path = build_path / PLATFORMIO_INI_MEMBER_NAME
-            with _preserve_platformio_ini_mtime_if_unchanged(pio_path):
+            with _preserve_platformio_ini_mtime_if_unchanged(pio_path, configuration=configuration):
                 _safe_extract_excluding(
                     tar,
                     build_path,
@@ -163,6 +182,13 @@ def _open_and_extract_build_tree(tarball: bytes, configuration: str) -> _Extract
                     },
                     initial_total_bytes=total_bytes,
                 )
+            _LOGGER.info(
+                "remote-build materialise(%s): %d .o files remain in %s/.pioenvs/%s/ after extract",
+                configuration,
+                _count_pioenvs_objects(pioenvs_dir),
+                build_path,
+                device_name,
+            )
     except tarfile.TarError as err:
         raise MaterialiseError(f"tarball is malformed: {err}") from err
     if not (build_path / PLATFORMIO_INI_MEMBER_NAME).is_file():
@@ -424,8 +450,33 @@ def _stage_offloader_validated_yaml(
     os.utime(path, (now, now))
 
 
+def _storage_clean_reason(old: StorageJSON | None, new: StorageJSON) -> str | None:
+    """Return a human-readable reason ``storage_should_clean`` would fire, or None."""
+    if not storage_should_clean(old, new):
+        return None
+    if old is None:
+        return "no prior offloader StorageJSON (first materialise)"
+    if old.src_version != new.src_version:
+        return f"src_version changed ({old.src_version} -> {new.src_version})"
+    if old.build_path != new.build_path:
+        return f"build_path changed ({old.build_path} -> {new.build_path})"
+    removed = old.loaded_integrations - new.loaded_integrations
+    if removed:
+        return f"loaded_integrations removed: {sorted(removed)}"
+    return "storage_should_clean returned True for an unknown reason"
+
+
+def _count_pioenvs_objects(pioenvs_dir: Path) -> int:
+    """Return the number of ``*.o`` files under *pioenvs_dir*; 0 if missing."""
+    if not pioenvs_dir.is_dir():
+        return 0
+    return sum(1 for _ in pioenvs_dir.rglob("*.o"))
+
+
 @contextmanager
-def _preserve_platformio_ini_mtime_if_unchanged(pio_path: Path) -> Iterator[None]:
+def _preserve_platformio_ini_mtime_if_unchanged(
+    pio_path: Path, *, configuration: str
+) -> Iterator[None]:
     """
     Hold *pio_path*'s mtime stable across an enclosed write when the bytes don't change.
 
@@ -445,11 +496,32 @@ def _preserve_platformio_ini_mtime_if_unchanged(pio_path: Path) -> Iterator[None
     yield
     if not pio_path.is_file():
         return
-    if prior_mtime_ns is not None and pio_path.read_bytes() == prior_bytes:
+    new_bytes = pio_path.read_bytes()
+    if prior_mtime_ns is not None and new_bytes == prior_bytes:
         os.utime(pio_path, ns=(prior_mtime_ns, prior_mtime_ns))
+        _LOGGER.info(
+            "remote-build materialise(%s): platformio.ini unchanged (%d bytes), "
+            "mtime preserved (SCons .o cache stays valid)",
+            configuration,
+            len(new_bytes),
+        )
     else:
         now_ns = time.time_ns()
         os.utime(pio_path, ns=(now_ns, now_ns))
+        if prior_mtime_ns is None:
+            _LOGGER.info(
+                "remote-build materialise(%s): platformio.ini first install (%d bytes)",
+                configuration,
+                len(new_bytes),
+            )
+        else:
+            _LOGGER.info(
+                "remote-build materialise(%s): platformio.ini changed "
+                "(%d -> %d bytes), mtime bumped (SCons will recompile every .o)",
+                configuration,
+                len(prior_bytes or b""),
+                len(new_bytes),
+            )
 
 
 def _force_idedata_cache_hit(*, platformio_ini: Path, cached_idedata: Path) -> None:
