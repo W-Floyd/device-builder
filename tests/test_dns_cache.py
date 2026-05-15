@@ -24,7 +24,7 @@ from esphome_device_builder.controllers.config import (
 from esphome_device_builder.helpers import device_yaml
 from esphome_device_builder.models import Device, DeviceState
 
-from .conftest import make_devices_controller_with_bus
+from .conftest import make_device, make_devices_controller_with_bus
 
 
 @pytest.fixture
@@ -216,15 +216,9 @@ async def test_async_resolve_handles_timeout(fake_resolver) -> None:
 
 
 def _device(**overrides):  # type: ignore[no-untyped-def]
-    base = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-        "address": "esp.example.com",
-        "state": DeviceState.UNKNOWN,
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` defaulting ``address`` for this file's DNS tests."""
+    overrides.setdefault("address", "esp.example.com")
+    return make_device(**overrides)
 
 
 async def test_ping_sweep_pre_resolves_via_dns_cache(fake_resolver) -> None:

@@ -25,17 +25,12 @@ from esphome_device_builder.controllers._device_state_monitor import (
 from esphome_device_builder.controllers._device_state_monitor import mdns as mdns_module
 from esphome_device_builder.models import Device, DeviceState
 
-from .conftest import make_state_monitor_with_callbacks
+from .conftest import make_device, make_state_monitor_with_callbacks
 
 
 def _device(name: str) -> Device:
-    return Device(
-        name=name,
-        friendly_name=name,
-        configuration=f"{name}.yaml",
-        address=f"{name}.local",
-        state=DeviceState.UNKNOWN,
-    )
+    """Local wrapper around ``make_device`` keeping ``friendly_name == name`` for this file."""
+    return make_device(name=name, friendly_name=name)
 
 
 # ----------------------------------------------------------------------

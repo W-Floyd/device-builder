@@ -18,19 +18,16 @@ from unittest.mock import MagicMock
 
 from esphome_device_builder.models import Device, DeviceState
 
-from .conftest import make_devices_controller_with_bus, make_state_monitor_with_callbacks
+from .conftest import (
+    make_device,
+    make_devices_controller_with_bus,
+    make_state_monitor_with_callbacks,
+)
 
 
 def _device(configuration: str, **overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": configuration,
-        "address": "kitchen.local",
-        "state": DeviceState.UNKNOWN,
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` taking ``configuration`` positionally."""
+    return make_device(configuration=configuration, **overrides)
 
 
 def _close_coro(coro: Any) -> Any:

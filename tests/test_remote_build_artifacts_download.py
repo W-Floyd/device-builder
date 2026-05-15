@@ -25,7 +25,7 @@ import json
 import tarfile
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,18 +58,11 @@ from esphome_device_builder.models import (
     JobStatus,
 )
 
+from .conftest import make_peer_link_session as _make_session
+
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
-
-
-def _make_session(*, dashboard_id: str = "alpha") -> Any:
-    """Stub ``PeerLinkSession`` capturing send_app_frame + terminate calls."""
-    session = MagicMock()
-    session.dashboard_id = dashboard_id
-    session.send_app_frame = AsyncMock(return_value=True)
-    session.terminate = AsyncMock()
-    return session
 
 
 def _make_firmware_with_job(

@@ -46,6 +46,7 @@ from esphome_device_builder.models import (
     JobType,
 )
 from tests._storage_fixtures import write_storage_json
+from tests.conftest import make_device
 
 from .conftest import (
     CaptureDevicesEventsFactory,
@@ -56,11 +57,9 @@ from .conftest import (
 
 
 def _device(name: str, *, ip: str = "", ip_addresses: list[str] | None = None) -> Device:
-    return Device(
+    """Local wrapper around ``make_device`` defaulting to ONLINE for these IP-list tests."""
+    return make_device(
         name=name,
-        friendly_name=name.title(),
-        configuration=f"{name}.yaml",
-        address=f"{name}.local",
         state=DeviceState.ONLINE,
         ip=ip,
         ip_addresses=list(ip_addresses) if ip_addresses else [],

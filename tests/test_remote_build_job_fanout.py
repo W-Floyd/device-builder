@@ -31,13 +31,12 @@ from esphome_device_builder.models import (
     JobType,
 )
 
+from .conftest import make_peer_link_session
+
 
 def _make_session(*, dashboard_id: str = "alpha") -> Any:
-    """Stub ``PeerLinkSession`` capturing send_app_frame payloads."""
-    session = MagicMock()
-    session.dashboard_id = dashboard_id
-    session.send_app_frame = AsyncMock(return_value=True)
-    return session
+    """Local wrapper around ``make_peer_link_session`` without a ``terminate`` mock."""
+    return make_peer_link_session(dashboard_id=dashboard_id, with_terminate=False)
 
 
 def _make_remote_job(

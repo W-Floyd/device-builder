@@ -24,29 +24,18 @@ from collections.abc import Callable
 from typing import Any
 
 from esphome_device_builder.controllers._device_state_monitor import DeviceStateMonitor
-from esphome_device_builder.models import Device, DeviceState, EventType
+from esphome_device_builder.models import Device, EventType
 
 from .conftest import (
+    make_device,
     make_devices_controller_with_bus,
     make_state_monitor_with_callbacks,
 )
 
 
-def _device(**overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-        "address": "kitchen.local",
-        "state": DeviceState.UNKNOWN,
-    }
-    base.update(overrides)
-    return Device(**base)
-
-
 def test_apply_mac_address_first_observation_fires_callback() -> None:
     """A MAC we haven't seen before reaches the controller in canonical form."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_mac_address("kitchen", "94c9601f8cf1") is True
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
@@ -57,7 +46,7 @@ def test_apply_mac_address_dedupes_same_value() -> None:
     Devices broadcast the same TXT every announce; the dedupe keeps
     DEVICE_UPDATED quiet on a healthy fleet.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94c9601f8cf1")
     monitor.apply_mac_address("kitchen", "94c9601f8cf1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
@@ -69,7 +58,7 @@ def test_apply_mac_address_fires_on_change() -> None:
     Realistic when an unflashed YAML gets pointed at a different
     physical board mid-test.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94c9601f8cf1")
     monitor.apply_mac_address("kitchen", "aabbccddeeff")
     assert callbacks.calls == [
@@ -87,14 +76,14 @@ def test_apply_mac_address_ignores_empty_string() -> None:
     so callers that read the dict via ``.get("mac") or ""`` don't
     blank out a previously-known MAC.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_mac_address("kitchen", "") is False
     assert callbacks.calls == []
 
 
 def test_apply_mac_address_unknown_device_is_no_op() -> None:
     """A stray announcement for an unconfigured name does nothing."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_mac_address("not-configured", "94c9601f8cf1") is False
     assert callbacks.calls == []
 
@@ -108,7 +97,7 @@ def test_apply_mac_address_no_op_when_callback_unwired() -> None:
     cleanly without dereferencing the ``None`` callback.
     """
     monitor = DeviceStateMonitor(
-        get_devices=lambda: [_device()],
+        get_devices=lambda: [make_device()],
         on_state_change=lambda *_: None,
         on_ip_change=lambda *_: None,
     )
@@ -127,14 +116,14 @@ def test_apply_mac_address_no_op_when_callback_unwired() -> None:
 
 def test_apply_mac_address_normalizes_lowercase_to_canonical() -> None:
     """Lowercase 12-hex-char wire form (today's broadcast shape) → uppercase colon-form."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94c9601f8cf1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
 
 def test_apply_mac_address_normalizes_uppercase_compact() -> None:
     """Uppercase 12-hex-char input also lands as canonical."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94C9601F8CF1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
@@ -147,28 +136,28 @@ def test_apply_mac_address_already_canonical_is_idempotent() -> None:
     on the device, and a re-broadcast feeds back through the same
     normalize path.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94:C9:60:1F:8C:F1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
 
 def test_apply_mac_address_strips_lowercase_colon_separators() -> None:
     """Lowercase colon-separated MAC normalizes to uppercase canonical."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94:c9:60:1f:8c:f1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
 
 def test_apply_mac_address_strips_dash_separators() -> None:
     """Windows-style ``94-C9-60-...`` normalizes the same way."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94-C9-60-1F-8C-F1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
 
 def test_apply_mac_address_strips_dot_separators() -> None:
     """Cisco-style ``94c9.601f.8cf1`` normalizes the same way."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_mac_address("kitchen", "94c9.601f.8cf1")
     assert callbacks.calls == [("on_mac_address_change", "kitchen", "94:C9:60:1F:8C:F1")]
 
@@ -181,7 +170,7 @@ def test_apply_mac_address_normalized_dedupes_against_stored() -> None:
     to switch case style. The dedupe is keyed off the canonical
     form so equivalence holds across surface formats.
     """
-    devices = [_device(mac_address="94:C9:60:1F:8C:F1")]
+    devices = [make_device(mac_address="94:C9:60:1F:8C:F1")]
     monitor, callbacks = make_state_monitor_with_callbacks(devices)
     # Wire form (lowercase 12-hex) — what the firmware actually broadcasts.
     assert monitor.apply_mac_address("kitchen", "94c9601f8cf1") is False
@@ -192,14 +181,14 @@ def test_apply_mac_address_normalized_dedupes_against_stored() -> None:
 
 def test_apply_mac_address_rejects_non_hex_input() -> None:
     """Garbage TXT content is dropped, not stored."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_mac_address("kitchen", "not-a-mac") is False
     assert callbacks.calls == []
 
 
 def test_apply_mac_address_rejects_wrong_length() -> None:
     """Too-short / too-long values are dropped (not silently truncated)."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     # 11 chars
     assert monitor.apply_mac_address("kitchen", "94c9601f8cf") is False
     # 13 chars
@@ -215,7 +204,7 @@ def test_apply_mac_address_rejects_correct_length_non_hex() -> None:
     a corrupt TXT can't pollute the sidecar with a value that
     looks the right shape but doesn't decode to a real MAC.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     # 12 chars, but the 'Z' isn't valid hex.
     assert monitor.apply_mac_address("kitchen", "94c9601f8cZZ") is False
     assert callbacks.calls == []
@@ -230,7 +219,7 @@ def test_apply_mac_address_refires_after_device_rebuild() -> None:
     the device's own field, so the next mDNS announcement should
     repopulate without short-circuiting on a stale cache.
     """
-    devices = [_device(mac_address="94:C9:60:1F:8C:F1")]
+    devices = [make_device(mac_address="94:C9:60:1F:8C:F1")]
     monitor, callbacks = make_state_monitor_with_callbacks(devices)
 
     # Steady state: the device already has the canonical MAC, so a
@@ -276,13 +265,8 @@ def _record_scheduled(coros: list[object]) -> Callable[[object], object]:
 
 
 def _device_kitchen(**overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` omitting ``address`` for _on_* callback tests."""
+    return make_device(address="", **overrides)
 
 
 def test_on_mac_address_change_updates_device_and_fires_event() -> None:

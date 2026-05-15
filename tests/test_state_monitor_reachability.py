@@ -54,15 +54,7 @@ from esphome_device_builder.controllers._reachability_tracker import (
 )
 from esphome_device_builder.models import Device, DeviceState
 
-
-def _make_device(name: str = "kitchen", state: DeviceState = DeviceState.UNKNOWN) -> Device:
-    return Device(
-        name=name,
-        friendly_name=name.title(),
-        configuration=f"{name}.yaml",
-        address=f"{name}.local",
-        state=state,
-    )
+from .conftest import make_device as _make_device
 
 
 def _flip_state(devices: list[Device]) -> Any:

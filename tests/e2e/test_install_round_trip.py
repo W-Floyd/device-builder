@@ -51,9 +51,7 @@ on the offloader side."
 from __future__ import annotations
 
 import asyncio
-import io
 import json
-import tarfile
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -88,33 +86,7 @@ from esphome_device_builder.models import (
 
 from .._storage_fixtures import write_storage_json
 from ..conftest import capture_events, wire_firmware_remote_peer_api_mocks
-from .conftest import PairedInstances
-
-
-def _build_real_bundle(*, configuration_filename: str = "kitchen.yaml") -> bytes:
-    """Build a minimal-but-valid esphome bundle the upstream extractor accepts.
-
-    Mirror of ``test_submit_job._build_real_bundle`` — kept local
-    so this test file is self-contained. Upstream
-    ``esphome.bundle.extract_bundle`` only needs a manifest plus
-    the referenced ``config_filename`` member.
-    """
-    manifest = {
-        "manifest_version": 1,
-        "config_filename": configuration_filename,
-    }
-    yaml_body = b"esphome:\n  name: kitchen\n"
-    members: list[tuple[str, bytes]] = [
-        ("manifest.json", json.dumps(manifest).encode("utf-8")),
-        (configuration_filename, yaml_body),
-    ]
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in members:
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+from .conftest import PairedInstances, make_real_bundle
 
 
 def _wire_receiver_firmware_recorder(instances: PairedInstances) -> list[FirmwareJob]:
@@ -386,7 +358,7 @@ async def test_remote_install_submit_then_lifecycle_then_download_on_one_session
 
     # 1. submit_job with a real bundle.
     handle = paired_instances.offloader.state.peer_link_clients[paired_instances.pin_sha256]
-    bundle_bytes = _build_real_bundle()
+    bundle_bytes = make_real_bundle()
     ack = await handle.client.submit_job(
         job_id="off-job-1",
         configuration_filename="kitchen.yaml",
@@ -508,7 +480,7 @@ async def test_remote_compile_materialises_for_local_firmware_download(
         job_id="off-compile-1",
         configuration_filename="kitchen.yaml",
         target="compile",
-        bundle_bytes=_build_real_bundle(),
+        bundle_bytes=make_real_bundle(),
     )
     assert ack["accepted"] is True
     receiver_job = created_jobs[0]
@@ -675,7 +647,7 @@ async def test_back_to_back_successful_jobs_keep_scheduler_routing_remote(
     await _wait_for_offloader_idle(paired_instances, queue_status_events)
 
     handle = paired_instances.offloader.state.peer_link_clients[paired_instances.pin_sha256]
-    bundle_bytes = _build_real_bundle()
+    bundle_bytes = make_real_bundle()
 
     for cycle in range(2):
         job_tag = f"off-job-{cycle}"
@@ -735,7 +707,7 @@ async def test_failed_first_job_still_routes_remote_on_second_install(
     await _wait_for_offloader_idle(paired_instances, queue_status_events)
 
     handle = paired_instances.offloader.state.peer_link_clients[paired_instances.pin_sha256]
-    bundle_bytes = _build_real_bundle()
+    bundle_bytes = make_real_bundle()
 
     # Cycle 1: fail.
     ack = await handle.client.submit_job(
@@ -801,7 +773,7 @@ async def test_remote_clean_round_trip_lands_clean_job_and_fans_state_back(
         job_id="off-clean-1",
         configuration_filename="kitchen.yaml",
         target="clean",
-        bundle_bytes=_build_real_bundle(),
+        bundle_bytes=make_real_bundle(),
     )
 
     # Receiver accepted the clean target on the same wire path

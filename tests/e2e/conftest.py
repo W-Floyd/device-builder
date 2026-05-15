@@ -34,6 +34,9 @@ application messages."
 from __future__ import annotations
 
 import asyncio
+import io
+import json
+import tarfile
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -371,6 +374,45 @@ def make_remote_peer_job(
         remote_job_id=remote_job_id,
         error=error,
     )
+
+
+def make_real_bundle(*, configuration_filename: str = "kitchen.yaml") -> bytes:
+    """Build a minimal-but-valid esphome bundle the upstream extractor accepts.
+
+    Upstream :func:`esphome.bundle.extract_bundle` needs:
+
+    * A ``manifest.json`` member with
+      ``{"manifest_version": 1, "config_filename": "..."}``.
+    * The referenced ``config_filename`` member, with non-empty
+      content.
+
+    Nothing else; :func:`_validate_tar_members` rejects symlinks,
+    absolute paths, path traversal, and oversized archives, all
+    of which we naturally avoid by emitting two regular file
+    members at the top level.
+
+    Deliberately not going through :class:`BundleBuilder`: that
+    class drives ``BundleBuilder.discover_files`` off real
+    ``CORE.config_dir`` + ``CORE.config_path`` state, which would
+    couple the e2e tests to a real config-dir layout when all
+    they want is the wire-format contract.
+    """
+    manifest = {
+        "manifest_version": 1,
+        "config_filename": configuration_filename,
+    }
+    yaml_body = b"esphome:\n  name: kitchen\n"
+    members: list[tuple[str, bytes]] = [
+        ("manifest.json", json.dumps(manifest).encode("utf-8")),
+        (configuration_filename, yaml_body),
+    ]
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, data in members:
+            info = tarfile.TarInfo(name=name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
 
 
 async def make_and_seed_remote_peer_job(

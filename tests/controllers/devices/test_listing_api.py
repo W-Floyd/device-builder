@@ -36,19 +36,14 @@ from esphome_device_builder.models import (
     DeviceState,
     EventType,
 )
+from tests.conftest import make_device
 
 from .conftest import CaptureDevicesEventsFactory, MakeControllerFactory
 
 
 def _device(name: str, *, state: DeviceState = DeviceState.ONLINE) -> Device:
-    """Bare-minimum ``Device`` for listing assertions."""
-    return Device(
-        name=name,
-        friendly_name=name.title(),
-        configuration=f"{name}.yaml",
-        address=f"{name}.local",
-        state=state,
-    )
+    """Local wrapper around ``make_device`` defaulting to ONLINE for these listing tests."""
+    return make_device(name=name, state=state)
 
 
 def _adoptable(name: str = "kitchen-1a2b3c") -> AdoptableDevice:

@@ -16,20 +16,14 @@ from esphome_device_builder.controllers.devices import DevicesController
 from esphome_device_builder.controllers.devices.helpers import _build_address_cache_args
 from esphome_device_builder.controllers.firmware import FirmwareController
 from esphome_device_builder.models import Device, FirmwareJob, JobType
+from tests.conftest import make_device
 from tests.controllers.devices.conftest import RecordingStateMonitor
 
 
 def _device(**overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-        "address": "kitchen.local",
-        "ip": "",
-        "loaded_integrations": ["api"],
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` defaulting ``loaded_integrations`` for this file."""
+    overrides.setdefault("loaded_integrations", ["api"])
+    return make_device(**overrides)
 
 
 _TEST_HOSTS = ("kitchen.local", "esp.example.com")

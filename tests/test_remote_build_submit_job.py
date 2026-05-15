@@ -40,16 +40,13 @@ from esphome_device_builder.models import (
     SubmitJobFrameData,
 )
 
-from .conftest import make_submit_job_frames, make_tar_bundle
-
-
-def _make_session(*, dashboard_id: str = "alpha") -> Any:
-    """Stub ``PeerLinkSession`` capturing send_app_frame + terminate calls."""
-    session = MagicMock()
-    session.dashboard_id = dashboard_id
-    session.send_app_frame = AsyncMock(return_value=True)
-    session.terminate = AsyncMock()
-    return session
+from .conftest import (
+    make_peer_link_session as _make_session,
+)
+from .conftest import (
+    make_submit_job_frames,
+    make_tar_bundle,
+)
 
 
 def _make_firmware_controller() -> Any:

@@ -25,7 +25,7 @@ import pytest
 from esphome_device_builder.controllers._device_state_monitor import DeviceStateMonitor, shared
 from esphome_device_builder.models import Device, DeviceState
 
-from .conftest import make_state_monitor_with_callbacks
+from .conftest import make_device, make_state_monitor_with_callbacks
 
 
 def _device(
@@ -35,10 +35,10 @@ def _device(
     loaded_integrations: list[str] | None = None,
     state: DeviceState = DeviceState.UNKNOWN,
 ) -> Device:
-    return Device(
+    """Local wrapper around ``make_device`` keeping ``friendly_name == name`` for this file."""
+    return make_device(
         name=name,
         friendly_name=name,
-        configuration=f"{name}.yaml",
         address=address,
         loaded_integrations=loaded_integrations or [],
         state=state,

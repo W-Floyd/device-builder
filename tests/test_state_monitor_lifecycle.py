@@ -39,30 +39,13 @@ from esphome_device_builder.controllers._reachability_tracker import Reachabilit
 from esphome_device_builder.models import Device, DeviceState
 
 from .conftest import RecordingMonitorCallbacks
+from .conftest import make_device as _device
 
 # The service-type strings the production code uses; pinned here so
 # tests calling the captured dispatch use the exact same constants
 # the code under test does.
 ESPHOMELIB_SERVICE_TYPE = "_esphomelib._tcp.local."
 HTTP_SERVICE_TYPE = "_http._tcp.local."
-
-
-def _device(
-    *,
-    name: str = "kitchen",
-    address: str = "kitchen.local",
-    state: DeviceState = DeviceState.UNKNOWN,
-    **overrides: Any,
-) -> Device:
-    """Build a Device with sensible defaults — only the fields the monitor reads."""
-    return Device(
-        name=name,
-        friendly_name=name.title(),
-        configuration=f"{name}.yaml",
-        address=address,
-        state=state,
-        **overrides,
-    )
 
 
 def _make_monitor(

@@ -17,30 +17,20 @@ Three states matter for the apply path:
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
 
-from esphome_device_builder.models import Device, DeviceState, EventType
+from esphome_device_builder.models import EventType
 
-from .conftest import make_devices_controller_with_bus, make_state_monitor_with_callbacks
-
-
-def _device(**overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-        "address": "kitchen.local",
-        "state": DeviceState.UNKNOWN,
-    }
-    base.update(overrides)
-    return Device(**base)
+from .conftest import (
+    make_device,
+    make_devices_controller_with_bus,
+    make_state_monitor_with_callbacks,
+)
 
 
 def test_apply_api_encryption_first_observation_fires_callback() -> None:
     """A first encryption value reaches the controller."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_api_encryption("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256") is True
     assert callbacks.calls == [
         ("on_api_encryption_change", "kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
@@ -54,14 +44,14 @@ def test_apply_api_encryption_empty_string_is_a_real_observation() -> None:
     callback firing at least once to know we have ground truth from
     mDNS at all.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_api_encryption("kitchen", "") is True
     assert callbacks.calls == [("on_api_encryption_change", "kitchen", "")]
 
 
 def test_apply_api_encryption_dedupes_same_value() -> None:
     """Repeated identical observations don't churn the controller."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_api_encryption("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
     monitor.apply_api_encryption("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
     assert callbacks.calls == [
@@ -71,7 +61,7 @@ def test_apply_api_encryption_dedupes_same_value() -> None:
 
 def test_apply_api_encryption_fires_on_change() -> None:
     """Encrypted → plaintext (or vice versa) re-fires the callback."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_api_encryption("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
     monitor.apply_api_encryption("kitchen", "")
     assert callbacks.calls == [
@@ -87,14 +77,14 @@ def test_apply_api_encryption_unknown_device_is_ignored() -> None:
     trigger a DEVICE_UPDATED on a configured device that happens to
     share a similar name slot.
     """
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     assert monitor.apply_api_encryption("not-a-device", "anything") is False
     assert callbacks.calls == []
 
 
 def test_apply_api_encryption_dedupes_repeated_empty() -> None:
     """The empty-string state is dedup'd just like a non-empty one."""
-    monitor, callbacks = make_state_monitor_with_callbacks([_device()])
+    monitor, callbacks = make_state_monitor_with_callbacks([make_device()])
     monitor.apply_api_encryption("kitchen", "")
     monitor.apply_api_encryption("kitchen", "")
     assert callbacks.calls == [("on_api_encryption_change", "kitchen", "")]
@@ -108,7 +98,7 @@ def test_apply_api_encryption_dedupes_repeated_empty() -> None:
 @pytest.mark.asyncio
 async def test_on_api_encryption_change_updates_device_and_fires_event() -> None:
     """Callback writes the value onto the in-memory device + fires DEVICE_UPDATED."""
-    device = _device(api_encryption_active=None)
+    device = make_device(api_encryption_active=None)
     controller, captured = make_devices_controller_with_bus([device])
 
     controller._on_api_encryption_change("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
@@ -127,7 +117,7 @@ async def test_on_api_encryption_change_records_empty_string() -> None:
     from ``active`` to ``mismatch``/``pending`` when paired with a
     plaintext device).
     """
-    device = _device(api_encryption_active=None)
+    device = make_device(api_encryption_active=None)
     controller, captured = make_devices_controller_with_bus([device])
 
     controller._on_api_encryption_change("kitchen", "")
@@ -151,7 +141,7 @@ async def test_on_api_encryption_change_skips_when_same() -> None:
     next test pins the promote-on-mismatch path that requires
     falling through this check.
     """
-    device = _device(
+    device = make_device(
         api_encrypted=True,
         api_encryption_active="Noise_NNpsk0_25519_ChaChaPoly_SHA256",
     )
@@ -175,7 +165,7 @@ async def test_on_api_encryption_change_promotes_api_encrypted_when_yaml_missed_
     (HA integration, table-row menu, "Show API key" gate) see
     the truth.
     """
-    device = _device(api_encrypted=False, api_encryption_active=None)
+    device = make_device(api_encrypted=False, api_encryption_active=None)
     controller, captured = make_devices_controller_with_bus([device])
 
     controller._on_api_encryption_change("kitchen", "Noise_NNpsk0_25519_ChaChaPoly_SHA256")
@@ -200,7 +190,7 @@ async def test_on_api_encryption_change_promotion_fires_even_when_active_unchang
     "skip when same" short-circuit can't apply when the YAML
     side disagrees with the wire side.
     """
-    device = _device(
+    device = make_device(
         api_encrypted=False,
         api_encryption_active="Noise_NNpsk0_25519_ChaChaPoly_SHA256",
     )
@@ -224,7 +214,7 @@ async def test_on_api_encryption_change_empty_does_not_clear_api_encrypted() -> 
     state machine already encodes that distinction; the
     backend must not flatten it by clearing the flag.
     """
-    device = _device(
+    device = make_device(
         api_encrypted=True,
         api_encryption_active="Noise_NNpsk0_25519_ChaChaPoly_SHA256",
     )

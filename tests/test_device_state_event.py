@@ -10,9 +10,9 @@ other source) flipped a device online — exactly the bug from the
 
 from __future__ import annotations
 
-from esphome_device_builder.models import Device, DeviceState, EventType
+from esphome_device_builder.models import DeviceState, EventType
 
-from .conftest import make_devices_controller_with_bus
+from .conftest import make_device, make_devices_controller_with_bus
 
 
 def test_state_change_event_uses_flat_configuration_state_payload() -> None:
@@ -22,7 +22,7 @@ def test_state_change_event_uses_flat_configuration_state_payload() -> None:
     expects ``{configuration, state}``, not ``{device: …}``. A regression
     that swaps them back makes every state transition no-op the UI.
     """
-    device = Device(name="kitchen", friendly_name="Kitchen", configuration="kitchen.yaml")
+    device = make_device(address="")
     ctrl, captured = make_devices_controller_with_bus([device])
 
     ctrl._on_state_change("kitchen", DeviceState.ONLINE, "ping")
@@ -41,7 +41,7 @@ def test_state_change_state_value_is_serialised_string() -> None:
     encoding (or fail). Pin to ``.value`` so the wire format stays a
     plain string.
     """
-    device = Device(name="kitchen", friendly_name="Kitchen", configuration="kitchen.yaml")
+    device = make_device(address="")
     ctrl, captured = make_devices_controller_with_bus([device])
 
     ctrl._on_state_change("kitchen", DeviceState.OFFLINE, "ping")

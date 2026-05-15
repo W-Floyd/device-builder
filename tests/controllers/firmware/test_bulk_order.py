@@ -6,6 +6,7 @@ import pytest
 
 from esphome_device_builder.controllers.firmware.bulk import _esphome_version_sort_key
 from esphome_device_builder.models import Device, JobType
+from tests.conftest import make_device
 from tests.controllers.firmware.conftest import FirmwareControllerFactory
 
 
@@ -25,11 +26,13 @@ def _device(
     has_pending_changes: bool = False,
     update_available: bool = False,
 ) -> Device:
+    """Local wrapper around ``make_device`` deriving ``name`` from *configuration*."""
     name = configuration.removesuffix(".yaml")
-    return Device(
+    return make_device(
         name=name,
         friendly_name=name,
         configuration=configuration,
+        address="",
         current_version=current_version,
         deployed_version=deployed_version,
         has_pending_changes=has_pending_changes,

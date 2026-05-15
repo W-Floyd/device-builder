@@ -50,9 +50,6 @@ covered separately by tests on :func:`build_yaml_bundle`.
 
 from __future__ import annotations
 
-import io
-import json
-import tarfile
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -68,49 +65,7 @@ from esphome_device_builder.models import (
 )
 
 from ..conftest import capture_events
-from .conftest import PairedInstances
-
-
-def _build_real_bundle(*, configuration_filename: str = "kitchen.yaml") -> bytes:
-    """Build a minimal-but-valid esphome bundle the upstream extractor accepts.
-
-    Upstream :func:`esphome.bundle.extract_bundle` needs:
-
-    * A ``manifest.json`` member with
-      ``{"manifest_version": 1, "config_filename": "..."}``.
-    * The referenced ``config_filename`` member, with non-empty
-      content.
-
-    Nothing else — :func:`_validate_tar_members` rejects symlinks
-    / absolute paths / path traversal / oversized archives, all
-    of which we naturally avoid by emitting two regular file
-    members at the top level.
-
-    Deliberately not going through :class:`BundleBuilder`: that
-    class drives ``BundleBuilder.discover_files`` off real
-    ``CORE.config_dir`` + ``CORE.config_path`` state, which
-    would couple this test to a real config-dir layout when all
-    we want is the wire-format contract. The minimal bundle
-    here exercises the same upstream extract code as a
-    BundleBuilder-emitted one for the path that the receiver-
-    side gap lives in.
-    """
-    manifest = {
-        "manifest_version": 1,
-        "config_filename": configuration_filename,
-    }
-    yaml_body = b"esphome:\n  name: kitchen\n"
-    members: list[tuple[str, bytes]] = [
-        ("manifest.json", json.dumps(manifest).encode("utf-8")),
-        (configuration_filename, yaml_body),
-    ]
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, data in members:
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    return buf.getvalue()
+from .conftest import PairedInstances, make_real_bundle
 
 
 def _wire_receiver_firmware_recorder(instances: PairedInstances) -> list[FirmwareJob]:
@@ -196,7 +151,7 @@ async def test_submit_job_round_trip_extracts_real_bundle_and_queues_job(
     await paired_instances.wait_until_session_opened()
     created_jobs = _wire_receiver_firmware_recorder(paired_instances)
 
-    bundle_bytes = _build_real_bundle()
+    bundle_bytes = make_real_bundle()
     handle = paired_instances.offloader.state.peer_link_clients[paired_instances.pin_sha256]
     ack = await handle.client.submit_job(
         job_id="off-job-1",
@@ -249,7 +204,7 @@ async def test_submit_job_round_trip_with_relative_receiver_config_dir(
     await instances.wait_until_session_opened()
     created_jobs = _wire_receiver_firmware_recorder(instances)
 
-    bundle_bytes = _build_real_bundle()
+    bundle_bytes = make_real_bundle()
     handle = instances.offloader.state.peer_link_clients[instances.pin_sha256]
     ack = await handle.client.submit_job(
         job_id="off-job-678",
@@ -320,7 +275,7 @@ async def test_submit_job_round_trip_then_fanout_to_offloader_bus(
         job_id="off-job-1",
         configuration_filename="kitchen.yaml",
         target="compile",
-        bundle_bytes=_build_real_bundle(),
+        bundle_bytes=make_real_bundle(),
     )
     assert ack["accepted"] is True
     assert len(created_jobs) == 1
@@ -386,7 +341,7 @@ async def test_submit_job_round_trip_carries_display_strings_to_receiver_job(
         job_id="off-job-display",
         configuration_filename="kitchen.yaml",
         target="compile",
-        bundle_bytes=_build_real_bundle(),
+        bundle_bytes=make_real_bundle(),
         device_name="kitchen",
         device_friendly_name="AC Float Monitor 32",
     )

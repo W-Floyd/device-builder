@@ -17,23 +17,19 @@ from unittest.mock import MagicMock
 import pytest
 
 from esphome_device_builder.controllers._device_state_monitor import DeviceStateMonitor
-from esphome_device_builder.models import Device, DeviceState, EventType
+from esphome_device_builder.models import Device, EventType
 
-from .conftest import make_devices_controller_with_bus, make_state_monitor_with_callbacks
+from .conftest import (
+    make_device,
+    make_devices_controller_with_bus,
+    make_state_monitor_with_callbacks,
+)
 
 
 def _device(**overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": "kitchen",
-        "friendly_name": "Kitchen",
-        "configuration": "kitchen.yaml",
-        "address": "kitchen.local",
-        "current_version": "2026.5.0",
-        "deployed_version": "",
-        "state": DeviceState.UNKNOWN,
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` defaulting ``current_version`` for this file."""
+    overrides.setdefault("current_version", "2026.5.0")
+    return make_device(**overrides)
 
 
 # ----------------------------------------------------------------------

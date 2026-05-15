@@ -39,28 +39,19 @@ from esphome_device_builder.controllers.devices import DevicesController
 from esphome_device_builder.helpers.event_bus import Event
 from esphome_device_builder.models import (
     Device,
-    DeviceState,
     EventType,
     FirmwareJob,
     JobStatus,
     JobType,
 )
 from tests._recording_scanner import RecordingScanner
+from tests.conftest import make_device
 
 
 def _device(name: str = "kitchen", **overrides: Any) -> Device:
-    base: dict[str, Any] = {
-        "name": name,
-        "friendly_name": name.title(),
-        "configuration": f"{name}.yaml",
-        "address": f"{name}.local",
-        "current_version": "2026.5.0",
-        "deployed_version": "",
-        "state": DeviceState.UNKNOWN,
-        "has_pending_changes": True,
-    }
-    base.update(overrides)
-    return Device(**base)
+    """Local wrapper around ``make_device`` defaulting ``current_version`` for this file."""
+    overrides.setdefault("current_version", "2026.5.0")
+    return make_device(name=name, **overrides)
 
 
 # ----------------------------------------------------------------------

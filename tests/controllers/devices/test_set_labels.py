@@ -36,6 +36,7 @@ from esphome_device_builder.helpers.api import CommandError
 from esphome_device_builder.helpers.device_yaml import configuration_stem
 from esphome_device_builder.models import Device, ErrorCode, Label
 from tests._recording_scanner import RecordingScanner
+from tests.conftest import make_device
 
 from .conftest import MakeControllerFactory
 
@@ -83,17 +84,13 @@ class _ReloadingScanner(RecordingScanner):
 
 
 def _make_device(filename: str = "kitchen.yaml", labels: list[str] | None = None) -> Device:
-    """Minimal Device fixture for these tests.
-
-    The set_labels handler doesn't read most fields off the device —
-    just ``configuration`` for the find-by-config lookup post-reload
-    and ``labels`` for the assertion. The rest carry safe defaults.
-    """
+    """Local wrapper taking ``configuration`` as ``filename`` for this file."""
     name = configuration_stem(filename)
-    return Device(
+    return make_device(
         name=name,
         friendly_name=name,
         configuration=filename,
+        address="",
         labels=list(labels or []),
     )
 

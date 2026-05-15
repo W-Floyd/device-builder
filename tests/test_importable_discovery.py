@@ -12,19 +12,14 @@ from __future__ import annotations
 from esphome.zeroconf import DashboardImportDiscovery, DiscoveredImport
 from zeroconf.asyncio import AsyncServiceInfo
 
-from esphome_device_builder.models import AdoptableDevice, Device, DeviceState
+from esphome_device_builder.models import AdoptableDevice, Device
 
-from .conftest import make_state_monitor_with_callbacks
+from .conftest import make_device, make_state_monitor_with_callbacks
 
 
 def _device(name: str) -> Device:
-    return Device(
-        name=name,
-        friendly_name=name,
-        configuration=f"{name}.yaml",
-        address=f"{name}.local",
-        state=DeviceState.UNKNOWN,
-    )
+    """Local wrapper around ``make_device`` keeping ``friendly_name == name`` for this file."""
+    return make_device(name=name, friendly_name=name)
 
 
 def _discovered(device_name: str = "kitchen-1a2b3c") -> DiscoveredImport:
