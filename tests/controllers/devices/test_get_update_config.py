@@ -26,9 +26,7 @@ Coverage targets:
 
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import pytest
 
@@ -186,19 +184,22 @@ async def test_update_config_writes_utf8_unicode_intact(
 async def test_update_config_triggers_scan(
     tmp_path: Path, make_controller: MakeControllerFactory
 ) -> None:
-    """Each successful write awakens the scanner so the device list refreshes.
+    """Each successful write queues a targeted reload on the scanner.
 
-    Without the post-write scan, a freshly-added YAML wouldn't
-    show up in the device list until the next background scan tick
-    (up to 60s on the file-poll cadence). The dashboard's
-    "save and immediately see the device" UX depends on this.
+    Save acks on the disk write alone; the reload runs in the
+    background via :meth:`DeviceScanner.request` and fires
+    DEVICE_UPDATED through the on-change pipeline when the worker
+    drains the pending set. Pin the request call so a refactor
+    that dropped it would surface — the editor's "save and
+    immediately see the device" UX depends on the worker getting
+    poked.
     """
     controller = make_controller(tmp_path)
     _stub_regenerate(controller)
 
     await controller.update_config(configuration="new.yaml", content="esphome:\n  name: new\n")
 
-    assert controller._scanner.calls == [("scan",)]
+    assert controller._scanner.calls == [("request", "new.yaml")]
 
 
 @pytest.mark.asyncio
@@ -227,42 +228,40 @@ async def test_update_config_schedules_storage_regenerate(
 
 
 @pytest.mark.asyncio
-async def test_update_config_writes_before_scanner_runs(
-    tmp_path: Path, make_controller: MakeControllerFactory
+async def test_update_config_writes_before_requesting_reload(
+    tmp_path: Path,
+    make_controller: MakeControllerFactory,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The disk write completes before ``scanner.scan()`` fires.
+    """``request()`` fires only after the atomic disk write returns.
 
-    Scanner reads the YAML it scans; if scan ran first, it would
-    see the stale on-disk version and dispatch DEVICE_UPDATED with
-    the old metadata. Pin the ordering by reading the file
-    inside the scan callback — once scan() runs, the new content
-    must already be on disk.
-
-    Read goes through ``asyncio.to_thread`` so blockbuster's
-    event-loop guard doesn't fault on the synchronous ``read_text``
-    on CI.
-
-    Regenerate-after-scan is implicit: ``update_config`` awaits
-    ``scan()`` before calling ``_schedule_storage_regenerate``,
-    so any ordering of regen-vs-write follows from this scan
-    check by virtue of the linear async control flow.
+    Reordering the two would make the scanner's worker pick up
+    the stale on-disk bytes and dispatch DEVICE_UPDATED with the
+    old metadata. Trace both calls and pin the order so a refactor
+    that swapped them would surface.
     """
     controller = make_controller(tmp_path)
     _stub_regenerate(controller)
     yaml_path = tmp_path / "kitchen.yaml"
     yaml_path.write_text("esphome:\n  name: stale\n", encoding="utf-8")
-
     new_content = "esphome:\n  name: fresh\n"
-    seen_during_scan: list[str] = []
+    order: list[str] = []
+    real_write = controller._write_yaml_atomic_async
 
-    async def _record_scan() -> None:
-        seen_during_scan.append(await asyncio.to_thread(yaml_path.read_text, "utf-8"))
+    async def _trace_write(path: Path, content: str) -> None:
+        await real_write(path, content)
+        order.append("write")
 
-    controller._scanner.scan = AsyncMock(side_effect=_record_scan)
+    def _trace_request(filename: str) -> None:
+        order.append(f"request:{filename}")
+
+    monkeypatch.setattr(controller, "_write_yaml_atomic_async", _trace_write)
+    monkeypatch.setattr(controller._scanner, "request", _trace_request)
 
     await controller.update_config(configuration="kitchen.yaml", content=new_content)
 
-    assert seen_during_scan == [new_content]
+    assert order == ["write", "request:kitchen.yaml"]
+    assert yaml_path.read_text(encoding="utf-8") == new_content
 
 
 @pytest.mark.asyncio

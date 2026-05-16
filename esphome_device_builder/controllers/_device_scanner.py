@@ -21,6 +21,7 @@ from esphome import util
 
 from ..helpers.device_yaml import load_device_from_storage
 from ..models import Device
+from ._wake_worker import WakeWorker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -233,12 +234,15 @@ class _DeviceIndex:
             del self._devices_by_name[device.name]
 
 
-class DeviceScanner:
+class DeviceScanner(WakeWorker[str]):
     """
     Disk-backed device cache.
 
     ``scan()`` is safe to call concurrently — overlapping calls coalesce
     via an internal lock. Use ``devices`` to read the current snapshot.
+    The :class:`WakeWorker` base drives a background reload worker:
+    :meth:`request` queues a filename, :meth:`start` / :meth:`stop`
+    manage the task, :meth:`wait_idle` parks until the drain finishes.
     """
 
     def __init__(
@@ -247,6 +251,7 @@ class DeviceScanner:
         get_metadata: MetadataResolver,
         on_change: ScanCallback,
     ) -> None:
+        super().__init__()
         self._config_dir = config_dir
         self._get_metadata = get_metadata
         self._on_change = on_change
@@ -343,6 +348,25 @@ class DeviceScanner:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _drain(self) -> None:
+        """Reload every filename currently queued."""
+        pending, self.pending = self.pending, set()
+        for filename in pending:
+            try:
+                reloaded = await self.reload(filename)
+            except Exception:
+                _LOGGER.exception("Background reload of %s failed", filename)
+                continue
+            if not reloaded:
+                # Tracked at request time but gone by drain time
+                # (concurrent delete / atomic-save mid-flight).
+                # Debug-level: the drain doesn't fail, but the
+                # vanished save is otherwise invisible.
+                _LOGGER.debug(
+                    "Background reload skipped: %s is no longer tracked",
+                    filename,
+                )
 
     async def _do_scan(self) -> None:
         loop = asyncio.get_running_loop()

@@ -22,7 +22,7 @@ Design constraints driving the class shape:
 
 - **Errors must not kill the worker.** A bad walk on one
   configuration logs and continues with the next; the worker
-  sleeps on ``self._wake`` until the next request lands.
+  sleeps on the wake event until the next request lands.
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from ..helpers.build_size import (
     find_stale_build_dirs,
     refresh_build_size_if_stale,
 )
+from ._wake_worker import WakeWorker
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -52,16 +53,20 @@ _LOGGER = logging.getLogger(__name__)
 RefreshedCallback = Callable[[str], Awaitable[Any]]
 
 
-class BuildSizeRefresher:
+class BuildSizeRefresher(WakeWorker[str]):
     """
     One persistent worker that drains build-size refresh requests serially.
 
-    The owner pushes work via :meth:`request` (sync, side-effect-only)
-    or :meth:`enqueue_stale_fleet` (async, runs the phase-A sweep
-    and pushes any divergent configurations). The single worker
-    task wakes whenever the pending set is non-empty, walks one
-    device at a time, and notifies the owner via the
-    ``on_refreshed`` callback after each successful change.
+    Drains ``set.pop()``-style so mid-walk requests for an
+    already-running configuration land in the same drain cycle.
+    On startup runs :meth:`enqueue_stale_fleet` to pick up
+    CLI-compile drift across the whole catalog.
+
+    Mid-walk ``stop()`` is fine for cancellation but the
+    underlying executor thread keeps running until the walk
+    finishes; ``DeviceBuilder.stop()`` calls
+    ``loop.shutdown_default_executor()`` so the residual thread
+    drains cleanly at process shutdown.
     """
 
     def __init__(
@@ -71,70 +76,11 @@ class BuildSizeRefresher:
         persist_size: Callable[[str, BuildSizeRefreshResult], None],
         on_refreshed: RefreshedCallback,
     ) -> None:
+        super().__init__()
         self._get_filenames = get_filenames
         self._get_metadata_snapshot = get_metadata_snapshot
         self._persist_size = persist_size
         self._on_refreshed = on_refreshed
-        self._pending: set[str] = set()
-        self._wake = asyncio.Event()
-        self._worker_task: asyncio.Task[None] | None = None
-
-    def request(self, configuration: str) -> None:
-        """
-        Queue a refresh and wake the worker.
-
-        Cheap, sync, side-effect-only — safe to call from any
-        event-loop callback. Repeated requests for the same
-        configuration coalesce because the queue is a ``set``,
-        and a refresh that's already queued doesn't add a second
-        slot. The worker picks the request up on its next
-        iteration; mid-walk requests for an already-running
-        configuration land in the same set and get a fresh walk
-        right after the current one finishes.
-        """
-        self._pending.add(configuration)
-        self._wake.set()
-
-    def start(self) -> None:
-        """Spawn the worker task. Idempotent — a second call is a no-op."""
-        if self._worker_task is not None and not self._worker_task.done():
-            return
-        self._worker_task = asyncio.create_task(self._worker())
-
-    async def stop(self) -> None:
-        """Cancel the worker and wait for it to exit cleanly.
-
-        ``CancelledError`` is the expected exit and gets
-        suppressed silently. Anything else is unexpected — a
-        per-iteration ``except`` in the worker missed something —
-        and gets logged so the failure isn't invisible during a
-        clean controller shutdown.
-
-        A subtlety worth knowing: if the worker is mid-walk
-        inside ``loop.run_in_executor(None, ...)`` when ``stop()``
-        fires, cancelling the task only abandons the *await* — the
-        underlying executor thread keeps running until the walk
-        finishes (Python doesn't expose a way to interrupt a
-        running thread). For build-size refresh the work is just
-        a directory walk + one sidecar write per device, so the
-        thread completes on its own within a few seconds at
-        worst; ``DeviceBuilder.stop()`` then calls
-        ``loop.shutdown_default_executor()`` which waits on the
-        residual thread, so process shutdown still drains
-        cleanly. We accept this over a bespoke cancellation
-        channel into the walk, because process shutdown is the
-        only ``stop()`` caller and the trailing write is harmless.
-        """
-        if self._worker_task is None:
-            return
-        self._worker_task.cancel()
-        try:
-            await self._worker_task
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            _LOGGER.exception("Build-size worker failed during shutdown")
-        self._worker_task = None
 
     async def enqueue_stale_fleet(self) -> None:
         """
@@ -158,69 +104,48 @@ class BuildSizeRefresher:
         for configuration in stale:
             self.request(configuration)
 
-    async def _worker(self) -> None:
-        """
-        Long-lived loop: drain the pending set when woken.
-
-        On first iteration, runs the phase-A fleet sweep so the
-        backend picks up CLI-compile drift across the whole
-        catalog without the controller having to fire a separate
-        startup task. Subsequent iterations sleep on ``self._wake``
-        until there's work, clear the event, then walk the queue
-        one configuration at a time until it's empty, then sleep
-        again. ``set.pop()`` is arbitrary-order — fine here, every
-        queued device gets walked. New requests that arrive
-        mid-iteration land in the same set and get processed
-        before the next sleep.
-
-        Per-iteration ``try`` swallows configuration-specific
-        errors so one bad walk can't kill the worker (typical
-        cause: a permission error or a vanishing path during the
-        walk). Cancellation propagates through the ``await`` and
-        breaks the outer ``while True:`` cleanly.
-        """
-        loop = asyncio.get_running_loop()
+    async def _on_start(self) -> None:
         try:
             await self.enqueue_stale_fleet()
         except Exception:
             _LOGGER.exception("Initial build-size fleet sweep failed")
-        while True:
-            await self._wake.wait()
-            self._wake.clear()
-            # One snapshot per drain cycle, not per item, so the
-            # per-device cached-signal lookup is O(1) on a hash
-            # rather than O(N) on a fresh fleet-wide copy.
-            metadata = self._get_metadata_snapshot()
-            while self._pending:
-                configuration = self._pending.pop()
-                entry = metadata.get(configuration, {})
-                cached = BuildDirSignal(
-                    dir_mtime=coerce_sidecar_int(entry.get("build_size_dir_mtime")),
-                    info_mtime=coerce_sidecar_int(entry.get("build_size_info_mtime")),
+
+    async def _drain(self) -> None:
+        loop = asyncio.get_running_loop()
+        # One snapshot per drain cycle, not per item, so the
+        # per-device cached-signal lookup is O(1) on a hash
+        # rather than O(N) on a fresh fleet-wide copy.
+        metadata = self._get_metadata_snapshot()
+        while self.pending:
+            configuration = self.pending.pop()
+            entry = metadata.get(configuration, {})
+            cached = BuildDirSignal(
+                dir_mtime=coerce_sidecar_int(entry.get("build_size_dir_mtime")),
+                info_mtime=coerce_sidecar_int(entry.get("build_size_info_mtime")),
+            )
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    refresh_build_size_if_stale,
+                    configuration,
+                    cached,
                 )
-                try:
-                    result = await loop.run_in_executor(
-                        None,
-                        refresh_build_size_if_stale,
-                        configuration,
-                        cached,
-                    )
-                except Exception:
-                    _LOGGER.exception("Build-size refresh failed for %s", configuration)
-                    continue
-                if result is None:
-                    continue  # cache hit / no artifacts — nothing to publish
-                self._persist_size(configuration, result)
-                # Reflect the persisted signal into the local
-                # snapshot so a re-queue of the same configuration
-                # within this drain cycle sees the fresh cache.
-                metadata[configuration] = {
-                    **metadata.get(configuration, {}),
-                    "build_size_bytes": result.size_bytes,
-                    "build_size_dir_mtime": result.signal.dir_mtime,
-                    "build_size_info_mtime": result.signal.info_mtime,
-                }
-                try:
-                    await self._on_refreshed(configuration)
-                except Exception:
-                    _LOGGER.exception("on_refreshed callback failed for %s", configuration)
+            except Exception:
+                _LOGGER.exception("Build-size refresh failed for %s", configuration)
+                continue
+            if result is None:
+                continue  # cache hit / no artifacts — nothing to publish
+            self._persist_size(configuration, result)
+            # Reflect the persisted signal into the local snapshot so
+            # a re-queue of the same configuration within this drain
+            # cycle sees the fresh cache.
+            metadata[configuration] = {
+                **metadata.get(configuration, {}),
+                "build_size_bytes": result.size_bytes,
+                "build_size_dir_mtime": result.signal.dir_mtime,
+                "build_size_info_mtime": result.signal.info_mtime,
+            }
+            try:
+                await self._on_refreshed(configuration)
+            except Exception:
+                _LOGGER.exception("on_refreshed callback failed for %s", configuration)
