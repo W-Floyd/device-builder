@@ -6,6 +6,8 @@ hand-rolled text scanning makes regression risk meaningful.
 
 from __future__ import annotations
 
+import logging
+from copy import deepcopy
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -30,6 +32,7 @@ from esphome_device_builder.models import (
     BoardEsphomeConfig,
     BoardHardware,
     Connectivity,
+    DefaultComponent,
     Esp32Variant,
     Platform,
 )
@@ -885,6 +888,109 @@ def test_generate_yaml_explicit_connectivity_overrides_inference() -> None:
     )
     yaml = generate_device_yaml("kitchen", "Kitchen", eth_only, ssid="", psk="")
     assert "wifi:" not in yaml
+
+
+# ---------------------------------------------------------------------------
+# generate_device_yaml — default_components emission
+# ---------------------------------------------------------------------------
+
+
+def test_generate_device_yaml_with_no_defaults_arg_unchanged() -> None:
+    """Omitting *defaults* preserves the pre-feature output shape."""
+    board = _make_esp32_board()
+    out = generate_device_yaml("kitchen", "Kitchen", board, ssid="", psk="")
+    # No extra top-level blocks past the baseline (esphome / esp32 /
+    # logger / api / ota / wifi).
+    assert "web_server" not in out
+    assert "switch:" not in out
+
+
+def test_generate_device_yaml_for_apollo_esk_1_includes_default_blocks(
+    session_component_catalog: Any,
+) -> None:
+    """The apollo-esk-1 board's ``default_components`` land in fresh YAML.
+
+    End-to-end against the real catalog + real manifest: the
+    starter kit declares ``default_components: [accessory_power,
+    web_server]`` and both must appear in the generated YAML
+    body so a freshly created device boots with the FPC accessory
+    rail latched on (so the AHT20 / battery monitor work) and
+    the built-in web dashboard available without any clicks.
+    """
+    board = session_component_catalog._db.boards.get_by_id("apollo-esk-1")
+    assert board is not None
+    defaults = session_component_catalog.resolve_default_components(board)
+    out = generate_device_yaml("starter", "Starter Kit", board, ssid="", psk="", defaults=defaults)
+    # accessory_power → switch.gpio with the locked pin / ALWAYS_ON
+    # restore_mode / setup_priority preset from featured_components.
+    assert "switch:" in out
+    assert "platform: gpio" in out
+    assert "pin: 4" in out
+    assert "restore_mode: ALWAYS_ON" in out
+    # web_server is a bare catalog id (no featured-component entry)
+    # → emits a minimal top-level block.
+    assert "web_server:" in out
+
+
+def test_resolve_default_components_falls_through_to_catalog_id(
+    session_component_catalog: Any,
+) -> None:
+    """Bare catalog ids resolve when no featured-component matches.
+
+    Pin the two-step lookup: a string that doesn't match any
+    ``featured_components.id`` on the same board falls through to
+    a catalog ``component_id`` resolution. ``web_server`` on
+    apollo-esk-1 is the live case driving this branch.
+    """
+    board = session_component_catalog._db.boards.get_by_id("apollo-esk-1")
+    assert board is not None
+    pairs = session_component_catalog.resolve_default_components(board)
+    component_ids = [c.id for c, _ in pairs]
+    assert "web_server" in component_ids
+    # accessory_power resolves through the featured path, so the
+    # underlying component is switch.gpio (not the featured id).
+    assert "switch.gpio" in component_ids
+
+
+def test_resolve_default_components_carries_inline_fields(
+    session_component_catalog: Any,
+) -> None:
+    """The object-form's ``fields:`` overrides flow into the resolved pair.
+
+    apollo-esk-1's ``default_components`` declares ``web_server``
+    with ``fields: { version: '3' }``. The resolver must carry
+    that override through to the ``(component, fields)`` tuple so
+    the emitter writes ``version: '3'`` into the YAML body
+    (catalog default is ``'2'``).
+    """
+    board = session_component_catalog._db.boards.get_by_id("apollo-esk-1")
+    assert board is not None
+    pairs = session_component_catalog.resolve_default_components(board)
+    web = next((fields for component, fields in pairs if component.id == "web_server"), None)
+    assert web is not None
+    assert web.get("version") == "3"
+
+
+def test_resolve_default_components_skips_unknown_id_with_warning(
+    session_component_catalog: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Unknown ids skip with a warning rather than raising.
+
+    The manifest validator (``script/validate_definitions.py``) is
+    the contract that keeps unknown refs from reaching runtime —
+    but a synthetic / hand-mutated ``BoardCatalogEntry`` could
+    still feed an unknown id to the resolver. Skip-with-warning
+    keeps the wizard from blowing up on what's almost always a
+    config drift between the manifest and ``components.json``.
+    """
+    board = deepcopy(session_component_catalog._db.boards.get_by_id("apollo-esk-1"))
+    assert board is not None
+    board.default_components = [DefaultComponent(id="not_a_real_component")]
+    with caplog.at_level(logging.WARNING):
+        pairs = session_component_catalog.resolve_default_components(board)
+    assert pairs == []
+    assert any("not_a_real_component" in rec.getMessage() for rec in caplog.records)
 
 
 # ---------------------------------------------------------------------------
