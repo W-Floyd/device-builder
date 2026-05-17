@@ -36,6 +36,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from esphome_device_builder.controllers import editor as editor_module
 from esphome_device_builder.controllers.editor import (
     EditorController,
     _EditorSession,
@@ -799,3 +800,141 @@ async def test_validate_yaml_terminates_session_on_runtime_error(
         await controller.validate_yaml(configuration="kitchen.yaml", content="")
 
     terminated.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# validate_yaml — content-hash cache
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validate_yaml_caches_result_for_repeated_content(tmp_path: Path) -> None:
+    """A second call with identical content returns the cached result.
+
+    The linter and the save-time re-validate hit the same buffer
+    back-to-back; the cache turns the second one into a no-op
+    instead of paying for another ``esphome vscode`` round-trip.
+    """
+    controller = _make_controller(tmp_path)
+    calls: list[str] = []
+
+    async def _record(session: Any, configuration: str, content: str) -> dict:
+        calls.append(content)
+        return {"yaml_errors": [], "validation_errors": []}
+
+    controller._validate_locked = _record  # type: ignore[method-assign]
+
+    first = await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen\n"
+    )
+    second = await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen\n"
+    )
+
+    assert first == second == {"yaml_errors": [], "validation_errors": []}
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_validate_yaml_cache_misses_on_different_content(tmp_path: Path) -> None:
+    """Distinct content bypasses the cache and re-validates."""
+    controller = _make_controller(tmp_path)
+    calls: list[str] = []
+
+    async def _record(session: Any, configuration: str, content: str) -> dict:
+        calls.append(content)
+        return {"yaml_errors": [], "validation_errors": []}
+
+    controller._validate_locked = _record  # type: ignore[method-assign]
+
+    await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen\n"
+    )
+    await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen-2\n"
+    )
+
+    assert calls == ["esphome:\n  name: kitchen\n", "esphome:\n  name: kitchen-2\n"]
+
+
+@pytest.mark.asyncio
+async def test_validate_yaml_cache_expires_after_ttl(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The cache TTL bounds staleness of ``!include`` / external-component reads."""
+    controller = _make_controller(tmp_path)
+    calls: list[str] = []
+
+    async def _record(session: Any, configuration: str, content: str) -> dict:
+        calls.append(content)
+        return {"yaml_errors": [], "validation_errors": []}
+
+    controller._validate_locked = _record  # type: ignore[method-assign]
+    fake_now = {"t": 1000.0}
+    monkeypatch.setattr(editor_module.time, "monotonic", lambda: fake_now["t"])
+
+    await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen\n"
+    )
+    fake_now["t"] += editor_module._VALIDATE_CACHE_TTL + 1
+    await controller.validate_yaml(
+        configuration="kitchen.yaml", content="esphome:\n  name: kitchen\n"
+    )
+
+    assert len(calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_validate_yaml_cache_is_per_configuration(tmp_path: Path) -> None:
+    """Same content under a different configuration doesn't share the cache."""
+    controller = _make_controller(tmp_path)
+    calls: list[tuple[str, str]] = []
+
+    async def _record(session: Any, configuration: str, content: str) -> dict:
+        calls.append((configuration, content))
+        return {"yaml_errors": [], "validation_errors": []}
+
+    controller._validate_locked = _record  # type: ignore[method-assign]
+
+    await controller.validate_yaml(configuration="kitchen.yaml", content="esphome:\n  name: same\n")
+    await controller.validate_yaml(configuration="bedroom.yaml", content="esphome:\n  name: same\n")
+
+    assert len(calls) == 2
+    assert {c[0] for c in calls} == {"kitchen.yaml", "bedroom.yaml"}
+
+
+@pytest.mark.asyncio
+async def test_validate_yaml_inner_lock_recheck_coalesces_concurrent_calls(
+    tmp_path: Path,
+) -> None:
+    """Two concurrent calls for identical content share a single subprocess pass."""
+    controller = _make_controller(tmp_path)
+    started = asyncio.Event()
+    release = asyncio.Event()
+    calls = 0
+
+    async def _slow_validate(_session: Any, _configuration: str, _content: str) -> dict:
+        nonlocal calls
+        calls += 1
+        started.set()
+        await release.wait()
+        return {"yaml_errors": [], "validation_errors": []}
+
+    controller._validate_locked = _slow_validate  # type: ignore[method-assign]
+
+    first = asyncio.create_task(
+        controller.validate_yaml(configuration="kitchen.yaml", content="esphome:\n")
+    )
+    # Wait for the first call to enter ``_validate_locked`` so the
+    # second call lands in the fast-path miss + lock-wait window.
+    await started.wait()
+    second = asyncio.create_task(
+        controller.validate_yaml(configuration="kitchen.yaml", content="esphome:\n")
+    )
+    # Hand the second task a tick to reach the lock acquire.
+    await asyncio.sleep(0)
+    release.set()
+    results = await asyncio.gather(first, second)
+
+    assert calls == 1
+    assert results[0] == results[1] == {"yaml_errors": [], "validation_errors": []}
