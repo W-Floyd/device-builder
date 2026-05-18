@@ -214,12 +214,11 @@ class AutomationTree(DataClassORJSONMixin):
 
     ``trigger_id`` is ``None`` for top-level ``script:`` /
     ``interval:`` blocks — the block kind is implied by the
-    location. ``conditions`` is the optional "only run if" gate.
+    location.
     """
 
     trigger_id: str | None = None
     trigger_params: dict[str, Any] = field(default_factory=dict)
-    conditions: list[ConditionNode] = field(default_factory=list)
     actions: list[ActionNode] = field(default_factory=list)
 
 
