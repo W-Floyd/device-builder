@@ -153,12 +153,29 @@ class AutomationsController:
         configuration: str,
         automation: dict,
         location: dict,
+        yaml: str | None = None,
         **_kwargs: Any,
     ) -> dict:
-        """Insert or replace one automation at *location*."""
+        """Insert or replace one automation at *location*.
+
+        The frontend has an in-memory draft buffer that may already
+        contain an earlier auto-applied version of this automation
+        (the user is still typing — global save hasn't run yet).
+        When that's the case the caller passes the current draft as
+        ``yaml`` so the diff is computed against that text instead
+        of the on-disk version. Without this the editor's incremental
+        auto-apply would double-insert: backend reads disk (no
+        automation yet), diff says "insert"; frontend applies diff
+        to a draft that already contains an earlier insert. Two
+        copies.
+
+        Omit ``yaml`` (or pass ``None``) to fall back to reading
+        from disk — convenient for tooling that doesn't track its
+        own buffer.
+        """
         tree = AutomationTree.from_dict(automation)
         loc = _decode_location(location)
-        text = await self._read_config(configuration)
+        text = yaml if yaml is not None else await self._read_config(configuration)
         loop = asyncio.get_running_loop()
         _new_text, diff = await loop.run_in_executor(
             None,
@@ -172,11 +189,17 @@ class AutomationsController:
         *,
         configuration: str,
         location: dict,
+        yaml: str | None = None,
         **_kwargs: Any,
     ) -> dict:
-        """Delete the automation at *location*."""
+        """Delete the automation at *location*.
+
+        Accepts the same optional ``yaml`` override as ``upsert``
+        so the delete is computed against the frontend's current
+        draft buffer when one exists.
+        """
         loc = _decode_location(location)
-        text = await self._read_config(configuration)
+        text = yaml if yaml is not None else await self._read_config(configuration)
         loop = asyncio.get_running_loop()
         _new_text, diff = await loop.run_in_executor(
             None,

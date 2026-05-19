@@ -375,6 +375,69 @@ async def test_upsert_rejects_unknown_location_kind(tmp_path: Path) -> None:
         )
 
 
+async def test_upsert_uses_yaml_override_when_provided(tmp_path: Path) -> None:
+    """Passing ``yaml=`` makes the writer splice into the override text.
+
+    The frontend relies on this so its incremental auto-apply doesn't
+    double-insert: each auto-apply rewrites the same draft buffer,
+    not a stale on-disk version. Without the override the diff would
+    be computed against the unchanged file and applying it on top of
+    the draft would stack a second copy of the automation.
+    """
+    config = tmp_path / "u.yaml"
+    config.write_text("esphome:\n  name: u\n", encoding="utf-8")
+    controller = _make_controller(tmp_path)
+    # Override yaml already carries an on_boot draft. The new tree
+    # replaces that draft's delay with a different one — the diff
+    # should target the draft's line range, not the empty disk file.
+    draft = "esphome:\n  name: u\n  on_boot:\n    then:\n      - delay: 1s\n"
+    result = await controller.upsert(
+        configuration="u.yaml",
+        automation={
+            "trigger_id": "on_boot",
+            "trigger_params": {},
+            "actions": [
+                {
+                    "action_id": "delay",
+                    "params": {"seconds": "5"},
+                    "children": {},
+                    "conditions": [],
+                },
+            ],
+        },
+        location={"kind": "device_on", "trigger": "on_boot"},
+        yaml=draft,
+    )
+    diff = result["yaml_diff"]
+    # The on_boot block in the draft spans lines 3-5; the diff should
+    # target that range, not the disk's 2-line file.
+    assert diff["fromLine"] >= 3
+    assert diff["toLine"] >= diff["fromLine"]
+    # Replacement carries the new ``seconds`` field — proves the
+    # writer ran against the override, not against the disk text.
+    assert "seconds" in diff["replacement"]
+
+
+async def test_delete_uses_yaml_override_when_provided(tmp_path: Path) -> None:
+    """``delete`` honours ``yaml=`` for the same draft-aware reason as upsert.
+
+    Disk file is empty; the override has the automation; the diff
+    should target the override's range, not the disk's range.
+    """
+    config = tmp_path / "d.yaml"
+    config.write_text("esphome:\n  name: d\n", encoding="utf-8")
+    controller = _make_controller(tmp_path)
+    draft = "esphome:\n  name: d\n  on_boot:\n    then:\n      - delay: 1s\n"
+    result = await controller.delete(
+        configuration="d.yaml",
+        location={"kind": "device_on", "trigger": "on_boot"},
+        yaml=draft,
+    )
+    diff = result["yaml_diff"]
+    assert diff["fromLine"] >= 3
+    assert diff["replacement"] == ""
+
+
 async def test_delete_device_on_returns_empty_replacement(tmp_path: Path) -> None:
     """Deleting on_boot returns a diff whose replacement is empty."""
     config = tmp_path / "d.yaml"
