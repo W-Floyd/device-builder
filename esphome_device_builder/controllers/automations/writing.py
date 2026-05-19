@@ -15,6 +15,8 @@ round-trips deterministic. Lambdas render as ruamel
 
 from __future__ import annotations
 
+import re
+
 from ...helpers.api import CommandError
 from ...helpers.yaml import (
     _splice_into_domain_block,
@@ -131,7 +133,9 @@ def _upsert_component_on(
     location: ComponentOnLocation,
 ) -> tuple[str, YamlDiff]:
     """Splice an inline ``on_*:`` handler under a configured component."""
-    trigger = catalog.trigger_by_id(f"{_component_domain(location)}.{location.trigger}")
+    trigger = catalog.trigger_by_id(
+        f"{_component_domain_from_yaml(yaml_text, location)}.{location.trigger}",
+    )
     if trigger is None:
         msg = f"Unknown trigger id {location.trigger!r} on component {location.component_id!r}"
         raise CommandError(ErrorCode.INVALID_ARGS, msg)
@@ -440,7 +444,9 @@ def _delete_component_on(
     location: ComponentOnLocation,
 ) -> tuple[str, YamlDiff]:
     """Drop an inline ``on_*:`` handler from a configured component."""
-    trigger = catalog.trigger_by_id(f"{_component_domain(location)}.{location.trigger}")
+    trigger = catalog.trigger_by_id(
+        f"{_component_domain_from_yaml(yaml_text, location)}.{location.trigger}",
+    )
     domain = trigger.applies_to[0] if trigger and trigger.applies_to else ""
     res = remove_inline_handler(
         yaml_text,
@@ -534,6 +540,11 @@ def _component_domain(location: ComponentOnLocation) -> str:
     every domain a known trigger of that key applies to and picking
     the first one. ``binary_sensor.on_press`` and ``switch.on_press``
     don't collide because their applies_to lists are disjoint.
+
+    Used as the fallback when the YAML hasn't been provided (no
+    ``yaml_text`` in scope) — see :func:`_component_domain_from_yaml`
+    for the disambiguated lookup the writer prefers when it has
+    the actual YAML.
     """
     matches = [
         t
@@ -550,6 +561,46 @@ def _component_domain(location: ComponentOnLocation) -> str:
         # tests are deterministic.
         matches.sort(key=lambda t: t.applies_to[0] if t.applies_to else "")
     return matches[0].applies_to[0] if matches[0].applies_to else ""
+
+
+def _component_domain_from_yaml(
+    yaml_text: str,
+    location: ComponentOnLocation,
+) -> str:
+    """Find the YAML domain that hosts ``location.component_id``.
+
+    Trigger keys like ``on_turn_on`` belong to multiple domains
+    (``switch``, ``fan``, ``light``, ``cover``, …). The catalog-only
+    fallback in :func:`_component_domain` picks one alphabetically,
+    which means a ``relay`` switch instance with an ``on_turn_on``
+    handler gets attributed to ``fan`` (alphabetically first), and
+    the writer then fails with "instance id='relay' not found
+    under 'fan'".
+
+    Walk the YAML and find the top-level key whose subtree contains
+    ``id: <component_id>``. That's the domain the user actually
+    configured. Falls back to the catalog guess when the id can't
+    be located in the YAML (which also means the upsert won't find
+    a splice destination — the user will see a clearer
+    "id not found" error from ``upsert_inline_handler``).
+    """
+    target_id = location.component_id
+    id_re = re.compile(
+        r"^\s+(?:-\s+)?id:\s*[\"']?(\S+?)[\"']?\s*(?:#.*)?$",
+    )
+    top_re = re.compile(r"^([a-zA-Z_][\w]*)\s*:")
+    current_domain: str | None = None
+    for line in yaml_text.splitlines():
+        if line and not line[0].isspace():
+            m = top_re.match(line)
+            current_domain = m.group(1) if m else None
+            continue
+        if current_domain is None:
+            continue
+        m = id_re.match(line)
+        if m and m.group(1) == target_id:
+            return current_domain
+    return _component_domain(location)
 
 
 def _wrap_effects_block(rendered_list: str) -> str:

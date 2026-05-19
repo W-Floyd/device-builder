@@ -356,6 +356,34 @@ def test_upsert_component_on_unknown_trigger_raises() -> None:
     assert err.value.code == ErrorCode.INVALID_ARGS
 
 
+def test_upsert_component_on_resolves_domain_from_yaml_when_trigger_key_is_ambiguous() -> None:
+    """The trigger key alone can match multiple domains; use the YAML's actual layout.
+
+    ``on_turn_on`` exists on switch, fan, light, cover, … . With
+    only ``component_id="relay"`` + ``trigger="on_turn_on"`` in the
+    location, the catalog-only fallback picks the alphabetically
+    first domain (``fan``) and the writer fails with
+    "instance id='relay' not found under 'fan'". The fix walks the
+    YAML to find which top-level block actually configures
+    ``id: relay`` and uses that domain.
+    """
+    text = "switch:\n  - platform: gpio\n    id: relay\n    pin: GPIO5\n"
+    new_text, _diff = render_upsert(
+        text,
+        tree=AutomationTree(
+            trigger_id="switch.on_turn_on",
+            actions=[
+                ActionNode(action_id="delay", params={"seconds": "1"}),
+            ],
+        ),
+        location=ComponentOnLocation(component_id="relay", trigger="on_turn_on"),
+    )
+    assert "on_turn_on:" in new_text
+    # The handler must land under the existing switch block — not
+    # a fabricated ``fan:`` block.
+    assert "fan:" not in new_text
+
+
 def test_delete_component_on_missing_instance_raises_not_found() -> None:
     """Deleting on_press on an instance id that doesn't exist raises NOT_FOUND."""
     text = "binary_sensor:\n  - platform: gpio\n    id: btn\n    pin: GPIO0\n"
