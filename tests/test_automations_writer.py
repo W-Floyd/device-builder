@@ -637,6 +637,75 @@ def test_upsert_api_action_drops_action_key_smuggled_in_trigger_params() -> None
     assert "also_ignored" not in new_text
 
 
+def test_upsert_api_action_inserts_under_empty_api_with_section_banner_below() -> None:
+    """An empty ``api:`` block followed by a column-0 banner gets canonical indent."""
+    text = "esphome:\n  name: x\napi:\n\n# BLE proxy\nesp32_ble_tracker:\n  setup_priority: -500\n"
+    new_text, _diff = render_upsert(
+        text,
+        tree=AutomationTree(trigger_id=None, actions=[]),
+        location=ApiActionLocation(action_name="test"),
+    )
+    assert "  actions:\n" in new_text
+    assert "    - action: test\n" in new_text
+    api_idx = new_text.index("api:")
+    actions_idx = new_text.index("  actions:")
+    banner_idx = new_text.index("# BLE proxy")
+    assert api_idx < actions_idx < banner_idx
+    assert "# BLE proxy\nesp32_ble_tracker:" in new_text
+    parsed = parse_device_yaml(new_text)
+    api_entries = [p for p in parsed if p.location.kind == "api_action"]
+    assert [e.location.action_name for e in api_entries] == ["test"]
+
+
+def test_upsert_api_action_appends_when_column_zero_comment_precedes_actions() -> None:
+    """A column-0 comment between ``api:`` and an indented ``actions:`` child is a no-op."""
+    text = (
+        "esphome:\n  name: x\n"
+        "api:\n"
+        "# note\n"
+        "  actions:\n"
+        "    - action: existing\n      then:\n        - delay: 1s\n"
+    )
+    new_text, _diff = render_upsert(
+        text,
+        tree=AutomationTree(trigger_id=None, actions=[]),
+        location=ApiActionLocation(action_name="new_one"),
+    )
+    assert new_text.count("actions:") == 1
+    parsed = parse_device_yaml(new_text)
+    api_entries = [p for p in parsed if p.location.kind == "api_action"]
+    assert [e.location.action_name for e in api_entries] == ["existing", "new_one"]
+
+
+def test_upsert_api_action_handles_blank_then_section_banner_after_empty_api() -> None:
+    """A blank line between the empty ``api:`` block and a column-0 banner is skipped."""
+    text = "esphome:\n  name: x\napi:\n# banner\n\nwifi:\n  ssid: x\n"
+    new_text, _diff = render_upsert(
+        text,
+        tree=AutomationTree(trigger_id=None, actions=[]),
+        location=ApiActionLocation(action_name="test"),
+    )
+    assert "  actions:\n" in new_text
+    assert "    - action: test\n" in new_text
+    parsed = parse_device_yaml(new_text)
+    api_entries = [p for p in parsed if p.location.kind == "api_action"]
+    assert [e.location.action_name for e in api_entries] == ["test"]
+
+
+def test_upsert_api_action_handles_trailing_column_zero_comment_at_eof() -> None:
+    """A column-0 comment as the last non-blank line stays inside the ``api:`` span."""
+    text = "esphome:\n  name: x\napi:\n# trailing\n"
+    new_text, _diff = render_upsert(
+        text,
+        tree=AutomationTree(trigger_id=None, actions=[]),
+        location=ApiActionLocation(action_name="test"),
+    )
+    assert "  actions:\n" in new_text
+    parsed = parse_device_yaml(new_text)
+    api_entries = [p for p in parsed if p.location.kind == "api_action"]
+    assert [e.location.action_name for e in api_entries] == ["test"]
+
+
 def test_upsert_api_action_appends_when_actions_has_trailing_blank() -> None:
     """A trailing blank line below the last item doesn't push the new item past it."""
     text = (

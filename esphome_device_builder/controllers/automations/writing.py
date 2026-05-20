@@ -781,13 +781,33 @@ def _locate_singleton_block(
         stripped = lines[idx].rstrip("\n\r")
         if not stripped:
             continue
-        if stripped[0].isalpha() and not stripped.startswith(" "):
-            end = idx
-            break
+        if not stripped.startswith(" "):
+            if stripped[0].isalpha():
+                end = idx
+                break
+            # Column-0 comment ends the block only when the next
+            # non-blank line is also column-0 (a section banner
+            # between two top-level blocks). A comment sitting
+            # between a parent key and an indented child below is
+            # a no-op — keep scanning.
+            if _next_non_blank_at_col_zero(lines, idx + 1):
+                end = idx
+                break
+            continue
         if not captured:
             indent = " " * (len(stripped) - len(stripped.lstrip(" ")))
             captured = True
     return start, end, indent
+
+
+def _next_non_blank_at_col_zero(lines: list[str], start: int) -> bool:
+    """Return True iff the next non-blank line at *start* or later sits at column 0."""
+    for idx in range(start, len(lines)):
+        stripped = lines[idx].rstrip("\n\r")
+        if not stripped:
+            continue
+        return not stripped.startswith(" ")
+    return False
 
 
 def _build_diff_for_append(old_yaml: str, new_yaml: str) -> YamlDiff:
