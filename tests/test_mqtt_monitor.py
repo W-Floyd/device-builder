@@ -15,12 +15,17 @@ import contextlib
 import json
 from pathlib import Path
 from typing import Any, ClassVar
+from unittest.mock import patch
 
 import pytest
 
+from esphome_device_builder.controllers import (
+    _device_mqtt_coordinator as coordinator_module,
+)
 from esphome_device_builder.controllers import _device_mqtt_monitor as monitor_module
 from esphome_device_builder.controllers._device_mqtt_coordinator import (
     DeviceMqttCoordinator,
+    _extract_broker_from_config,
     parse_mqtt_block,
 )
 from esphome_device_builder.controllers._device_mqtt_monitor import (
@@ -295,6 +300,252 @@ async def test_coordinator_resolves_secrets_from_secrets_yaml(
     assert coord.active_brokers == 1
     assert stub_monitor.instances[0].broker.host == "10.0.0.5"
     assert stub_monitor.instances[0].broker.password == "shh"
+
+
+async def test_coordinator_resolves_broker_pulled_in_via_packages(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+) -> None:
+    # Issue #893: mqtt block lives in a shared package, not the
+    # device file. Resolved-config fallback expands and resolves it.
+    (tmp_path / "common.yaml").write_text("mqtt:\n  broker: 192.168.1.203\n")
+    (tmp_path / "alpha.yaml").write_text(
+        "esphome:\n  name: alpha\npackages:\n  shared: !include common.yaml\n"
+    )
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+    await coord.reconcile()
+    assert coord.active_brokers == 1
+    assert stub_monitor.instances[0].broker.host == "192.168.1.203"
+
+
+async def test_coordinator_warns_once_per_unresolved_device(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # uses_mqtt set but no mqtt: present anywhere — neither path
+    # can resolve a broker.
+    (tmp_path / "alpha.yaml").write_text("esphome:\n  name: alpha\n")
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+
+    target = "esphome_device_builder.controllers._device_mqtt_coordinator"
+    with caplog.at_level("DEBUG", logger=target):
+        await coord.reconcile()
+        await coord.reconcile()
+        await coord.reconcile()
+
+    warnings = [r for r in caplog.records if r.name == target and r.levelname == "WARNING"]
+    debugs = [
+        r
+        for r in caplog.records
+        if r.name == target
+        and r.levelname == "DEBUG"
+        and "still could not be resolved" in r.getMessage()
+    ]
+    assert len(warnings) == 1, [r.getMessage() for r in warnings]
+    assert len(debugs) >= 2
+
+
+async def test_coordinator_re_warns_after_broker_recovers_and_breaks_again(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Dedupe must reset on a successful resolve so a later
+    # regression surfaces a fresh WARNING, not a DEBUG.
+    alpha_path = tmp_path / "alpha.yaml"
+    alpha_path.write_text("esphome:\n  name: alpha\n")
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+
+    target = "esphome_device_builder.controllers._device_mqtt_coordinator"
+    with caplog.at_level("WARNING", logger=target):
+        await coord.reconcile()  # unresolved → WARNING #1
+        await coord.reconcile()  # unresolved → DEBUG (suppressed)
+        alpha_path.write_text("esphome:\n  name: alpha\nmqtt:\n  broker: broker.local\n")
+        await coord.reconcile()  # resolved → flag cleared
+        alpha_path.write_text("esphome:\n  name: alpha\n")
+        await coord.reconcile()  # unresolved again → WARNING #2
+
+    warnings = [
+        r
+        for r in caplog.records
+        if r.name == target
+        and r.levelname == "WARNING"
+        and "could not be resolved" in r.getMessage()
+    ]
+    assert len(warnings) == 2
+
+
+def test_extract_broker_from_config_returns_none_for_non_dict() -> None:
+    assert _extract_broker_from_config(None) is None
+    assert _extract_broker_from_config({"mqtt": "not-a-dict"}) is None
+    assert _extract_broker_from_config({}) is None
+
+
+async def test_coordinator_handles_stat_race_after_successful_read(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Race: read_text succeeds, file disappears before stat(). Skip
+    # silently — the WARNING is reserved for fixable configs.
+    yaml_path = tmp_path / "alpha.yaml"
+    yaml_path.write_text("esphome:\n  name: alpha\npackages:\n  shared: !include common.yaml\n")
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+
+    real_stat = Path.stat
+
+    def _stat(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self == yaml_path:
+            raise OSError("simulated stat race")
+        return real_stat(self, *args, **kwargs)
+
+    target = "esphome_device_builder.controllers._device_mqtt_coordinator"
+    with patch.object(Path, "stat", _stat), caplog.at_level("DEBUG", logger=target):
+        await coord.reconcile()
+
+    assert coord.active_brokers == 0
+    warnings = [r for r in caplog.records if r.name == target and r.levelname == "WARNING"]
+    assert warnings == [], [r.getMessage() for r in warnings]
+
+
+async def test_coordinator_caches_resolved_broker_across_polls(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # ``load_device_yaml`` can ``git clone`` remote packages —
+    # too expensive to run every 5 s. Once resolved, polls hit
+    # the cache until an mtime moves.
+    (tmp_path / "common.yaml").write_text("mqtt:\n  broker: 192.168.1.50\n")
+    (tmp_path / "alpha.yaml").write_text(
+        "esphome:\n  name: alpha\npackages:\n  shared: !include common.yaml\n"
+    )
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+
+    calls = 0
+    real_loader = coordinator_module.load_device_yaml
+
+    def counting_loader(path: Path) -> dict | None:
+        nonlocal calls
+        calls += 1
+        return real_loader(path)
+
+    monkeypatch.setattr(coordinator_module, "load_device_yaml", counting_loader)
+
+    await coord.reconcile()
+    await coord.reconcile()
+    await coord.reconcile()
+    assert calls == 1
+    assert coord.active_brokers == 1
+
+
+async def test_coordinator_recovers_when_negative_resolve_fixed_in_secrets(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+) -> None:
+    # Failure must not be cached — fix to secrets.yaml has to
+    # recover on the next poll without a restart.
+    (tmp_path / "alpha.yaml").write_text(
+        "esphome:\n  name: alpha\nmqtt:\n  broker: !secret mqtt_host\n"
+    )
+    device = Device(
+        name="alpha",
+        friendly_name="alpha",
+        configuration="alpha.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+
+    await coord.reconcile()
+    assert coord.active_brokers == 0
+
+    (tmp_path / "secrets.yaml").write_text("mqtt_host: 192.168.1.42\n")
+    await coord.reconcile()
+    assert coord.active_brokers == 1
+    assert stub_monitor.instances[0].broker.host == "192.168.1.42"
+
+
+async def test_coordinator_skips_devices_with_missing_yaml(
+    tmp_path: Path,
+    stub_monitor: type[_RecordingMonitor],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # YAML deleted between scans — skip silently, don't fire
+    # the broker-unresolvable WARNING (reserved for fixable YAMLs).
+    device = Device(
+        name="ghost",
+        friendly_name="ghost",
+        configuration="ghost.yaml",
+        uses_mqtt=True,
+    )
+    coord = _make_coordinator(tmp_path, [device])
+    target = "esphome_device_builder.controllers._device_mqtt_coordinator"
+    with caplog.at_level("DEBUG", logger=target):
+        await coord.reconcile()
+    assert coord.active_brokers == 0
+    warnings = [r for r in caplog.records if r.name == target and r.levelname == "WARNING"]
+    assert warnings == [], [r.getMessage() for r in warnings]
+
+
+def test_extract_broker_from_config_handles_invalid_port() -> None:
+    config = {"mqtt": {"broker": "broker.local", "port": "not-a-number"}}
+    broker = _extract_broker_from_config(config)
+    assert broker is not None
+    assert broker.port == 1883
+
+
+def test_extract_broker_from_config_returns_none_when_broker_missing() -> None:
+    assert _extract_broker_from_config({"mqtt": {"username": "u"}}) is None
+
+
+def test_extract_broker_from_config_reads_resolved_block() -> None:
+    # Post-resolver shape — every field a plain scalar.
+    config = {
+        "mqtt": {
+            "broker": "192.168.1.203",
+            "port": 1883,
+            "username": "mquser",
+            "password": "topsecret",
+        }
+    }
+    broker = _extract_broker_from_config(config)
+    assert broker == MqttBrokerConfig(
+        host="192.168.1.203",
+        port=1883,
+        username="mquser",
+        password="topsecret",
+    )
 
 
 # ---------------------------------------------------------------------------
