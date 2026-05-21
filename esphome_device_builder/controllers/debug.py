@@ -15,6 +15,17 @@ if TYPE_CHECKING:
 _LOGGER = logging.getLogger(__name__)
 
 _MAX_TOP_N = 200
+_MAX_BASELINE_NAME_LEN = 100
+
+
+def _validate_baseline_name(value: Any, *, field: str) -> str:
+    """Return *value* as a non-empty bounded-length ``str`` or raise INVALID_ARGS."""
+    if not isinstance(value, str) or not value or len(value) > _MAX_BASELINE_NAME_LEN:
+        raise CommandError(
+            ErrorCode.INVALID_ARGS,
+            f"{field} must be a non-empty string of at most {_MAX_BASELINE_NAME_LEN} characters",
+        )
+    return value
 
 
 class DebugController:
@@ -53,7 +64,7 @@ class DebugController:
             )
 
         if drop_baseline is not None:
-            memory.drop_baseline(drop_baseline)
+            memory.drop_baseline(_validate_baseline_name(drop_baseline, field="drop_baseline"))
 
         if not memory.is_tracking():
             memory.start_tracking()
@@ -74,6 +85,7 @@ class DebugController:
 
         baseline = None
         if compare_with is not None:
+            compare_with = _validate_baseline_name(compare_with, field="compare_with")
             baseline = memory.get_baseline(compare_with)
             if baseline is None:
                 raise CommandError(
@@ -81,8 +93,8 @@ class DebugController:
                     f"baseline {compare_with!r} not saved; known: {memory.baseline_names()}",
                 )
 
-        if save_as:
-            memory.save_baseline(save_as, snapshot)
+        if save_as is not None:
+            memory.save_baseline(_validate_baseline_name(save_as, field="save_as"), snapshot)
 
         return {
             "system": memory.system_stats(),

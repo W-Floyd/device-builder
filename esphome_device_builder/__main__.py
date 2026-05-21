@@ -46,6 +46,17 @@ _LOG_COLORS = {
     "CRITICAL": "red",
 }
 
+# Accepted "on" spellings for ``$ESPHOME_DEBUG_MEMORY``. Anything else
+# (``0`` / ``false`` / empty / unset / a typo) leaves tracemalloc off
+# so a bare ``ESPHOME_DEBUG_MEMORY=0`` doesn't silently turn it on the
+# way a ``bool(os.environ.get(...))`` check would.
+_DEBUG_MEMORY_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _memory_tracking_enabled_from_env() -> bool:
+    """Whether ``$ESPHOME_DEBUG_MEMORY`` is set to an "on"-shape value."""
+    return os.environ.get("ESPHOME_DEBUG_MEMORY", "").strip().lower() in _DEBUG_MEMORY_TRUTHY
+
 
 def _setup_logging(log_level: str, log_file: str | None = None) -> None:
     """Set up logging with a coloured console handler and an optional rotating file."""
@@ -106,7 +117,7 @@ def main() -> None:
     # produce diffs that include the catalog loads and other
     # startup allocations. Off by default — adds per-allocation
     # overhead.
-    if os.environ.get("ESPHOME_DEBUG_MEMORY"):
+    if _memory_tracking_enabled_from_env():
         import tracemalloc  # noqa: PLC0415
 
         tracemalloc.start(25)

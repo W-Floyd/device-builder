@@ -369,3 +369,34 @@ def test_main_runs_device_builder_when_lock_acquired(
 
     device_builder_ctor.assert_called_once()
     instance.run.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _memory_tracking_enabled_from_env — ESPHOME_DEBUG_MEMORY gate
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "True", "yes", "on", " 1 ", " YES "])
+def test_memory_tracking_env_gate_truthy(
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Documented on-shapes (case-insensitive, whitespace allowed) enable tracking."""
+    monkeypatch.setenv("ESPHOME_DEBUG_MEMORY", value)
+    assert main_module._memory_tracking_enabled_from_env() is True
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "", "nope", "2"])
+def test_memory_tracking_env_gate_falsy(
+    value: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Anything outside the on-shape set leaves tracking off — including ``0``."""
+    monkeypatch.setenv("ESPHOME_DEBUG_MEMORY", value)
+    assert main_module._memory_tracking_enabled_from_env() is False
+
+
+def test_memory_tracking_env_gate_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unset env var defaults to disabled — the gate's whole point."""
+    monkeypatch.delenv("ESPHOME_DEBUG_MEMORY", raising=False)
+    assert main_module._memory_tracking_enabled_from_env() is False

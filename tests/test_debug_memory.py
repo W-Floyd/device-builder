@@ -1,4 +1,5 @@
-"""Tests for ``controllers/debug.py`` + ``helpers/memory.py``.
+"""
+Tests for ``controllers/debug.py`` + ``helpers/memory.py``.
 
 Pins the wire shape of ``debug/memory_snapshot`` and the
 save / compare / drop baseline contract. ``tracemalloc`` is
@@ -118,6 +119,25 @@ async def test_invalid_top_n_raises_invalid_args(bad_top_n: Any) -> None:
     with pytest.raises(CommandError) as exc_info:
         await _controller().memory_snapshot(top_n=bad_top_n)
 
+    assert exc_info.value.code == ErrorCode.INVALID_ARGS
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("save_as", ["list-not-string"]),
+        ("save_as", ""),
+        ("save_as", "x" * 101),
+        ("compare_with", {"dict": "no"}),
+        ("compare_with", 42),
+        ("drop_baseline", None.__class__),  # arbitrary unhashable-ish junk
+    ],
+)
+async def test_non_string_baseline_name_raises_invalid_args(field: str, value: Any) -> None:
+    """Baseline-name fields type-check before reaching the dict, not after."""
+    memory.start_tracking()
+    with pytest.raises(CommandError) as exc_info:
+        await _controller().memory_snapshot(**{field: value})
     assert exc_info.value.code == ErrorCode.INVALID_ARGS
 
 
