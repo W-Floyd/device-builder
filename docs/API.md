@@ -372,6 +372,9 @@ Same-subnet peers read `remote_build_port` from TXT so a `--remote-build-port` o
 |---------|------|----------|-------------|
 | `ping` | — | `{pong: true}` | Health check |
 | `subscribe_events` | — | Streaming | Subscribe to real-time events |
+| `debug/memory_snapshot` | `top_n?`, `save_as?`, `compare_with?`, `drop_baseline?` | `{system, top_allocators, baseline_names, note?}` | Capture a `tracemalloc` snapshot for leak diagnosis |
+
+**`debug/memory_snapshot` usage:** to bisect a memory leak, start the dashboard with `ESPHOME_DEBUG_MEMORY=1` so `tracemalloc` traces every allocation from boot. Call once with `save_as="before"` to bookmark a baseline, reproduce the suspected leak (run a build, browse the UI, …), then call again with `compare_with="before"` to get the top-N allocators ordered by size delta. Without the env var the command still works but will only see allocations made after its first invocation. Returned `system` carries process-wide stats: `tracemalloc_current_bytes` / `tracemalloc_peak_bytes` (when tracking), `gc_counts`, `sys_allocated_blocks`, `max_rss_bytes`.
 
 **`subscribe_events` initial state:**
 

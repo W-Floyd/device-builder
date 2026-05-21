@@ -37,6 +37,7 @@ from .controllers.config import (
     has_remote_build_settings_persisted,
     load_remote_build_settings,
 )
+from .controllers.debug import DebugController
 from .controllers.devices import DevicesController
 from .controllers.editor import EditorController
 from .controllers.firmware import FirmwareController
@@ -256,6 +257,7 @@ class DeviceBuilder:
         self.onboarding: OnboardingController | None = None
         self.remote_build_offloader: OffloaderController | None = None
         self.remote_build_receiver: ReceiverController | None = None
+        self.debug: DebugController | None = None
 
         # mDNS advertise — populated in start() once we know zeroconf
         # is up. Optional: a zeroconf-bind failure leaves this None
@@ -328,6 +330,7 @@ class DeviceBuilder:
         self.onboarding = OnboardingController(self)
         self.remote_build_offloader = OffloaderController(self)
         self.remote_build_receiver = ReceiverController(self)
+        self.debug = DebugController(self)
         await self.devices.start()
         await self.firmware.start()
         await self.editor.start()
@@ -407,6 +410,7 @@ class DeviceBuilder:
             self.onboarding,
             self.remote_build_offloader,
             self.remote_build_receiver,
+            self.debug,
         ):
             self.command_handlers.update(collect_api_commands(controller))
 

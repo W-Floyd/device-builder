@@ -101,6 +101,16 @@ def _setup_logging(log_level: str, log_file: str | None = None) -> None:
 
 def main() -> None:
     """Run the ESPHome Device Builder."""
+    # Enable tracemalloc as the very first step so the
+    # ``debug/memory_snapshot`` WS command (helpers/memory.py) can
+    # produce diffs that include the catalog loads and other
+    # startup allocations. Off by default — adds per-allocation
+    # overhead.
+    if os.environ.get("ESPHOME_DEBUG_MEMORY"):
+        import tracemalloc  # noqa: PLC0415
+
+        tracemalloc.start(25)
+
     parser = argparse.ArgumentParser(
         description="ESPHome Device Builder",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
