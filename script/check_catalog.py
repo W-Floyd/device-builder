@@ -34,6 +34,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from esphome_device_builder.controllers.components import ComponentCatalog
+from script.sync_components import _FIELD_BULLET_PATTERN
 
 # Per-component shape assertions. Each entry is a tuple of
 # ``(component_id, [(field_key, type, required, refs)])``. A field
@@ -182,6 +183,7 @@ def main() -> int:  # noqa: C901
 
     failures.extend(_check_option_lists(catalog))
     failures.extend(_check_component_gating(catalog))
+    failures.extend(_check_no_field_bullet_descriptions(catalog))
 
     if failures:
         print(f"FAIL: {len(failures)} catalog regression(s):")
@@ -264,6 +266,25 @@ def _check_option_lists(catalog: ComponentCatalog) -> list[str]:
             failures.append(
                 f"{cid}.{path}: options count {count} < expected minimum {minimum} "
                 "(inherited enum values may have been lost)"
+            )
+    return failures
+
+
+def _check_no_field_bullet_descriptions(catalog: ComponentCatalog) -> list[str]:
+    """Fail when any component's description matches the field-bullet pattern.
+
+    The pattern is imported from ``script/sync_components.py`` so a widening
+    on the sync side automatically tightens the check side — they cannot
+    drift apart. Triggered when the upstream esphome-docs schema_doc bug
+    leaks past ``_repair_field_bullet_descriptions``.
+    """
+    failures: list[str] = []
+    for component in catalog._by_id.values():
+        desc = (component.description or "").strip()
+        if desc and _FIELD_BULLET_PATTERN.match(desc):
+            failures.append(
+                f"{component.id}: description is a config-variables bullet "
+                f"({desc[:80]!r}) — sync workaround missed it"
             )
     return failures
 
