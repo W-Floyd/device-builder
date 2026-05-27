@@ -188,6 +188,7 @@ select = [
   "PL", # pylint
   "PTH", # flake8-use-pathlib — prefer pathlib over os.path/os primitives
   "PLR0904", # too-many-public-methods (preview) — cap new god-classes at 20
+  "PYI", # flake8-pyi — type-stub correctness (collapses ``int | float`` to ``float``, etc.)
   "Q", # flake8-quotes — pin quote style; ruff format already enforces double, this catches escape-only deviations
   "RET", # flake8-return
   "RSE", # flake8-raise — flag unnecessary parens on raised exception classes (``raise X()`` → ``raise X``)
