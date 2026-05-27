@@ -482,7 +482,7 @@ class ConfigEntryType(StrEnum):
     # Duration like "30s", "5min" — frontend renders a value+unit input
     TIME_PERIOD = "time_period"
     # Numeric value carrying a unit: frequency ("50kHz"), data size
-    # ("500KB"), framerate ("10 fps"), voltage ("3.3V"), distance
+    # ("500KB"), framerate ("10 fps"), voltage ("3.3V"), distance  # noqa: ERA001
     # ("2m"), temperature ("4°C"), etc. ESPHome's coercer multiplies
     # by the unit at compile time, but the YAML shape the user types
     # is a string — so the frontend renders a number input plus a

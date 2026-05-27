@@ -523,7 +523,7 @@ class _FakeFirmwareController:
                     {"job_id": self._job.job_id, "line": entry[1]},
                 )
                 continue
-            # ("exit", code_or_None, status)
+            # ("exit", code_or_None, status)  # noqa: ERA001
             _, exit_code, status = entry
             self._job.status = status
             self._job.exit_code = exit_code

@@ -182,7 +182,7 @@ async def _stop_and_drain(monitor: DeviceStateMonitor) -> None:
 
 
 # ---------------------------------------------------------------------------
-# stop()
+# stop()  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 
@@ -1092,7 +1092,7 @@ async def test_dispatch_http_service_added_cache_miss_resolves_and_applies(
 
 
 # ---------------------------------------------------------------------------
-# revisit_importable / revisit_all_importables / get_importable_devices
+# revisit_importable / revisit_all_importables / get_importable_devices  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 

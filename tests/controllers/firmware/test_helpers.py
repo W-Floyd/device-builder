@@ -172,7 +172,7 @@ def test_names_touched_by_job_with_empty_configuration_is_empty() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _verify_esphome_importable
+# _verify_esphome_importable  # noqa: ERA001
 # ---------------------------------------------------------------------------
 
 

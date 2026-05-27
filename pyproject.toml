@@ -171,6 +171,9 @@ select = [
   "D", # pydocstyle
   "DTZ", # flake8-datetimez — flag naive datetime construction; force explicit tz
   "E", # pycodestyle errors
+  "ERA", # eradicate — flag commented-out code. 12 false-positive section dividers
+  # (``# start()`` between dashed lines, etc.) and wrapped-comment misparses are
+  # grandfathered with inline ``# noqa: ERA001``.
   "F", # pyflakes
   "FBT", # flake8-boolean-trap — flag positional ``bool`` params / calls
   "FLY", # flynt: convert string formatting to f-strings

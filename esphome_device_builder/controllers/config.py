@@ -168,7 +168,7 @@ class DashboardSettings:
         # "SSID can't be empty.", so a fresh-install ``create_device``
         # whose generated YAML uses ``!secret wifi_ssid`` would
         # validation-fail before the device is even saved
-        # ("Failed to create device: SSID can't be empty."). The
+        # ("Failed to create device: SSID can't be empty."). The  # noqa: ERA001
         # placeholders validate clean and clearly signal to the user
         # that the values need to be replaced before flashing —
         # ``OnboardingController`` reads the same constants from
