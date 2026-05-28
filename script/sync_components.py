@@ -1798,7 +1798,7 @@ def _scalar_type_for_extends_ref(ref: str) -> str | None:
     if "positive_int" in ref or ref.endswith(".int_"):
         return "integer"
     if "returning_lambda" in ref:
-        return "string"
+        return "lambda"
     return None
 
 
@@ -4757,6 +4757,31 @@ def _is_scalar_extends_schema(schema: dict | None) -> bool:
     return bool(extends) and all(_scalar_type_for_extends_ref(ref) is not None for ref in extends)
 
 
+# Registry id for the ``lambda`` filter / effect. The schema bundle
+# carries no schema for it (just docs), so we recognise it by id and
+# tag the catalog entry with ``value_type="lambda"`` so the frontend
+# can route to its lambda editor through the same dispatch table as
+# the other scalar types.
+_LAMBDA_REGISTRY_ID = "lambda"
+
+
+def _scalar_value_type_for_schema(name: str, schema: dict | None) -> str | None:
+    """Return the scalar primitive *schema* collapses to, or None."""
+    if name == _LAMBDA_REGISTRY_ID and not schema:
+        return _LAMBDA_REGISTRY_ID
+    if not schema or schema.get("config_vars"):
+        return None
+    extends = schema.get("extends") or []
+    if not extends:
+        return None
+    types = [_scalar_type_for_extends_ref(ref) for ref in extends]
+    # All extends must resolve to a scalar primitive; a single
+    # mapping-shaped extends (sensor.DELTA_SCHEMA etc.) disqualifies.
+    if any(t is None for t in types):
+        return None
+    return types[0]
+
+
 def _convert_registry_entry(
     *,
     name: str,
@@ -4765,12 +4790,13 @@ def _convert_registry_entry(
     applies_to: list[str],
     schema_dir: Path,
 ) -> dict | None:
-    """Build a registry catalog dict (id, name, config_entries, applies_to)."""
+    """Build a registry catalog dict (id, name, config_entries, applies_to, value_type)."""
     if not isinstance(body, dict):
         return None
     docs = clean_docs(body.get("docs"))
     schema = body.get("schema") if isinstance(body.get("schema"), dict) else None
-    if _is_scalar_extends_schema(schema):
+    value_type = _scalar_value_type_for_schema(name, schema)
+    if value_type is not None:
         config_entries: list[dict] = []
     else:
         config_entries, _alist, _hcg = _extract_automation_param_schema(schema, schema_dir)
@@ -4779,6 +4805,7 @@ def _convert_registry_entry(
         "name": _automation_label(label_domain, name, docs.name),
         "config_entries": [_strip_entry_defaults(e) for e in config_entries],
         "applies_to": applies_to,
+        "value_type": value_type,
     }
 
 
