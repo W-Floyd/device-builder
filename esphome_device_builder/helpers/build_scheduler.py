@@ -13,6 +13,7 @@ filter + two-tier idle / busy pick.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
@@ -22,6 +23,9 @@ from ..models.remote_build import (
     PeerStatus,
     StoredPairing,
 )
+from .version_compat import major_versions_match
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class BuildPath(StrEnum):
@@ -53,6 +57,12 @@ class BuildSchedulerInputs:
     pairings: Mapping[str, StoredPairing]
     open_peer_links: frozenset[str]
     peer_queue_status: Mapping[str, PeerQueueStatusSnapshotEntry]
+    # Passed in rather than imported so the helper stays pure;
+    # empty string disables the gate.
+    offloader_esphome_version: str = ""
+    # Master toggle for the major-version gate; ``True``
+    # bypasses the gate entirely.
+    allow_major_version_mismatch: bool = True
 
 
 @dataclass(frozen=True)
@@ -84,8 +94,10 @@ class BuildPathDecision:
 def pick_build_path(inputs: BuildSchedulerInputs) -> BuildPathDecision:
     """Decide whether a firmware job runs locally or on a paired receiver.
 
-    Eligible pairings are APPROVED + per-pairing-enabled +
-    have an open peer-link session. The pick is two-tier:
+    Eligible pairings are APPROVED + per-pairing-enabled + have
+    an open peer-link session + pass the major-version gate
+    (matching ``YYYY.MM`` release line, or the master gate is
+    off). The pick is two-tier:
 
     1. First pass picks the oldest idle eligible pairing so
        concurrent installs fan out across idle remotes.
@@ -114,13 +126,27 @@ def pick_build_path(inputs: BuildSchedulerInputs) -> BuildPathDecision:
         inputs.pairings.items(),
         key=lambda item: (item[1].paired_at, item[0]),
     )
-    eligible: list[tuple[str, StoredPairing]] = [
-        (pin_sha256, pairing)
-        for pin_sha256, pairing in ordered
-        if pairing.status is PeerStatus.APPROVED
-        and pairing.enabled
-        and pin_sha256 in inputs.open_peer_links
-    ]
+    eligible: list[tuple[str, StoredPairing]] = []
+    version_filtered: list[str] = []
+    for pin_sha256, pairing in ordered:
+        if (
+            pairing.status is not PeerStatus.APPROVED
+            or not pairing.enabled
+            or pin_sha256 not in inputs.open_peer_links
+        ):
+            continue
+        if not inputs.allow_major_version_mismatch and not major_versions_match(
+            inputs.offloader_esphome_version, pairing.esphome_version
+        ):
+            _LOGGER.debug(
+                "pick_build_path: filtered %s on version mismatch (peer=%s, offloader=%s)",
+                pin_sha256,
+                pairing.esphome_version,
+                inputs.offloader_esphome_version,
+            )
+            version_filtered.append(pin_sha256)
+            continue
+        eligible.append((pin_sha256, pairing))
     for pin_sha256, _pairing in eligible:
         snapshot = inputs.peer_queue_status.get(pin_sha256)
         if snapshot is not None and snapshot["idle"]:
@@ -128,4 +154,9 @@ def pick_build_path(inputs: BuildSchedulerInputs) -> BuildPathDecision:
     if eligible:
         pin_sha256, _pairing = eligible[0]
         return BuildPathDecision.remote(pin_sha256)
+    if version_filtered:
+        _LOGGER.info(
+            "pick_build_path: strict version gate filtered %d peer(s); falling back to LOCAL",
+            len(version_filtered),
+        )
     return BuildPathDecision.local()
