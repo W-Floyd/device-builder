@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Coroutine
+import asyncio
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from typing import Any, TypeVar
 
 from ..models import ErrorCode
@@ -30,6 +32,24 @@ class CommandError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+@contextmanager
+def registered_stream(client: Any, message_id: str) -> Iterator[None]:
+    """
+    Register the running task as a cancellable stream for the block's lifetime.
+
+    Captures ``asyncio.current_task()`` so a ``devices/stop_stream`` for
+    ``message_id`` can cancel it, and unregisters on exit. Enter before the
+    first ``await`` so an early stop_stream still finds the task.
+    """
+    task = asyncio.current_task()
+    assert task is not None
+    client.register_stream(message_id, task)
+    try:
+        yield
+    finally:
+        client.unregister_stream(message_id)
 
 
 def api_command(command: str) -> Callable[[_F], _F]:

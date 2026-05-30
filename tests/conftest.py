@@ -521,6 +521,20 @@ class FakeWebSocketClient:
         self.events: list[tuple[str, str, Any]] = []
         self.results: list[tuple[str, Any]] = []
         self._yield_per_event = yield_per_event
+        self._stream_tasks: dict[str, asyncio.Task] = {}
+
+    def register_stream(self, message_id: str, task: asyncio.Task) -> None:
+        self._stream_tasks[message_id] = task
+
+    def unregister_stream(self, message_id: str) -> None:
+        self._stream_tasks.pop(message_id, None)
+
+    def cancel_stream(self, message_id: str) -> bool:
+        task = self._stream_tasks.pop(message_id, None)
+        if task is None or task.done():
+            return False
+        task.cancel()
+        return True
 
     async def send_event(self, message_id: str, event: str, data: Any) -> None:
         if self._yield_per_event:
