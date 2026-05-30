@@ -1,12 +1,4 @@
-"""``firmware.follow_job`` registers its task so ``devices/stop_stream`` cancels it.
-
-The frontend fires ``devices/stop_stream`` with the follow's
-message_id when the log dialog closes or switches jobs. That command
-calls ``client.cancel_stream(message_id)``, which only finds tasks a
-handler registered via ``register_stream``. Without registration a
-live job's tail kept streaming server-side until the job finished or
-the WS dropped, and orphaned follows piled up across job switches.
-"""
+"""``follow_job`` registers its stream so ``devices/stop_stream`` can cancel it."""
 
 from __future__ import annotations
 
