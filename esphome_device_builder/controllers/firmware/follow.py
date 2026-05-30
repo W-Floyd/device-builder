@@ -44,64 +44,17 @@ async def follow_job(
         msg = f"Job not found: {job_id}"
         raise ValueError(msg)
 
-    # Capture snapshot before ``stream_events`` attaches listeners.
-    is_terminal = job.status in TERMINAL_JOB_STATUSES
-    snapshot = await _initial_snapshot(job, job_id)
-    terminal_status = job.status.value if is_terminal else ""
-    terminal_exit_code = job.exit_code
-    terminal_error = job.error if is_terminal else None
-
-    async def _send_initial(controls: StreamControls) -> None:
-        for line in snapshot:
-            await client.send_event(message_id, StreamEvent.OUTPUT, line)
-        if is_terminal:
-            await client.send_event(
-                message_id,
-                StreamEvent.RESULT,
-                {
-                    "status": terminal_status,
-                    "exit_code": terminal_exit_code,
-                    # ``error`` carries the human-readable failure
-                    # reason the frontend install dialog renders in
-                    # its red banner. Without it the banner falls
-                    # back to a generic "Install failed." that
-                    # misattributes a receiver-restart to a broken
-                    # build env. ``None`` for successful jobs.
-                    "error": terminal_error,
-                },
-            )
-            # End the stream so the helper returns instead of
-            # parking on ``queue.get`` — already-terminal job has
-            # nothing more to deliver.
-            controls.end()
-
-    def _handle_event(event: Event, controls: StreamControls) -> None:
-        if event.event_type == EventType.JOB_OUTPUT:
-            if event.data.get("job_id") == job_id:
-                controls.push(StreamEvent.OUTPUT, event.data["line"])
-        elif event.event_type in TERMINAL_JOB_EVENTS:
-            ev_job = event.data.get("job")
-            if ev_job and getattr(ev_job, "job_id", None) == job_id:
-                status = getattr(ev_job, "status", "unknown")
-                status_val = status.value if hasattr(status, "value") else str(status)
-                controls.push_priority(
-                    StreamEvent.RESULT,
-                    {
-                        "status": status_val,
-                        "exit_code": getattr(ev_job, "exit_code", None),
-                        "error": getattr(ev_job, "error", None),
-                    },
-                )
-                controls.end()
-
-    await stream_events(
-        client=client,
-        message_id=message_id,
-        bus=controller._db.bus,
-        event_types=(EventType.JOB_OUTPUT, *TERMINAL_JOB_EVENTS),
-        handle_event=_handle_event,
-        send_initial=_send_initial,
-    )
+    # Register before the first await so a ``devices/stop_stream`` for
+    # this id (the frontend fires it when the log dialog closes or
+    # switches jobs) actually cancels the follow instead of leaving a
+    # live job's tail streaming until it completes or the WS drops.
+    task = asyncio.current_task()
+    assert task is not None
+    client.register_stream(message_id, task)
+    try:
+        await _stream_job(controller, job, job_id=job_id, client=client, message_id=message_id)
+    finally:
+        client.unregister_stream(message_id)
 
 
 async def follow_jobs(
@@ -179,6 +132,75 @@ async def follow_jobs(
             EventType.JOB_OUTPUT,
             EventType.JOB_PROGRESS,
         ),
+        handle_event=_handle_event,
+        send_initial=_send_initial,
+    )
+
+
+async def _stream_job(
+    controller: FirmwareController,
+    job: Any,
+    *,
+    job_id: str,
+    client: Any,
+    message_id: str,
+) -> None:
+    """Replay history then tail live output for one job until it ends or is cancelled."""
+    # Capture snapshot before ``stream_events`` attaches listeners.
+    is_terminal = job.status in TERMINAL_JOB_STATUSES
+    snapshot = await _initial_snapshot(job, job_id)
+    terminal_status = job.status.value if is_terminal else ""
+    terminal_exit_code = job.exit_code
+    terminal_error = job.error if is_terminal else None
+
+    async def _send_initial(controls: StreamControls) -> None:
+        for line in snapshot:
+            await client.send_event(message_id, StreamEvent.OUTPUT, line)
+        if is_terminal:
+            await client.send_event(
+                message_id,
+                StreamEvent.RESULT,
+                {
+                    "status": terminal_status,
+                    "exit_code": terminal_exit_code,
+                    # ``error`` carries the human-readable failure
+                    # reason the frontend install dialog renders in
+                    # its red banner. Without it the banner falls
+                    # back to a generic "Install failed." that
+                    # misattributes a receiver-restart to a broken
+                    # build env. ``None`` for successful jobs.
+                    "error": terminal_error,
+                },
+            )
+            # End the stream so the helper returns instead of
+            # parking on ``queue.get`` — already-terminal job has
+            # nothing more to deliver.
+            controls.end()
+
+    def _handle_event(event: Event, controls: StreamControls) -> None:
+        if event.event_type == EventType.JOB_OUTPUT:
+            if event.data.get("job_id") == job_id:
+                controls.push(StreamEvent.OUTPUT, event.data["line"])
+        elif event.event_type in TERMINAL_JOB_EVENTS:
+            ev_job = event.data.get("job")
+            if ev_job and getattr(ev_job, "job_id", None) == job_id:
+                status = getattr(ev_job, "status", "unknown")
+                status_val = status.value if hasattr(status, "value") else str(status)
+                controls.push_priority(
+                    StreamEvent.RESULT,
+                    {
+                        "status": status_val,
+                        "exit_code": getattr(ev_job, "exit_code", None),
+                        "error": getattr(ev_job, "error", None),
+                    },
+                )
+                controls.end()
+
+    await stream_events(
+        client=client,
+        message_id=message_id,
+        bus=controller._db.bus,
+        event_types=(EventType.JOB_OUTPUT, *TERMINAL_JOB_EVENTS),
         handle_event=_handle_event,
         send_initial=_send_initial,
     )

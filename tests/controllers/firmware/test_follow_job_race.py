@@ -230,6 +230,9 @@ async def test_slow_follower_drops_lines_above_queue_cap(
     received: list[tuple[str, Any]] = []
 
     class BlockingClient:
+        def register_stream(self, _mid: str, _task: Any) -> None: ...
+        def unregister_stream(self, _mid: str) -> None: ...
+
         async def send_event(self, _mid: str, event: str, data: Any) -> None:
             received.append((event, data))
             await block.wait()
@@ -296,6 +299,9 @@ async def test_terminal_sentinel_evicts_to_unblock_drain_when_queue_full(
     received: list[tuple[str, Any]] = []
 
     class BlockingClient:
+        def register_stream(self, _mid: str, _task: Any) -> None: ...
+        def unregister_stream(self, _mid: str) -> None: ...
+
         async def send_event(self, _mid: str, event: str, data: Any) -> None:
             received.append((event, data))
             # Only block on output; let result/sentinel through so
