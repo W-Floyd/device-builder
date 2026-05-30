@@ -6,6 +6,7 @@ import asyncio
 from operator import attrgetter
 from typing import TYPE_CHECKING, Any
 
+from ...helpers.api import registered_stream
 from ...helpers.event_bus import StreamControls, stream_events
 from ...models import (
     TERMINAL_JOB_EVENTS,
@@ -48,13 +49,8 @@ async def follow_job(
     # this id (the frontend fires it when the log dialog closes or
     # switches jobs) actually cancels the follow instead of leaving a
     # live job's tail streaming until it completes or the WS drops.
-    task = asyncio.current_task()
-    assert task is not None
-    client.register_stream(message_id, task)
-    try:
+    with registered_stream(client, message_id):
         await _stream_job(controller, job, job_id=job_id, client=client, message_id=message_id)
-    finally:
-        client.unregister_stream(message_id)
 
 
 async def follow_jobs(
