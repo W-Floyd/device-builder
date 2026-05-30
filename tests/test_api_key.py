@@ -101,6 +101,12 @@ def test_load_device_yaml_returns_none_on_parse_failure(yaml_file: Path) -> None
     assert load_device_yaml(yaml_file) is None
 
 
+def test_load_device_yaml_returns_none_when_not_mapping(yaml_file: Path) -> None:
+    """A file whose top level parses to a list / scalar returns ``None``."""
+    yaml_file.write_text("- one\n- two\n", encoding="utf-8")
+    assert load_device_yaml(yaml_file) is None
+
+
 def test_load_device_yaml_resolves_secrets(tmp_path: Path) -> None:
     """``!secret`` references resolve through the sibling ``secrets.yaml``.
 
@@ -174,7 +180,7 @@ def test_detect_platform_from_yaml_swallows_parser_exceptions(
 ) -> None:
     """A raising ``parse_platform_from_yaml`` falls through to '' rather than propagating."""
     monkeypatch.setattr(
-        device_yaml,
+        device_yaml._parsing,
         "parse_platform_from_yaml",
         mock.MagicMock(side_effect=ValueError("simulated parser failure")),
     )
@@ -199,7 +205,7 @@ def test_load_device_yaml_uses_two_step_when_resolve_packages_missing(
     development can hit either side. The forced-None monkeypatch
     makes coverage of the two-step branch deterministic regardless.
     """
-    monkeypatch.setattr(device_yaml, "_resolve_packages", None)
+    monkeypatch.setattr(device_yaml._loading, "_resolve_packages", None)
     (tmp_path / "common.yaml").write_text(
         "esp32:\n  board: esp32dev\nwifi:\n  ssid: x\n  password: y\n"
     )
@@ -229,8 +235,8 @@ def test_load_device_yaml_uses_upstream_resolve_packages_when_available(
     yaml_file = tmp_path / "with_pkg.yaml"
     yaml_file.write_text("esphome:\n  name: x\npackages:\n  shared:\n    wifi:\n      ssid: y\n")
     spy = mock.MagicMock(side_effect=lambda c: c)
-    monkeypatch.setattr(device_yaml, "_resolve_packages", spy)
-    with mock.patch.object(device_yaml, "_do_packages_pass") as two_step_spy:
+    monkeypatch.setattr(device_yaml._loading, "_resolve_packages", spy)
+    with mock.patch.object(device_yaml._loading, "_do_packages_pass") as two_step_spy:
         config = load_device_yaml(yaml_file)
     assert config is not None
     spy.assert_called_once()
@@ -253,7 +259,7 @@ def test_load_device_yaml_recovers_when_merge_raises(
     yaml_file = tmp_path / "broken_pkg.yaml"
     yaml_file.write_text("esphome:\n  name: x\npackages:\n  shared:\n    wifi:\n      ssid: y\n")
     boom = mock.MagicMock(side_effect=RuntimeError("simulated package failure"))
-    monkeypatch.setattr(device_yaml, "_resolve_packages", boom)
+    monkeypatch.setattr(device_yaml._loading, "_resolve_packages", boom)
     config = load_device_yaml(yaml_file)
     assert config is not None
     # Merge raised → caller keeps the unmerged shape rather than
@@ -281,7 +287,7 @@ def test_module_import_handles_missing_resolve_packages(
         # the upstream-not-yet-shipped state.
     )
     monkeypatch.setitem(sys.modules, "esphome.components.packages", stub)
-    reloaded = importlib.reload(device_yaml)
+    reloaded = importlib.reload(device_yaml._loading)
     try:
         assert reloaded._resolve_packages is None
         assert reloaded._do_packages_pass is real_packages.do_packages_pass
@@ -289,7 +295,7 @@ def test_module_import_handles_missing_resolve_packages(
     finally:
         # Restore so subsequent tests see the real module.
         monkeypatch.setitem(sys.modules, "esphome.components.packages", real_packages)
-        importlib.reload(device_yaml)
+        importlib.reload(device_yaml._loading)
 
 
 def test_module_import_handles_missing_two_step(
@@ -309,14 +315,14 @@ def test_module_import_handles_missing_two_step(
         resolve_packages=getattr(real_packages, "resolve_packages", lambda c: c),
     )
     monkeypatch.setitem(sys.modules, "esphome.components.packages", stub)
-    reloaded = importlib.reload(device_yaml)
+    reloaded = importlib.reload(device_yaml._loading)
     try:
         assert reloaded._do_packages_pass is None
         assert reloaded._merge_packages is None
         assert reloaded._resolve_packages is stub.resolve_packages
     finally:
         monkeypatch.setitem(sys.modules, "esphome.components.packages", real_packages)
-        importlib.reload(device_yaml)
+        importlib.reload(device_yaml._loading)
 
 
 def test_load_device_yaml_falls_back_when_both_imports_missing(
@@ -333,9 +339,9 @@ def test_load_device_yaml_falls_back_when_both_imports_missing(
     behaviour stays available even if the upstream API surface
     drifts.
     """
-    monkeypatch.setattr(device_yaml, "_resolve_packages", None)
-    monkeypatch.setattr(device_yaml, "_do_packages_pass", None)
-    monkeypatch.setattr(device_yaml, "_merge_packages", None)
+    monkeypatch.setattr(device_yaml._loading, "_resolve_packages", None)
+    monkeypatch.setattr(device_yaml._loading, "_do_packages_pass", None)
+    monkeypatch.setattr(device_yaml._loading, "_merge_packages", None)
     yaml_file = tmp_path / "with_pkg.yaml"
     yaml_file.write_text("esphome:\n  name: x\npackages:\n  shared:\n    wifi:\n      ssid: y\n")
     config = load_device_yaml(yaml_file)
@@ -362,7 +368,7 @@ def isolated_storage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     ``None`` so each test exercises the YAML + flag plumbing only.
     """
     monkeypatch.setattr(
-        device_yaml,
+        device_yaml._loading,
         "resolve_storage_path",
         lambda config: tmp_path / f"{config}.json",
     )
