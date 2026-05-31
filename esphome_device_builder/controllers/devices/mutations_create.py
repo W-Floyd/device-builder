@@ -139,7 +139,12 @@ async def create_device(  # noqa: PLR0912, PLR0915, C901
         raise CommandError(ErrorCode.INVALID_ARGS, msg) from exc
 
     def _init_storage() -> None:
-        platform = str(board.esphome.platform) if board else parsed_platform
+        # Do not set target_platform at device-creation time. The board is
+        # resolved via the in-process package path which silently drops remote
+        # packages, so the variant may be wrong (e.g. "esp32" instead of
+        # "ESP32S3"). verify_chip() skips the check when target_platform is
+        # falsy, so deferring to from_esphome_core() after the first compile
+        # is the correct approach.
         storage = StorageJSON(
             storage_version=1,
             name=name,
@@ -149,7 +154,7 @@ async def create_device(  # noqa: PLR0912, PLR0915, C901
             src_version=None,
             address=f"{name}.local",
             web_port=None,
-            target_platform=platform,
+            target_platform=None,
             build_path=None,
             firmware_bin_path=None,
             loaded_integrations=[],
