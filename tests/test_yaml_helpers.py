@@ -28,6 +28,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import yaml
 
 from esphome_device_builder.helpers.yaml import (
     YamlUpsertNotSupportedError,
@@ -1211,6 +1212,30 @@ def test_generate_component_yaml_quotes_strings_that_reparse_as_non_string(
     assert f'  v: "{value}"' in out
 
 
+@pytest.mark.parametrize(
+    "value",
+    ['"Hello"', "'single'", "with:colon", "has#hash", '"quote\\and\\slash"'],
+    ids=[
+        "cpp-literal",
+        "leading-squote",
+        "embedded-colon",
+        "embedded-hash",
+        "leading-quote-backslash",
+    ],
+)
+def test_generate_component_yaml_quote_bearing_string_round_trips(value: str) -> None:
+    r"""Quote/indicator-bearing scalar values survive a full re-parse (#1095).
+
+    A globals ``initial_value`` for a ``std::string`` is a C++ literal
+    (``'"Hello"'``); emitting it bare round-trips as plain ``Hello`` so
+    ESPHome compiles an undeclared symbol. Embedded ``"`` / ``\`` are
+    escaped via ``_quote`` rather than wrapped in invalid ``""..."``.
+    """
+    component = _component(component_id="myc", category=ComponentCategory.MISC)
+    out = generate_component_yaml(component, {"v": value})
+    assert yaml.safe_load(out)["myc"]["v"] == value
+
+
 # ---------------------------------------------------------------------------
 # generate_component_yaml — nested fields (_emit_field branches)
 # ---------------------------------------------------------------------------
@@ -1331,6 +1356,18 @@ def test_generate_component_yaml_quotes_flow_string_with_flow_indicator() -> Non
     component = _component(component_id="myc", category=ComponentCategory.MISC)
     out = generate_component_yaml(component, {"items": ["a,b", "c"]})
     assert '  items: ["a,b", c]' in out
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['a,"b', "x,\\y", '{a},"q"'],
+    ids=["embedded-quote", "backslash", "brace-quote"],
+)
+def test_generate_component_yaml_flow_list_escapes_quote_bearing_element(value: str) -> None:
+    """A flow-list element carrying both a flow indicator and a quote/backslash escapes cleanly."""
+    component = _component(component_id="myc", category=ComponentCategory.MISC)
+    out = generate_component_yaml(component, {"items": [value, "c"]})
+    assert yaml.safe_load(out)["myc"]["items"] == [value, "c"]
 
 
 # ---------------------------------------------------------------------------

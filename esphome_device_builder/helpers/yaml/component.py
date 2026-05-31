@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 
 from ...models.common import ConfigEntryType
-from .scalar import ESPHOME_YAML_INDENT
+from .scalar import _PLAIN_SCALAR_INDICATOR_LEAD, ESPHOME_YAML_INDENT, _quote
 
 if TYPE_CHECKING:
     from ...models import ComponentCatalogEntry
@@ -359,7 +359,7 @@ def _format_yaml_value(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, str):
-        return f'"{value}"' if _string_needs_quoting(value) else value
+        return _quote(value) if _string_needs_quoting(value) else value
     return str(value)
 
 
@@ -370,15 +370,19 @@ def _string_needs_quoting(value: str) -> bool:
     """Return True when *value* needs YAML quoting to round-trip as a string."""
     # YAML 1.1 recognises every case variant of the reserved words
     # (``true``/``True``/``TRUE`` etc.) as bool/null, so ``str(True)``
-    # from a JSON bool would otherwise re-parse as ``True``. ``%`` is
-    # a YAML directive indicator; ``~`` and empty string are YAML null
-    # shorthands; ``!`` opens a tag; ``:`` opens a mapping value;
-    # ``#`` opens a comment. Anything that survives those checks then
-    # gets the (cheap pre-filtered) ``yaml.safe_load`` round-trip test
-    # for numeric-looking strings — the original #901 case.
-    if value.lower() in _YAML_RESERVED_KEYWORDS or value in ("%", "~", ""):
+    # from a JSON bool would otherwise re-parse as ``True``. ``~`` and
+    # empty string are YAML null shorthands. A leading YAML indicator
+    # character (the ``_PLAIN_SCALAR_INDICATOR_LEAD`` set: ``! & * ? |
+    # > % @ ` # - , [ ] { } " '``) changes the scalar's shape — e.g. a
+    # globals ``initial_value`` C++ literal ``"Hello"`` emitted bare
+    # round-trips as the plain string ``Hello``, dropping the quotes
+    # ESPHome compiles against (#1095). ``:`` opens a mapping value and
+    # ``#`` opens a comment anywhere in the value. Survivors then take
+    # the (cheap pre-filtered) ``yaml.safe_load`` round-trip test for
+    # numeric-looking strings — the original #901 case.
+    if value.lower() in _YAML_RESERVED_KEYWORDS or value in ("~", ""):
         return True
-    if value.startswith("!") or ":" in value or "#" in value:
+    if value[0] in _PLAIN_SCALAR_INDICATOR_LEAD or ":" in value or "#" in value:
         return True
     return _yaml_reparses_as_non_string(value)
 
@@ -422,7 +426,7 @@ def _format_flow_yaml_value(value: Any) -> str:
         and not formatted.startswith('"')
         and any(c in value for c in ",[]{}")
     ):
-        return f'"{value}"'
+        return _quote(value)
     return formatted
 
 
